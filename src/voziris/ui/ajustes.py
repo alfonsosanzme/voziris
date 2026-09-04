@@ -303,17 +303,18 @@ class Ajustes:
             "mantener": "Mantener (graba mientras se pulsa)",
             "clavar": "Clavar (fija el micrófono)",
             "markdown": "Markdown (dicta al archivo)",
+            "clavar_markdown": "Clavar al Markdown (fija el micrófono, al archivo)",
             "cancelar": "Cancelar el dictado",
         }
         for fila, nombre in enumerate(cfg.NOMBRES_ATAJOS, start=1):
             self._fila(m, fila, etiquetas[nombre])
             var = self._var(f"atajos.{nombre}", getattr(c.atajos, nombre))
             CapturaDeAtajo(m, var).grid(row=fila, column=1, sticky="w", pady=3)  # type: ignore[arg-type]
-        ttk.Separator(m).grid(row=6, column=0, columnspan=2, sticky="we", pady=10)
-        self._entrada(m, 7, "Idioma (ISO-639-1)", "general.idioma", c.general.idioma, ancho=6)
+        ttk.Separator(m).grid(row=7, column=0, columnspan=2, sticky="we", pady=10)
+        self._entrada(m, 8, "Idioma (ISO-639-1)", "general.idioma", c.general.idioma, ancho=6)
         self._casilla(
             m,
-            8,
+            9,
             "Arrancar con Windows (acceso directo en Inicio)",
             "general.arranque_con_windows",
             c.general.arranque_con_windows,
@@ -353,7 +354,11 @@ class Ajustes:
             c.silencio_corte_ms,
             8,
         )
-        self._casilla(m, 5, "Sonidos de inicio, fin y error", "audio.sonidos", c.sonidos)
+        self._casilla(
+            m, 5, "Cortar el dictado clavado al callar", "audio.corte_por_silencio",
+            c.corte_por_silencio,
+        )
+        self._casilla(m, 6, "Sonidos de inicio, fin y error", "audio.sonidos", c.sonidos)
 
     def _pestana_motor(self, m: ttk.Frame) -> None:
         c = self._config
@@ -560,6 +565,7 @@ class Ajustes:
             nueva.audio.ganancia_db = round(float(g("audio.ganancia_db")), 1)
             nueva.audio.buffer_previo_ms = int(g("audio.buffer_previo_ms"))
             nueva.audio.silencio_corte_ms = int(g("audio.silencio_corte_ms"))
+            nueva.audio.corte_por_silencio = bool(g("audio.corte_por_silencio"))
             nueva.audio.sonidos = bool(g("audio.sonidos"))
             nueva.motor.local.modelo = str(g("motor.local.modelo")).strip()
             nueva.motor.local.carpeta = Path(str(g("motor.local.carpeta")).strip())

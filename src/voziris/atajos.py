@@ -64,14 +64,18 @@ MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN = 0x0001, 0x0002, 0x0004, 0x0008
 MOD_NOREPEAT = 0x4000
 ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 
-NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "cancelar")
+NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
 QUE_DISPARA: dict[str, tuple[Modo, str]] = {
     "mantener": (Modo.MANTENER, "app_activa"),
     "clavar": (Modo.CLAVAR, "app_activa"),
     "markdown": (Modo.MANTENER, "markdown"),
+    "clavar_markdown": (Modo.CLAVAR, "markdown"),
 }
 """Modo y destino que inicia cada atajo. «cancelar» no inicia nada."""
+
+DE_PULSACION = ("clavar", "clavar_markdown")
+"""Atajos que disparan en cada pulsación: el orquestador alterna."""
 
 _NOMBRE_DE_VK: dict[int, str] = {vk: nombre for nombre, vks in teclas.VK.items() for vk in vks}
 
@@ -146,7 +150,7 @@ class Detector:
                 self._activo = None
                 self._marcar(nombre, consumir)
                 return [Accion("cancelar", atajo)], consumir
-            if atajo == "clavar":
+            if atajo in DE_PULSACION:
                 self._marcar(nombre, consumir)
                 return [Accion("empezar", atajo)], consumir
             if self._activo is None:  # mantener / markdown
@@ -287,10 +291,11 @@ class Atajos:
     # --- registro ------------------------------------------------------------
 
     def registrar(self, combinaciones: dict[str, str]) -> list[str]:
-        """Registra (o cambia en caliente) las cuatro combinaciones del TOML.
+        """Registra (o cambia en caliente) las combinaciones del TOML.
 
         Args:
-            combinaciones: {"mantener": "ctrl+win", "clavar": "ctrl+shift+space", ...}
+            combinaciones: {"mantener": "ctrl+win", "clavar": "ctrl+shift+space", ...}.
+                Una cadena vacía desactiva ese atajo.
 
         Returns:
             Avisos: combinaciones que otra aplicación ya tiene registradas
@@ -305,6 +310,8 @@ class Atajos:
         combos: dict[str, teclas.Combinacion] = {}
         for nombre in NOMBRES_ATAJOS:
             texto = combinaciones.get(nombre, "")
+            if not texto.strip():
+                continue  # atajo desactivado
             try:
                 combos[nombre] = teclas.analizar(texto)
             except ValueError as e:

@@ -311,3 +311,15 @@ def test_congelado_copia_el_ejemplo_desde_los_recursos(
     cfg = config.cargar()  # sin ruta: junto al ejecutable
     assert (tmp_path / config.NOMBRE_ARCHIVO).exists()
     assert cfg.general.motor == "auto"
+
+
+def test_cinco_atajos_y_corte_por_silencio(toml: Path) -> None:
+    cfg = config.cargar(toml)
+    assert cfg.atajos.clavar_markdown == "ctrl+shift+m"
+    assert cfg.audio.corte_por_silencio is True
+    assert set(cfg.atajos.combinaciones()) == set(config.NOMBRES_ATAJOS)
+    _con(toml, 'clavar_markdown = "ctrl+shift+m"', 'clavar_markdown = ""')
+    _con(toml, "corte_por_silencio = true", "corte_por_silencio = false")
+    cfg = config.cargar(toml)
+    assert cfg.atajos.clavar_markdown == "" and "clavar_markdown" not in cfg.atajos.combinaciones()
+    assert cfg.audio.corte_por_silencio is False

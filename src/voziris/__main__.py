@@ -368,6 +368,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         hay_red=hay_red_si_hace_falta,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
     )
+    orq.corte_por_silencio = configuracion.audio.corte_por_silencio
 
     def reintentar(indice: int) -> None:
         """Desde la bandeja: el menú se cierra y el foco vuelve a la app; se espera un poco."""
@@ -426,6 +427,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         if nueva.audio.buffer_previo_ms != vieja.audio.buffer_previo_ms:
             pendientes.append("búfer previo")
         vad.silencio_corte_ms = nueva.audio.silencio_corte_ms
+        orq.corte_por_silencio = nueva.audio.corte_por_silencio
         sonidos.activos = nueva.audio.sonidos
         motor.preferencia = nueva.general.motor
         if vars(nueva.motor.local) != vars(vieja.motor.local):
@@ -459,8 +461,21 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         dispositivos=Captura.dispositivos, probar_clave=probar_clave,
     )
 
+    def alternar_corte() -> None:
+        """Desde la bandeja: se aplica al siguiente dictado clavado y se intenta guardar."""
+        configuracion.audio.corte_por_silencio = not configuracion.audio.corte_por_silencio
+        orq.corte_por_silencio = configuracion.audio.corte_por_silencio
+        try:
+            cfg.guardar(configuracion)
+        except ConfigInvalida as e:
+            avisar(f"Cambio aplicado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        if bandeja is not None:
+            bandeja.actualizar_menu()
+
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
+        dictar_markdown=lambda: orq.alternar_clavar("markdown"),
+        alternar_corte=alternar_corte,
         abrir_ajustes=lambda: en_hilo_tk(ajustes.abrir),
         cambiar_motor=cambiar_motor,
         reintentar=reintentar,
@@ -470,7 +485,10 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
         ),
     )
-    bandeja = Bandeja(acciones, ultimas=historial.ultimas, motor_actual=lambda: motor.preferencia)
+    bandeja = Bandeja(
+        acciones, ultimas=historial.ultimas, motor_actual=lambda: motor.preferencia,
+        corte_activo=lambda: orq.corte_por_silencio,
+    )
     atajos = Atajos(
         orq.al_empezar_atajo, orq.terminar, orq.cancelar,
         en_curso=orq.en_curso, al_cambiar=orq.cambiar_destino,

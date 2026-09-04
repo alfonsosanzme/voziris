@@ -150,6 +150,8 @@ class Orquestador:
         self._cola_vad: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=64)
         self._hilo_vad: threading.Thread | None = None
         self._escuchando_vad = False
+        self.corte_por_silencio = True
+        """False: en modo clavar solo cierra la segunda pulsación, no el VAD."""
 
     # --- vida --------------------------------------------------------------------
 
@@ -218,7 +220,7 @@ class Orquestador:
 
     def _empezar_vad(self) -> None:
         """Con el lock tomado, al empezar un dictado CLAVAR."""
-        if self._vad is None:
+        if self._vad is None or not self.corte_por_silencio:
             return
         while True:
             try:
@@ -332,14 +334,24 @@ class Orquestador:
         self._cola.put((dictado, audio))
 
     def alternar_clavar(self, destino: str = "app_activa") -> None:
-        """El atajo «clavar» (y «Dictar ahora»): empieza, o termina si ya está clavado."""
+        """Los atajos «clavar» y «Dictar ahora»: empiezan, o terminan si ya está clavado.
+
+        Si ya hay un dictado clavado hacia OTRO destino, la pulsación lo
+        redirige en vez de cerrarlo: clavar y luego clavar-Markdown manda
+        ese dictado al archivo.
+        """
         with self._lock:
             en_clavar = (
                 self._estado == Estado.GRABANDO
                 and self._dictado is not None
                 and self._dictado.modo is Modo.CLAVAR
             )
-        if en_clavar:
+            mismo_destino = en_clavar and self._dictado is not None and (
+                self._dictado.destino == destino
+            )
+        if en_clavar and not mismo_destino:
+            self.cambiar_destino(destino)
+        elif en_clavar:
             self.terminar()
         else:
             self.empezar(Modo.CLAVAR, destino)

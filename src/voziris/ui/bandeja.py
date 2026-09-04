@@ -64,6 +64,8 @@ class AccionesBandeja:
     """Lo que el menú puede pedirle a la aplicación. Todo se llama en el hilo de la bandeja."""
 
     dictar_ahora: Callable[[], None]
+    dictar_markdown: Callable[[], None]
+    alternar_corte: Callable[[], None]
     abrir_ajustes: Callable[[], None]
     cambiar_motor: Callable[[str], None]
     reintentar: Callable[[int], None]
@@ -88,11 +90,13 @@ class Bandeja:
         acciones: AccionesBandeja,
         ultimas: Callable[[], list[EntradaHistorial]] = lambda: [],
         motor_actual: Callable[[], str] = lambda: "auto",
+        corte_activo: Callable[[], bool] = lambda: True,
         version: str = __version__,
     ) -> None:
         self._acciones = acciones
         self._ultimas = ultimas
         self._motor_actual = motor_actual
+        self._corte_activo = corte_activo
         self._version = version
         self._estado = "reposo"
         self._icono: Any = None
@@ -117,6 +121,12 @@ class Bandeja:
 
         return pystray.Menu(
             Item("Dictar ahora", lambda: self._acciones.dictar_ahora(), default=True),
+            Item("Dictar al Markdown", lambda: self._acciones.dictar_markdown()),
+            Item(
+                "Cortar al callar (modo clavar)",
+                lambda: self._acciones.alternar_corte(),
+                checked=lambda _item: self._corte_activo(),
+            ),
             Item("Últimos dictados", pystray.Menu(self._items_ultimos)),
             Item(
                 "Motor",

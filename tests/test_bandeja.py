@@ -34,6 +34,8 @@ class Llamadas:
     def acciones(self, con_acerca_de: bool = True) -> AccionesBandeja:
         return AccionesBandeja(
             dictar_ahora=lambda: self.lista.append(("dictar", None)),
+            dictar_markdown=lambda: self.lista.append(("dictar_md", None)),
+            alternar_corte=lambda: self.lista.append(("corte", None)),
             abrir_ajustes=lambda: self.lista.append(("ajustes", None)),
             cambiar_motor=lambda m: self.lista.append(("motor", m)),
             reintentar=lambda i: self.lista.append(("reintentar", i)),
@@ -106,7 +108,8 @@ def test_menu_completo_en_orden() -> None:
     bandeja = Bandeja(Llamadas().acciones())
     textos = [_texto(i) for i in _items(bandeja.construir_menu())]
     assert textos == [
-        "Dictar ahora", "Últimos dictados", "Motor", "Ajustes…", "Acerca de Voziris",
+        "Dictar ahora", "Dictar al Markdown", "Cortar al callar (modo clavar)",
+        "Últimos dictados", "Motor", "Ajustes…", "Acerca de Voziris",
         "- - - -", "Salir",  # el separador de pystray se muestra así
     ]
 
@@ -116,6 +119,9 @@ def test_las_acciones_del_menu_llaman_a_la_aplicacion() -> None:
     bandeja = Bandeja(llamadas.acciones(), motor_actual=lambda: "api")
     items = {_texto(i): i for i in _items(bandeja.construir_menu())}
     items["Dictar ahora"](None)
+    items["Dictar al Markdown"](None)
+    items["Cortar al callar (modo clavar)"](None)
+    assert bool(items["Cortar al callar (modo clavar)"].checked)
     items["Ajustes…"](None)
     items["Acerca de Voziris"](None)
     items["Salir"](None)
@@ -125,7 +131,8 @@ def test_las_acciones_del_menu_llaman_a_la_aplicacion() -> None:
     assert all(m.radio for m in motores)
     motores[0](None)
     assert llamadas.lista == [
-        ("dictar", None), ("ajustes", None), ("acerca", None), ("salir", None), ("motor", "local"),
+        ("dictar", None), ("dictar_md", None), ("corte", None), ("ajustes", None),
+        ("acerca", None), ("salir", None), ("motor", "local"),
     ]
 
 

@@ -532,3 +532,29 @@ def test_cambiar_destino_durante_la_grabacion(banco: Banco) -> None:
     assert md.esperar()[0][1].destino == "markdown"
     banco.esperar_reposo()
     assert banco.destino.entregas == []
+
+
+def test_clavar_markdown_y_corte_por_silencio_opcional() -> None:
+    b = Banco(vad=VadFalso(corta_en=2))
+    md = DestinoFalso()
+    b.orq._destinos["markdown"] = md
+    try:
+        b.orq.corte_por_silencio = False
+        b.orq.alternar_clavar("markdown")  # «Dictar al Markdown» o el quinto atajo
+        assert b.orq.estado is Estado.GRABANDO and b.vad is not None and b.vad.reinicios == 0
+        _bloques(b, 10, 0.005)
+        time.sleep(0.05)
+        assert b.orq.estado is Estado.GRABANDO  # sin corte por silencio
+        b.orq.alternar_clavar("markdown")  # segunda pulsación: cierra
+        assert md.esperar()[0][1].destino == "markdown"
+        b.esperar_reposo()
+        # Clavar a la app y luego clavar al Markdown: redirige, no cierra.
+        b.orq.corte_por_silencio = True
+        b.orq.alternar_clavar()
+        b.orq.alternar_clavar("markdown")
+        assert b.orq.estado is Estado.GRABANDO and b.orq._dictado is not None
+        assert b.orq._dictado.destino == "markdown"
+        _bloques(b, 2, 0.02)
+        assert len(md.esperar(2)) == 2
+    finally:
+        b.parar()

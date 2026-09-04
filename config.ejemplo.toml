@@ -19,6 +19,7 @@ arranque_con_windows = true
 mantener = "ctrl+win"            # A1: graba mientras la combinación siga pulsada
 clavar = "ctrl+shift+space"      # A2: fija el micrófono hasta volver a pulsar
 markdown = "ctrl+alt+m"          # H1: dicta directamente al archivo de captura
+clavar_markdown = "ctrl+shift+m" # H1+A2: fija el micrófono y dicta al archivo
 cancelar = "esc"                 # descarta el dictado en curso sin entregarlo
 
 [audio]
@@ -26,6 +27,7 @@ dispositivo = ""                 # vacío = micrófono predeterminado del sistem
 ganancia_db = 0                  # -20 a +20
 buffer_previo_ms = 500           # A3: audio conservado ANTES de pulsar el atajo
 silencio_corte_ms = 2000         # A2: silencio que cierra el dictado en modo «clavar». 1,2 s se sentía corto
+corte_por_silencio = true        # false: clavado hasta volver a pulsar, aunque te calles
 sonidos = true                   # A6
 
 [motor.local]

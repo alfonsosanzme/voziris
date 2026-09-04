@@ -362,3 +362,17 @@ def test_tras_soltar_la_tecla_del_prefijo_otra_pulsacion_empieza_de_nuevo() -> N
     assert e.acciones[-1].tipo == "terminar" and e.acciones[-1].atajo == "markdown"
     e.abajo(VK["z"])  # otra z con ctrl+win aún pulsado: empieza otro markdown
     assert e.acciones[-1] == Accion("empezar", "markdown")
+
+
+def test_clavar_markdown_dispara_al_pulsar_y_el_atajo_vacio_se_desactiva() -> None:
+    e = Escenario()
+    e.detector.combinaciones = {**COMBOS, "clavar_markdown": teclas.analizar("ctrl+shift+m")}
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["shift"])
+    e.abajo(VK["m"])
+    e.arriba(VK["m"])
+    assert e.acciones == [Accion("empezar", "clavar_markdown")]
+    assert e.consumidas == [(VK["m"], True), (VK["m"], False)]
+    atajos = Atajos(lambda m, d: None, lambda ms: None, lambda: None)
+    with pytest.raises(ConfigInvalida):
+        atajos.registrar({"mantener": "ctrl+patata", "clavar_markdown": ""})

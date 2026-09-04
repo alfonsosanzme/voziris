@@ -20,7 +20,7 @@ por unos 0,60 $ al mes; en local, por cero.
 
 | | |
 |---|---|
-| **Tres atajos** | `Ctrl+Win` graba mientras lo mantienes, `Ctrl+Shift+Espacio` deja el micrófono clavado hasta que vuelves a pulsar o te callas, y `Ctrl+Alt+M` manda el dictado a un archivo Markdown |
+| **Cuatro atajos** | `Ctrl+Win` graba mientras lo mantienes, `Ctrl+Shift+Espacio` deja el micrófono clavado hasta que vuelves a pulsar o te callas, `Ctrl+Alt+M` manda el dictado a un archivo Markdown mientras lo mantienes y `Ctrl+Shift+M` lo hace con el micrófono clavado. El corte al callar se puede apagar desde la bandeja («Cortar al callar») |
 | **Puntuación de serie** | El modelo emite puntuación y mayúsculas en español, también sin conexión |
 | **Limpia lo que dices** | Quita muletillas y resuelve tus autocorrecciones al hablar («el martes, no, el jueves»), con un LLM opcional |
 | **No te toca el portapapeles** | Lo guarda antes de escribir y lo devuelve después |

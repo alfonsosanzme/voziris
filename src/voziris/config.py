@@ -47,7 +47,7 @@ MOTORES = ("local", "api", "auto")
 CUANTIZACIONES = ("int8", "fp32")
 METODOS = ("portapapeles", "tecleo")
 NIVELES = tuple(n.value for n in Nivel)
-NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "cancelar")
+NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
 
 def carpeta_base() -> Path:
@@ -102,11 +102,16 @@ class SeccionAtajos:
     mantener: str = "ctrl+win"
     clavar: str = "ctrl+shift+space"
     markdown: str = "ctrl+alt+m"
+    clavar_markdown: str = "ctrl+shift+m"
     cancelar: str = "esc"
 
     def combinaciones(self) -> dict[str, teclas.Combinacion]:
-        """Las cuatro, ya analizadas. Solo válido tras `cargar()`."""
-        return {nombre: teclas.analizar(getattr(self, nombre)) for nombre in NOMBRES_ATAJOS}
+        """Las que están configuradas, ya analizadas. Solo válido tras `cargar()`."""
+        return {
+            nombre: teclas.analizar(getattr(self, nombre))
+            for nombre in NOMBRES_ATAJOS
+            if getattr(self, nombre)
+        }
 
 
 @dataclass
@@ -115,6 +120,7 @@ class SeccionAudio:
     ganancia_db: float = 0.0
     buffer_previo_ms: int = 500
     silencio_corte_ms: int = 2000
+    corte_por_silencio: bool = True
     sonidos: bool = True
 
 
@@ -331,7 +337,10 @@ def _resolver(base: Path, texto: str) -> Path:
 _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "general": ("idioma", "motor", "arranque_con_windows"),
     "atajos": NOMBRES_ATAJOS,
-    "audio": ("dispositivo", "ganancia_db", "buffer_previo_ms", "silencio_corte_ms", "sonidos"),
+    "audio": (
+        "dispositivo", "ganancia_db", "buffer_previo_ms", "silencio_corte_ms",
+        "corte_por_silencio", "sonidos",
+    ),
     "motor": (),
     "motor.local": ("modelo", "carpeta", "hilos", "cuantizacion"),
     "motor.api": ("base_url", "modelo", "clave", "timeout_s"),
@@ -394,6 +403,9 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
     vistos: dict[str, str] = {}
     for nombre in NOMBRES_ATAJOS:
         texto = getattr(atajos, nombre)
+        if not texto.strip():
+            setattr(atajos, nombre, "")  # vacío: ese atajo queda desactivado
+            continue
         try:
             combo = teclas.analizar(texto)
         except ValueError as e:
@@ -417,6 +429,9 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         ),
         silencio_corte_ms=_rango(
             au, "audio", "silencio_corte_ms", int, 200, 10000, dau.silencio_corte_ms, errores
+        ),
+        corte_por_silencio=_leer(
+            au, "audio", "corte_por_silencio", bool, dau.corte_por_silencio, errores
         ),
         sonidos=_leer(au, "audio", "sonidos", bool, dau.sonidos, errores),
     )
