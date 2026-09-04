@@ -42,7 +42,12 @@ from typing import Any
 
 from voziris import __version__, red, winapi
 from voziris import config as cfg
-from voziris.errores import AtajosNoDisponibles, ConfigInvalida, MicrofonoNoDisponible
+from voziris.errores import (
+    AtajosNoDisponibles,
+    ConfigInvalida,
+    MicrofonoNoDisponible,
+    VozirisError,
+)
 from voziris.tipos import Modo, Nivel
 
 log = logging.getLogger("voziris")
@@ -71,9 +76,28 @@ class _TacharClave(logging.Filter):
         return True
 
 
+def _sin_consola() -> None:
+    """En el ejecutable congelado (sin consola) stdout y stderr son None.
+
+    Cualquier biblioteca que escriba en ellos (tqdm, huggingface_hub) revienta.
+    Se redirigen a la nada y se apagan las barras de progreso: el progreso de
+    descarga ya lo da `MotorLocal` por su callback.
+    """
+    import os
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — vive lo que el proceso
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+
+
 def configurar_log(carpeta: Path, depurar: bool, a_consola: bool) -> None:
     raiz = logging.getLogger()
     raiz.setLevel(logging.DEBUG if depurar else logging.INFO)
+    for ruidoso in ("httpx", "httpcore", "huggingface_hub", "urllib3", "filelock"):
+        logging.getLogger(ruidoso).setLevel(logging.WARNING)
     formato = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     try:
         archivo = logging.handlers.RotatingFileHandler(
@@ -204,8 +228,22 @@ def _modo_consola(configuracion: cfg.Config, archivo: Path, destino: str, nivel:
     )
     print("Cargando el motor…")
     orq.arrancar()
-    resultado = orq.dictar_audio(audio, destino)
+    try:
+        resultado = orq.dictar_audio(audio, destino)
+    except VozirisError as e:
+        # Sin traza: en el ejecutable congelado (sin consola) una excepción sin
+        # capturar acaba en un diálogo de PyInstaller que bloquea.
+        log.error("consola: %s", e)
+        print(f"No se pudo: {e}", file=sys.stderr)
+        orq.parar()
+        return 1
     orq.parar()
+    # También al log: el ejecutable congelado no tiene consola y es la forma
+    # de verificar el modo consola en el paquete (VOZ-61).
+    log.info(
+        "consola: motor=%s rtf=%.3f entregado=%s texto=%d caracteres",
+        resultado["motor"], resultado["rtf"], resultado["entregado"], len(resultado["texto"]),
+    )
     print(f"\n{resultado['texto']}\n")
     print(f"motor {resultado['motor']} · RTF {resultado['rtf']:.3f} · "
           f"{resultado['ms_motor']} ms motor · {resultado['ms_postproceso']} ms post-proceso · "
@@ -440,10 +478,13 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             aviso_mic = captura.abrir()
         except MicrofonoNoDisponible as e:
             aviso_mic = str(e)
-        orq.arrancar()
-        sonidos.precalentar()
         bandeja.mostrar_en_hilo()
         log.info("icono de bandeja visible")
+        # El precalentado del modelo (~4 s de CPU) va DESPUÉS de que el icono
+        # esté en pantalla: si arranca antes, compite con Tk y pystray y el
+        # arranque visible pasa de 1,5 s a casi 4 (medido en VOZ-61).
+        orq.arrancar()
+        sonidos.precalentar()
         for aviso in configuracion.avisos:
             log.warning(aviso)
         if aviso_mic:
@@ -510,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
         "--salir", action="store_true", help="cierra limpiamente la Voziris que esté abierta"
     )
     parser.add_argument("--version", action="version", version=f"voziris {__version__}")
+    _sin_consola()
     args = parser.parse_args(argv)
 
     if args.salir:
@@ -522,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     consola = args.archivo is not None
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
     configurar_log(carpeta, args.debug, a_consola=consola or args.debug)
+    log.info("arrancando Voziris %s", __version__)  # la marca de tiempo del arranque
 
     if not consola and winapi.ES_WINDOWS and not winapi.instancia_unica():
         _error_fatal("Voziris ya está abierto: mira el icono de la bandeja.", con_ventana=True)

@@ -119,12 +119,18 @@ class MotorLocal:
         if carpeta.exists() and not self._completa(carpeta):
             log.warning("descarga incompleta en %s: se borra y se repite", carpeta)
             shutil.rmtree(carpeta)
+        from onnx_asr.utils import ModelFileNotFoundError
+
         try:
             return self._cargar_de(carpeta)
-        except FileNotFoundError:
+        except ModelFileNotFoundError:
             # La carpeta existía y onnx-asr entró en modo offline sin encontrar
-            # los archivos: quedó a medias de una forma que no detectamos. Se
-            # borra y se descarga de nuevo, una sola vez.
+            # los archivos DEL MODELO: quedó a medias de una forma que no
+            # detectamos. Se borra y se descarga de nuevo, una sola vez.
+            #
+            # Solo esa excepción, no cualquier FileNotFoundError: en VOZ-61 un
+            # archivo de datos de onnx-asr que faltaba en el paquete congelado
+            # se tomó por un modelo incompleto y borró 640 MB buenos.
             if not carpeta.exists():
                 raise
             log.warning("faltan archivos del modelo en %s: se borra y se descarga", carpeta)

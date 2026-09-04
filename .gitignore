@@ -23,3 +23,6 @@ prueba de voz/
 
 # Log de la aplicación, junto al ejecutable
 voziris.log*
+
+# Trabajo temporal de PyInstaller
+build/work/

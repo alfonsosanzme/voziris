@@ -14,37 +14,68 @@ Para cambiar a archivo único: mover `a.binaries`, `a.datas` y `a.zipfiles` al
 EXE() y borrar el COLLECT(). Es un cambio de cinco líneas, deliberadamente
 fácil de hacer si Alfon decide que prefiere el archivo único.
 
-EL MODELO NO VA DENTRO en ningún caso: son ~680 MB. Se descarga a ./modelos/
+EL MODELO NO VA DENTRO en ningún caso: son ~640 MB. Se descarga a ./modelos/
 en el primer arranque.
 
-    pyinstaller build/voziris.spec --noconfirm
+    pyinstaller build/voziris.spec --noconfirm --distpath build/dist --workpath build/work
+
+Las rutas se resuelven desde la carpeta del .spec (SPECPATH), no desde el
+directorio de trabajo, para que funcione desde cualquier sitio.
 """
+
+import os
+
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+
+RAIZ = os.path.abspath(os.path.join(SPECPATH, ".."))
+
+# onnx-asr lee su propia versión con importlib.metadata al importarse; sin los
+# metadatos del paquete revienta con PackageNotFoundError (visto en VOZ-61).
+METADATOS = copy_metadata("onnx-asr") + copy_metadata("huggingface_hub") + copy_metadata("onnxruntime")
+
+# onnx-asr carga sus bancos de filtros (preprocessors/data/fbanks.npz) desde el
+# paquete; PyInstaller no los ve porque no son módulos.
+DATOS_ONNX_ASR = collect_data_files("onnx_asr")
 
 block_cipher = None
 
 a = Analysis(
-    ["../src/voziris/__main__.py"],
-    pathex=["../src"],
+    [os.path.join(RAIZ, "src", "voziris", "__main__.py")],
+    pathex=[os.path.join(RAIZ, "src")],
     binaries=[],
     datas=[
-        ("../config.ejemplo.toml", "."),
-        ("../ATRIBUCIONES.md", "."),   # obligación de CC-BY-4.0: viaja con el binario
-    ],
+        (os.path.join(RAIZ, "config.ejemplo.toml"), "."),
+        (os.path.join(RAIZ, "ATRIBUCIONES.md"), "."),   # obligación de CC-BY-4.0: viaja con el binario
+        (os.path.join(RAIZ, "LICENSE"), "."),
+        (os.path.join(RAIZ, "assets"), "assets"),
+    ] + METADATOS + DATOS_ONNX_ASR,
     hiddenimports=[
         "onnx_asr",
+        "onnx_asr.models",
         "onnxruntime",
+        "huggingface_hub",
         "sounddevice",
+        "soundfile",
         "pystray._win32",
         "win32clipboard",
         "win32gui",
+        "win32con",
+        "win32api",
         "win32process",
+        "pythoncom",
+        "win32com.client",
+        "tkinter",
+        "tkinter.ttk",
+        "tkinter.filedialog",
+        "tkinter.messagebox",
+        "PIL._tkinter_finder",
     ],
     hookspath=[],
     runtime_hooks=[],
     excludes=[
         # Nada de esto se usa y engorda el paquete de forma notable
         "torch", "tensorflow", "transformers", "matplotlib",
-        "scipy", "pandas", "IPython", "pytest",
+        "scipy", "pandas", "IPython", "pytest", "faster_whisper", "ctranslate2",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -65,7 +96,8 @@ exe = EXE(
     strip=False,
     upx=False,          # UPX dispara aún más falsos positivos de antivirus (R2)
     console=False,      # app de bandeja: sin consola
-    icon="../assets/voziris.ico",
+    icon=os.path.join(RAIZ, "assets", "voziris.ico"),
+    uac_admin=False,    # F1: nunca pide administrador
 )
 
 coll = COLLECT(

@@ -189,6 +189,12 @@ class Ajustes:
         v = tk.Toplevel(self._raiz)
         v.title("Ajustes de Voziris")
         v.minsize(560, 480)
+        ico = cfg.carpeta_base() / "assets" / "voziris.ico"
+        if ico.exists():
+            try:
+                v.iconbitmap(str(ico))  # type: ignore[no-untyped-call]
+            except tk.TclError:
+                log.debug("sin icono para la ventana de ajustes")
         v.protocol("WM_DELETE_WINDOW", self.cerrar)
         v.bind("<Escape>", lambda _e: self.cerrar())
         self._ventana = v

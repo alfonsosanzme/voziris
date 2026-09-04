@@ -48,7 +48,9 @@ def onnx_falso(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             raise registro["falla"]
         if Path(path).exists() and not (Path(path) / "vocab.txt").exists():
             # La carpeta existe: onnx-asr entra en modo offline y no descarga.
-            raise FileNotFoundError("vocab.txt")
+            from onnx_asr.utils import ModelFileNotFoundError
+
+            raise ModelFileNotFoundError("vocab.txt", Path(path))
         Path(path).mkdir(parents=True, exist_ok=True)
         (Path(path) / "encoder-model.int8.onnx").write_bytes(b"x" * 1000)
         (Path(path) / "vocab.txt").write_text("<blk>\n")
@@ -259,3 +261,20 @@ def test_parakeet_real_puntua_en_espanol() -> None:
     assert "sábado" in t.texto.lower()
     assert t.texto[0].isupper() and t.texto.rstrip().endswith(".")
     assert t.rtf < 0.25, t.rtf
+
+
+def test_un_archivo_que_falta_fuera_del_modelo_no_borra_la_carpeta(
+    tmp_path: Path, onnx_falso: dict[str, Any]
+) -> None:
+    """VOZ-61: un FileNotFoundError ajeno al modelo (datos de onnx-asr que faltan en
+    el paquete congelado) no puede tomarse por «modelo incompleto» y borrar 640 MB."""
+    carpeta = tmp_path / "nemo-parakeet-tdt-0.6b-v3-int8"
+    carpeta.mkdir()
+    (carpeta / "encoder-model.int8.onnx").write_bytes(b"x" * 1000)
+    (carpeta / "vocab.txt").write_text("<blk>\n")
+    onnx_falso["falla"] = FileNotFoundError("onnx_asr/preprocessors/data/fbanks.npz")
+    motor = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
+    motor.precalentar()
+    assert not motor.disponible()
+    assert (carpeta / "encoder-model.int8.onnx").exists()  # la carpeta sigue entera
+    assert len(onnx_falso["llamadas"]) == 1  # sin borrar ni volver a descargar
