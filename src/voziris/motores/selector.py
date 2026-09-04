@@ -117,7 +117,8 @@ class Selector:
                 log.warning("la API falló, se transcribe en local: %s", e)
                 aviso = f"La API falló ({e}): transcrito en local"
         else:
-            aviso = "Sin conexión con la API: transcrito en local"
+            motivo = getattr(self._api, "motivo_no_disponible", None)
+            aviso = (motivo() if motivo else "Sin conexión con la API") + ": transcrito en local"
 
         if not self._local.disponible():
             raise MotorNoDisponible(

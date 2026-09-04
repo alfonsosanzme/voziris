@@ -116,6 +116,12 @@ class MotorAPI:
         """Hay clave y hay red. La comprobación de red va cacheada (`red.hay_red`)."""
         return bool(self._clave) and red.hay_red(self._host, self._puerto)
 
+    def motivo_no_disponible(self) -> str:
+        """Para el aviso del selector: qué falta, sin adivinar."""
+        if not self._clave:
+            return "Sin clave de API"
+        return "Sin conexión con la API"
+
     # --- uso ---------------------------------------------------------------------
 
     def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:

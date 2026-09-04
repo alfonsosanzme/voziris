@@ -519,3 +519,16 @@ def test_instancia_unica() -> None:
     )
     otro = subprocess.run([sys.executable, "-c", programa], check=False)
     assert otro.returncode == 3  # el segundo proceso ve el mutex y lo dice
+
+
+def test_cambiar_destino_durante_la_grabacion(banco: Banco) -> None:
+    md = DestinoFalso()
+    banco.orq._destinos["markdown"] = md
+    assert not banco.orq.cambiar_destino("markdown")  # en reposo no hay nada que cambiar
+    banco.orq.empezar(Modo.MANTENER, "app_activa")
+    assert banco.orq.cambiar_destino("markdown")
+    assert not banco.orq.cambiar_destino("inexistente") and "inexistente" in banco.avisos[-1]
+    banco.orq.terminar(1000)
+    assert md.esperar()[0][1].destino == "markdown"
+    banco.esperar_reposo()
+    assert banco.destino.entregas == []

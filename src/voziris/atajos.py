@@ -81,7 +81,7 @@ _NOMBRE_DE_VK: dict[int, str] = {vk: nombre for nombre, vks in teclas.VK.items()
 
 @dataclass(frozen=True)
 class Accion:
-    tipo: Literal["empezar", "terminar", "cancelar"]
+    tipo: Literal["empezar", "terminar", "cancelar", "cambiar"]
     atajo: str
     duracion_ms: int = 0
 
@@ -95,6 +95,12 @@ class Detector:
         modificadores (`ctrl+win`), además no puede haber otra tecla apretada.
       - «mantener» y «markdown» duran hasta que se suelta cualquiera de sus
         teclas; entonces se emite `terminar` con la duración real.
+      - Si una combinación mantenida es prefijo de otra (`ctrl+win` y
+        `ctrl+win+z`), la primera arranca en cuanto se completa y, cuando
+        llega la tecla que completa la segunda, se emite `cambiar`: el
+        dictado en curso sigue grabando y pasa al otro destino. Esperar a
+        ver si llega la tecla costaría el búfer previo, que es justo lo que
+        H2 prohíbe.
       - «clavar» emite `empezar` en cada pulsación: el orquestador decide si
         eso arranca o cierra el dictado.
       - «cancelar» solo actúa (y solo se consume) con un dictado en curso.
@@ -147,6 +153,10 @@ class Detector:
                 self._activo, self._inicio = atajo, ahora
                 self._marcar(nombre, consumir)
                 return [Accion("empezar", atajo)], consumir
+            if atajo != self._activo:  # extiende al mantenido: cambia de destino
+                self._activo = atajo
+                self._marcar(nombre, consumir)
+                return [Accion("cambiar", atajo)], consumir
             return [], False
         return [], False
 
@@ -246,6 +256,9 @@ class Atajos:
         al_cancelar: al pulsar cancelar con un dictado en curso.
         en_curso: dice si hay un dictado en marcha. Decide si «cancelar» actúa
             y se consume, o pasa a la aplicación como una tecla normal (C-3).
+        al_cambiar: (destino) cuando, con «mantener» apretado, llega la tecla
+            que completa «markdown» (o al revés): el dictado sigue y cambia de
+            destino.
     """
 
     def __init__(
@@ -254,10 +267,12 @@ class Atajos:
         al_terminar: Callable[[int], None],
         al_cancelar: Callable[[], None],
         en_curso: Callable[[], bool] = lambda: False,
+        al_cambiar: Callable[[str], object] | None = None,
     ) -> None:
         self._al_empezar = al_empezar
         self._al_terminar = al_terminar
         self._al_cancelar = al_cancelar
+        self._al_cambiar = al_cambiar
         self._detector = Detector({}, en_curso)
         self._cola: queue.Queue[Accion | None] = queue.Queue()
         self._hilo_hook: threading.Thread | None = None
@@ -392,6 +407,9 @@ class Atajos:
                     self._al_empezar(modo, destino)
                 elif accion.tipo == "terminar":
                     self._al_terminar(accion.duracion_ms)
+                elif accion.tipo == "cambiar":
+                    if self._al_cambiar is not None:
+                        self._al_cambiar(QUE_DISPARA[accion.atajo][1])
                 else:
                     self._al_cancelar()
             except Exception:  # noqa: BLE001 — un callback roto no para los atajos

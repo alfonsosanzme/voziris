@@ -344,6 +344,19 @@ class Orquestador:
         else:
             self.empezar(Modo.CLAVAR, destino)
 
+    def cambiar_destino(self, destino: str) -> bool:
+        """Con un dictado GRABANDO, cambia a dónde irá el texto (atajo prefijo)."""
+        with self._lock:
+            if self._estado != Estado.GRABANDO or self._dictado is None:
+                return False
+            if destino not in self._destinos:
+                self._tono("error")
+                self._avisar(f"El destino «{destino}» no está disponible")
+                return False
+            self._dictado.destino = destino
+            log.info("dictado en curso redirigido a %s", destino)
+            return True
+
     def al_empezar_atajo(self, modo: Modo, destino: str) -> None:
         """Adaptador para `Atajos.al_empezar`."""
         if modo is Modo.CLAVAR:

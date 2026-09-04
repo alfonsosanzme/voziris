@@ -149,3 +149,12 @@ def test_precalienta_en_paralelo_y_espera_a_los_dos() -> None:
     s.precalentar()
     assert time.perf_counter() - t0 < 0.35  # en paralelo, no 0,4 s
     assert local.precalentado == 1 and api.precalentado == 1
+
+
+def test_el_aviso_dice_si_falta_la_clave() -> None:
+    from voziris.motores.api import MotorAPI
+
+    local = MotorFalso("local")
+    sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
+    t = Selector("api", local, sin_clave).transcribir(AUDIO, "es")
+    assert t.avisos == ["Sin clave de API: transcrito en local"]

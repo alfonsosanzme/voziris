@@ -333,3 +333,32 @@ def test_sondeo_avisa_de_combinacion_tomada() -> None:
     finally:
         user32.UnregisterHotKey(None, 99)
     assert len(avisos) == 1 and "ctrl+shift+f6" in avisos[0] and "markdown" in avisos[0]
+
+
+def test_atajo_prefijo_cambia_el_destino_del_dictado_mantenido() -> None:
+    """ctrl+win (mantener) es prefijo de ctrl+win+z (markdown): la Z cambia el destino."""
+    e = Escenario()
+    e.detector.combinaciones = {**COMBOS, "markdown": teclas.analizar("ctrl+win+z")}
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["lwin"])
+    assert e.acciones == [Accion("empezar", "mantener")]
+    e.abajo(VK["z"], tras_ms=120)
+    assert e.acciones[-1] == Accion("cambiar", "markdown")
+    assert e.consumidas == [(VK["z"], True)]  # la z no llega a la aplicación
+    e.arriba(VK["z"], tras_ms=900)
+    assert e.acciones[-1] == Accion("terminar", "markdown", 1020)
+    e.arriba(VK["lwin"])
+    e.arriba(VK["lctrl"])
+    assert [a.tipo for a in e.acciones] == ["empezar", "cambiar", "terminar"]
+
+
+def test_tras_soltar_la_tecla_del_prefijo_otra_pulsacion_empieza_de_nuevo() -> None:
+    e = Escenario()
+    e.detector.combinaciones = {**COMBOS, "markdown": teclas.analizar("ctrl+win+z")}
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["lwin"])
+    e.abajo(VK["z"])
+    e.arriba(VK["z"], tras_ms=500)  # soltar la z termina el dictado de markdown
+    assert e.acciones[-1].tipo == "terminar" and e.acciones[-1].atajo == "markdown"
+    e.abajo(VK["z"])  # otra z con ctrl+win aún pulsado: empieza otro markdown
+    assert e.acciones[-1] == Accion("empezar", "markdown")

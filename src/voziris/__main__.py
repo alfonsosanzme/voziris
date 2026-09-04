@@ -471,7 +471,10 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         ),
     )
     bandeja = Bandeja(acciones, ultimas=historial.ultimas, motor_actual=lambda: motor.preferencia)
-    atajos = Atajos(orq.al_empezar_atajo, orq.terminar, orq.cancelar, en_curso=orq.en_curso)
+    atajos = Atajos(
+        orq.al_empezar_atajo, orq.terminar, orq.cancelar,
+        en_curso=orq.en_curso, al_cambiar=orq.cambiar_destino,
+    )
 
     try:
         try:
