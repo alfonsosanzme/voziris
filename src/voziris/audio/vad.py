@@ -49,7 +49,7 @@ MS_POR_BLOQUE = BLOQUE * 1000 / SAMPLE_RATE  # 32 ms
 class DetectorSilencio:
     """Decide, bloque a bloque, si el dictado clavado debe cerrarse."""
 
-    def __init__(self, silencio_corte_ms: int = 1200, carpeta: Path | None = None) -> None:
+    def __init__(self, silencio_corte_ms: int = 2000, carpeta: Path | None = None) -> None:
         self._corte_ms = silencio_corte_ms
         self._carpeta = Path(carpeta) if carpeta else None
         self._sesion: Any = None

@@ -25,7 +25,7 @@ cancelar = "esc"                 # descarta el dictado en curso sin entregarlo
 dispositivo = ""                 # vacío = micrófono predeterminado del sistema
 ganancia_db = 0                  # -20 a +20
 buffer_previo_ms = 500           # A3: audio conservado ANTES de pulsar el atajo
-silencio_corte_ms = 1200         # A2: silencio que cierra el dictado en modo «clavar»
+silencio_corte_ms = 2000         # A2: silencio que cierra el dictado en modo «clavar». 1,2 s se sentía corto
 sonidos = true                   # A6
 
 [motor.local]

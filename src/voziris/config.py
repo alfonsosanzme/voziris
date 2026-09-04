@@ -92,7 +92,7 @@ class SeccionAudio:
     dispositivo: str = ""
     ganancia_db: float = 0.0
     buffer_previo_ms: int = 500
-    silencio_corte_ms: int = 1200
+    silencio_corte_ms: int = 2000
     sonidos: bool = True
 
 
