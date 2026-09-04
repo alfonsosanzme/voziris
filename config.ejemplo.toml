@@ -32,6 +32,8 @@ sonidos = true                   # A6
 modelo = "nemo-parakeet-tdt-0.6b-v3"
 carpeta = "./modelos"            # se descarga aquí en el primer arranque (~680 MB)
 hilos = 0                        # 0 = onnxruntime decide
+cuantizacion = "int8"            # int8 | fp32. fp32: ~3 puntos menos de error en jerga a cambio
+                                 # del doble de tiempo y 2,5 GB de RAM (ver docs/H0.md)
 
 [motor.api]
 base_url = "https://api.groq.com/openai/v1"

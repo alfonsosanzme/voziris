@@ -24,6 +24,13 @@ Tres protocolos sostienen todo el diseño: `MotorSTT`, `PostProceso` y
 `Destino`. `__main__.py` es el único módulo que conoce todas las piezas; los
 demás dependen solo de los protocolos y de `tipos.py`.
 
+Módulos auxiliares sin dependencias del proyecto, aparte de `tipos.py`:
+
+- `teclas.py` — nombres de teclas, alias y códigos virtuales de Windows, y el
+  análisis de combinaciones («ctrl+shift+space»). Lo comparten `config.py`
+  (validar los atajos sin tocar Win32, así corre en CI) y `atajos.py`
+  (traducir cada nombre a lo que ve el hook).
+
 ## Las cinco decisiones que explican el resto
 
 ### 1. Ninguna etapa propaga excepciones hacia arriba
