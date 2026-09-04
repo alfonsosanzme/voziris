@@ -180,7 +180,7 @@ def medir_parakeet(wavs: list[Path], normalizado: bool = True) -> dict:
     # no se crea la carpeta antes. Una descarga interrumpida deja la carpeta
     # creada e incompleta, y la carga siguiente falla con ModelFileNotFoundError:
     # VOZ-11 tiene que detectarlo y borrar la carpeta para volver a descargar.
-    carpeta = MODELOS / "parakeet-tdt-0.6b-v3"
+    carpeta = MODELOS / "nemo-parakeet-tdt-0.6b-v3-int8"  # misma carpeta que MotorLocal
     print(f"Cargando Parakeet TDT v3 int8 desde {carpeta} (la primera vez descarga ~680 MB)…")
     ram_antes = _ram_mb()
     t0 = time.perf_counter()
