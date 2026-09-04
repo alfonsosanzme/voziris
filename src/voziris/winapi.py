@@ -253,6 +253,79 @@ def ejecutable_en_primer_plano() -> str | None:
         _kernel32.CloseHandle(proceso)
 
 
+# --- instancia única ------------------------------------------------------------
+
+ERROR_ALREADY_EXISTS = 183
+_mutex_instancia: int | None = None
+
+
+def instancia_unica(nombre: str = "Local\\Voziris") -> bool:
+    """True si esta es la primera instancia; False si ya hay otra Voziris abierta.
+
+    Un mutex con nombre que vive lo que el proceso: Windows lo libera al morir,
+    aunque sea de mala manera. Dos instancias (arranque con Windows más un
+    doble clic) competirían por el micrófono y los atajos (VOZ-05).
+    """
+    global _mutex_instancia
+    _solo_windows()
+    if _mutex_instancia is not None:
+        return True
+    _kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    ctypes.set_last_error(0)
+    manejador = _kernel32.CreateMutexW(None, False, nombre)
+    if not manejador:
+        return True  # sin mutex no se puede saber: mejor arrancar que no arrancar
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+        _kernel32.CloseHandle(manejador)
+        return False
+    _mutex_instancia = int(manejador)
+    return True
+
+
+NOMBRE_EVENTO_SALIDA = "Local\\Voziris.Salir"
+WAIT_OBJECT_0 = 0
+EVENT_MODIFY_STATE = 0x0002
+_evento_salida: int | None = None
+
+
+def crear_evento_salida(nombre: str = NOMBRE_EVENTO_SALIDA) -> None:
+    """La instancia abierta crea el evento con nombre que `pedir_salida()` activa."""
+    global _evento_salida
+    _solo_windows()
+    _kernel32.CreateEventW.argtypes = (
+        ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR,
+    )
+    _kernel32.CreateEventW.restype = wintypes.HANDLE
+    manejador = _kernel32.CreateEventW(None, True, False, nombre)
+    _evento_salida = int(manejador) if manejador else None
+
+
+def salida_pedida() -> bool:
+    """True si alguien ejecutó `voziris --salir`. Barato: se consulta cada medio segundo."""
+    if _evento_salida is None:
+        return False
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    return int(_kernel32.WaitForSingleObject(_evento_salida, 0)) == WAIT_OBJECT_0
+
+
+def pedir_salida(nombre: str = NOMBRE_EVENTO_SALIDA) -> bool:
+    """Pide a la Voziris abierta que se cierre limpiamente. False si no hay ninguna."""
+    _solo_windows()
+    _kernel32.OpenEventW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.OpenEventW.restype = wintypes.HANDLE
+    _kernel32.SetEvent.argtypes = (wintypes.HANDLE,)
+    _kernel32.SetEvent.restype = wintypes.BOOL
+    manejador = _kernel32.OpenEventW(EVENT_MODIFY_STATE, False, nombre)
+    if not manejador:
+        return False
+    try:
+        return bool(_kernel32.SetEvent(manejador))
+    finally:
+        _kernel32.CloseHandle(manejador)
+
+
 # --- portapapeles -------------------------------------------------------------
 
 INTENTOS_PORTAPAPELES = 10

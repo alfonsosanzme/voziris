@@ -22,7 +22,10 @@ deducir leyendo el código.
 
 Tres protocolos sostienen todo el diseño: `MotorSTT`, `PostProceso` y
 `Destino`. `__main__.py` es el único módulo que conoce todas las piezas; los
-demás dependen solo de los protocolos y de `tipos.py`.
+demás dependen solo de los protocolos y de `tipos.py`. La máquina de estados
+del dictado (REPOSO → GRABANDO → PROCESANDO → REPOSO, con ERROR) y el hilo
+de trabajo viven en `orquestador.py`, que solo conoce los protocolos y se
+prueba entero con dobles.
 
 Módulos auxiliares sin dependencias del proyecto, aparte de `tipos.py`:
 

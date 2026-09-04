@@ -16,6 +16,7 @@ dependencies = [
     "pystray>=0.19",            # icono de bandeja
     "pillow>=10",               # requerido por pystray
     "pywin32>=306; sys_platform == 'win32'",
+    "soundfile>=0.12",          # leer WAV en el modo consola y en el historial
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,7 @@ files = ["src/voziris"]
 module = [
     "sounddevice.*", "pystray.*", "onnx_asr.*", "onnxruntime.*", "huggingface_hub.*",
     "win32.*", "win32clipboard.*", "win32con", "win32gui", "win32api", "pythoncom", "win32com.*",
+    "soundfile.*",
 ]
 ignore_missing_imports = true
 

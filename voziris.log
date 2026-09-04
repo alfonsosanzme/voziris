@@ -1,0 +1,6 @@
+2026-09-04 10:22:15,778 INFO    voziris: icono de bandeja visible
+2026-09-04 10:22:15,778 WARNING voziris: [destino.markdown] ruta = 'C:\\Users\\CAMBIAME\\vault\\entrada.md': la carpeta C:\Users\CAMBIAME\vault no existe; el atajo de Markdown no funcionará hasta corregirla
+2026-09-04 10:22:15,779 INFO    voziris: Voziris 0.1.0 arrancado
+2026-09-04 10:22:19,281 INFO    voziris.motores.local: modelo local nemo-parakeet-tdt-0.6b-v3 (int8) cargado
+2026-09-04 10:22:25,490 INFO    voziris: salida pedida desde fuera (voziris --salir)
+2026-09-04 10:22:25,490 INFO    voziris: cerrando
