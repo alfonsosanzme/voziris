@@ -131,6 +131,15 @@ def _construir(
     return captura, motor, destinos
 
 
+def _postprocesos(configuracion: cfg.Config) -> list[Any]:
+    """La cadena en su orden fijo: diccionario → sustituciones (→ LLM en VOZ-42)."""
+    from voziris.proceso.diccionario import Diccionario
+    from voziris.proceso.sustituciones import Sustituciones
+
+    p = configuracion.proceso
+    return [Diccionario(p.diccionario), Sustituciones(p.sustituciones)]
+
+
 # --- modo consola ---------------------------------------------------------------------
 
 
@@ -174,7 +183,10 @@ def _modo_consola(configuracion: cfg.Config, archivo: Path, destino: str, nivel:
 
         def cancelar_dictado(self) -> None: ...
 
-    orq = Orquestador(SinCaptura(), motor, destinos, [], configuracion.general.idioma, nivel)
+    orq = Orquestador(
+        SinCaptura(), motor, destinos, _postprocesos(configuracion),
+        configuracion.general.idioma, nivel,
+    )
     print("Cargando el motor…")
     orq.arrancar()
     resultado = orq.dictar_audio(audio, destino)
@@ -276,7 +288,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
     sonidos = Sonidos(configuracion.audio.sonidos)
     vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
-        captura, motor, destinos, [],
+        captura, motor, destinos, _postprocesos(configuracion),
         idioma=configuracion.general.idioma,
         nivel=configuracion.proceso.nivel,
         al_estado=cambiar_estado,
