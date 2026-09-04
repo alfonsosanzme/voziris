@@ -61,14 +61,55 @@ comentarios intactos: se puede editar a mano igualmente.
 
 ## Clave de Groq (motor por API y limpieza con LLM)
 
-1. Crea una cuenta en https://console.groq.com y genera una clave de API.
-2. Ponla en Ajustes → Motor → Clave, o en la variable de entorno
-   `GROQ_API_KEY`. Nunca sale de tu equipo salvo hacia Groq.
-3. Coste real: `whisper-large-v3-turbo` cuesta 0,04 $ por hora de audio.
-   Dictando 30 minutos al día, unos 0,60 $ al mes. La limpieza con LLM
-   añade una cantidad marginal (unos 200 tokens por minuto de dictado).
+Con `motor = "local"` no hace falta ninguna clave. La clave solo se usa para
+dos cosas opcionales: transcribir en la nube (más precisión, sobre todo con
+jerga) y limpiar el texto con un LLM.
 
-Con `motor = "local"` no hace falta ninguna clave.
+### Conseguirla (cinco minutos)
+
+1. Entra en https://console.groq.com y crea una cuenta (vale la de Google o
+   GitHub). El plan gratuito ya permite probar; para uso diario conviene
+   añadir un método de pago, porque el nivel gratuito tiene límites por
+   minuto y el de pago cuesta céntimos.
+2. En el menú de la izquierda, **API Keys** → **Create API Key**. Ponle un
+   nombre («Voziris») y copia la clave que aparece: empieza por `gsk_` y
+   **solo se muestra una vez**. Si la pierdes, se crea otra y se borra la
+   vieja.
+3. Guárdala en un gestor de contraseñas. No la pegues en chats ni en
+   capturas de pantalla: quien la tenga puede gastar con tu cuenta.
+
+### Ponerla en Voziris
+
+Hay dos sitios; con uno basta:
+
+- **En la aplicación (lo más cómodo).** Menú de la bandeja → Ajustes →
+  pestaña **Motor** → campo **Clave** (se muestra con puntos). Pulsa
+  **Probar la clave** para ver «✓ La clave es válida» y luego **Guardar**.
+  Queda escrita en `config.toml`, junto al ejecutable, en texto plano: si
+  la carpeta va en un USB, la clave va con ella.
+- **En una variable de entorno (si prefieres no escribirla en el archivo).**
+  Con el campo Clave vacío, Voziris lee `GROQ_API_KEY`. En Windows:
+  *Configuración → Sistema → Información → Configuración avanzada del
+  sistema → Variables de entorno → Variables de usuario → Nueva*, o desde
+  PowerShell (solo para tu usuario, sin administrador):
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable("GROQ_API_KEY", "gsk_…", "User")
+  ```
+
+  Cierra y vuelve a abrir Voziris para que la vea.
+
+Después, en Ajustes → Motor elige **API** o **Automático** (API si hay red,
+local si no). Y en Ajustes → Texto, para la limpieza, escribe un modelo en
+«Modelo de LLM», por ejemplo `llama-3.3-70b-versatile`.
+
+### Qué cuesta de verdad
+
+`whisper-large-v3-turbo` cuesta 0,04 $ por hora de audio: dictando 30
+minutos al día, unos 0,60 $ al mes. La limpieza con LLM añade una cantidad
+marginal (unos 200 tokens por minuto de dictado). El consumo se ve en
+https://console.groq.com bajo **Usage**. La clave nunca sale de tu equipo
+salvo hacia Groq, y no aparece en el log ni en los mensajes de error.
 
 ## Qué sale de tu equipo
 
