@@ -31,7 +31,10 @@ por unos 0,60 $ al mes; en local, por cero.
 ## Primer arranque
 
 1. Descarga el ZIP de la última [release](https://github.com/alfonsosanzme/voziris/releases)
-   y descomprímelo donde quieras (un USB vale).
+   y descomprímelo donde quieras (un USB vale). Son unos 1 100 archivos:
+   espera a que la extracción termine del todo antes de ejecutar nada. Si
+   `voziris.exe` se lanza a medias, falla con «No module named
+   numpy._core…» y basta con esperar y volver a abrirlo.
 2. Comprueba el hash SHA-256 que viene en las notas de la release si tu
    antivirus protesta (ver «Limitaciones conocidas»).
 3. Ejecuta `voziris.exe`. Aparece el icono del micrófono en la bandeja y
