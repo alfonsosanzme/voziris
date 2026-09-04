@@ -47,7 +47,7 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"  # numpy >= 2.4 usa `type X = ...` en sus stubs; en 3.11 pip instala numpy < 2.4
 strict = true
 files = ["src/voziris"]
 # Estas bibliotecas no traen stubs de tipos
