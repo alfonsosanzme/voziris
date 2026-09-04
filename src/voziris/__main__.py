@@ -238,12 +238,16 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             ultimo_progreso[0] = fraccion or 0.0
             avisar(mensaje)
 
+    from voziris.audio.sonidos import Sonidos
+
+    sonidos = Sonidos(configuracion.audio.sonidos)
     orq = Orquestador(
         captura, motor, destinos, [],
         idioma=configuracion.general.idioma,
         nivel=configuracion.proceso.nivel,
         al_estado=cambiar_estado,
         al_aviso=avisar,
+        sonidos=sonidos,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
     )
 
@@ -267,6 +271,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         except MicrofonoNoDisponible as e:
             aviso_mic = str(e)
         orq.arrancar()
+        sonidos.precalentar()
         bandeja.mostrar_en_hilo()
         log.info("icono de bandeja visible")
         for aviso in configuracion.avisos:
@@ -293,6 +298,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         orq.parar()
         atajos.liberar()
         captura.cerrar()
+        sonidos.cerrar()
         bandeja.cerrar()
         with contextlib.suppress(Exception):
             raiz.destroy()
