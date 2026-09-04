@@ -87,9 +87,10 @@ Hay dos sitios; con uno basta:
 
 - **En la aplicación (lo más cómodo).** Menú de la bandeja → Ajustes →
   pestaña **Motor** → campo **Clave** (se muestra con puntos). Pulsa
-  **Probar la clave** para ver «✓ La clave es válida» y luego **Guardar**.
-  Queda escrita en `config.toml`, junto al ejecutable, en texto plano: si
-  la carpeta va en un USB, la clave va con ella.
+  **Probar la clave y ver modelos**: si sale «✓ La clave es válida», los
+  desplegables de modelo se rellenan con lo que esa clave puede usar. Luego
+  **Guardar**. La clave queda escrita en `config.toml`, junto al ejecutable,
+  en texto plano: si la carpeta va en un USB, la clave va con ella.
 - **En una variable de entorno (si prefieres no escribirla en el archivo).**
   Con el campo Clave vacío, Voziris lee `GROQ_API_KEY`. En Windows:
   *Configuración → Sistema → Información → Configuración avanzada del
@@ -103,16 +104,67 @@ Hay dos sitios; con uno basta:
   Cierra y vuelve a abrir Voziris para que la vea.
 
 Después, en Ajustes → Motor elige **API** o **Automático** (API si hay red,
-local si no). Y en Ajustes → Texto, para la limpieza, escribe un modelo en
-«Modelo de LLM», por ejemplo `llama-3.3-70b-versatile`.
+local si no).
 
-### Qué cuesta de verdad
+### Qué modelo elegir
 
-`whisper-large-v3-turbo` cuesta 0,04 $ por hora de audio: dictando 30
-minutos al día, unos 0,60 $ al mes. La limpieza con LLM añade una cantidad
-marginal (unos 200 tokens por minuto de dictado). El consumo se ve en
-https://console.groq.com bajo **Usage**. La clave nunca sale de tu equipo
-salvo hacia Groq, y no aparece en el log ni en los mensajes de error.
+Comprobado el 4 de septiembre de 2026. Los nombres cambian: Groq retiró siete
+modelos de chat solo en 2026, así que la lista de verdad es la que sale al
+pulsar «Probar la clave y ver modelos».
+
+**Para transcribir** (Ajustes → Motor → Modelo de transcripción) hay dos:
+
+| Modelo | Errores | Precio por hora de audio |
+|---|---|---|
+| `whisper-large-v3` | 10,3 % | 0,111 $ |
+| `whisper-large-v3-turbo` | 12,0 % | 0,04 $ |
+
+En el plan gratuito los dos tienen los mismos límites y ninguno se cobra, así
+que ahí conviene el primero: acierta un 15 % más y la diferencia de velocidad
+es del 14 %, imperceptible frente a la ida y vuelta de red. Si algún día pasas
+a plan de pago, dictando media hora al día son 1,67 $ al mes frente a 0,60 $.
+
+**Para limpiar el texto** (Ajustes → Texto → Modelo de LLM), los modelos Llama
+que circulan por todas las guías **se apagaron el 16 de agosto de 2026** para
+las cuentas gratuitas. Hoy quedan:
+
+- `openai/gpt-oss-120b`: el mejor en castellano de los medidos.
+- `openai/gpt-oss-20b`: el doble de rápido y la mitad de precio, algo peor con
+  jerga y nombres propios.
+
+Voziris ya les pide el mínimo de razonamiento y que lo oculten, porque si no
+el modelo pega sus propias deliberaciones dentro de tu texto.
+
+### Lo que Voziris hace por su cuenta
+
+Al transcribir por API, las palabras de tu diccionario viajan como pista de
+vocabulario, así que «Creatics» o «Kairis» salen bien ya desde la
+transcripción, sin esperar a la corrección posterior.
+
+### Comprobar que la API se está usando de verdad
+
+Elegir «API» sin clave no da error: cada dictado cae al motor local y se
+avisa, pero es fácil no darse cuenta. Dos formas de salir de dudas:
+
+- El registro `voziris.log`, junto al ejecutable, dice con qué motor se
+  entregó cada dictado: «dictado entregado por api:groq» o «por local».
+- El panel de consumo de Groq, en **Usage**, solo cuenta lo que llegó de
+  verdad. Si está a cero, no ha salido ninguna petición.
+
+### El plan gratuito y dónde se ve el consumo
+
+La cuenta gratuita no pide tarjeta y da 20 peticiones por minuto, 2.000 al
+día y 8 horas de audio diarias. Dictando media hora al día usas el 6 % de esa
+cuota, así que no hace falta pagar nada.
+
+El consumo se mira en `console.groq.com/dashboard/usage`, **en la pestaña
+Activity, no en Cost**: en el plan gratuito el coste siempre marca cero, y eso
+hace pensar que no se está usando. Dos avisos más: el panel tarda hasta quince
+minutos en actualizarse, y las fechas van en horario UTC, dos horas por detrás
+del peninsular en verano.
+
+La clave nunca sale de tu equipo salvo hacia Groq, y no aparece en el log ni
+en los mensajes de error.
 
 ## Qué sale de tu equipo
 

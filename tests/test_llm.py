@@ -67,7 +67,8 @@ def test_limpio_manda_el_prompt_y_devuelve_el_texto_limpio() -> None:
     assert cuerpo["messages"][0]["role"] == "system"
     assert "muletillas" in cuerpo["messages"][0]["content"].lower()
     assert cuerpo["messages"][1] == {
-        "role": "user", "content": "eh, nos vemos el martes, no, el jueves",
+        "role": "user",
+        "content": "eh, nos vemos el martes, no, el jueves",
     }
     assert cuerpo["max_tokens"] >= 64
 
@@ -162,3 +163,25 @@ def test_rechaza_palabras_nuevas_aunque_la_longitud_cuadre() -> None:
 def test_rechaza_salida_demasiado_corta() -> None:
     entrada = "esto es un dictado largo con muchas palabras que no deberían desaparecer así"
     assert es_sospechosa(entrada, "Esto es un dictado.")
+
+
+def test_pide_el_minimo_de_razonamiento_y_lo_esconde() -> None:
+    """Los gpt-oss piensan antes de responder; ese pensamiento no puede pegarse."""
+    visto: dict[str, Any] = {}
+
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        visto["cuerpo"] = json.loads(peticion.read())
+        return _respuesta("Nos vemos el jueves.")
+
+    _llm(handler, modelo="openai/gpt-oss-120b").aplicar(_t("eh, el jueves"), _ctx())
+    assert visto["cuerpo"]["reasoning_effort"] == "low"
+    assert visto["cuerpo"]["reasoning_format"] == "hidden"
+
+
+def test_se_descarta_el_razonamiento_que_se_cuele_en_el_texto() -> None:
+    salida = (
+        "<think>El usuario dice martes y luego jueves, me quedo con jueves.</think>\nEl jueves."
+    )
+    t = _llm(lambda _: _respuesta(salida)).aplicar(_t("el martes, no, el jueves"), _ctx())
+    assert t.texto == "El jueves."
+    assert "think" not in t.texto

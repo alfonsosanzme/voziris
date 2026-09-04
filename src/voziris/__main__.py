@@ -147,7 +147,10 @@ def _construir(
     ml = configuracion.motor.local
     local = MotorLocal(ml.modelo, ml.carpeta, ml.hilos, ml.cuantizacion, al_progresar)
     ma = configuracion.motor.api
-    api = MotorAPI(ma.base_url, ma.modelo, ma.clave, ma.timeout_s)
+    api = MotorAPI(
+        ma.base_url, ma.modelo, ma.clave, ma.timeout_s,
+        vocabulario=configuracion.proceso.diccionario,
+    )
     motor = Selector(configuracion.general.motor, local, api)
     from voziris.destinos.archivo_md import ArchivoMarkdown
 
@@ -456,9 +459,13 @@ def _aplicacion(configuracion: cfg.Config) -> int:
     def probar_clave(base_url: str, clave: str) -> tuple[bool, str]:
         return MotorAPI(base_url, configuracion.motor.api.modelo, clave).probar_clave()
 
+    def listar_modelos(base_url: str, clave: str) -> tuple[list[str], list[str]]:
+        return MotorAPI(base_url, configuracion.motor.api.modelo, clave).listar_modelos()
+
     ajustes = Ajustes(
         raiz, configuracion, aplicar, nivel_actual=captura.nivel_actual,
         dispositivos=Captura.dispositivos, probar_clave=probar_clave,
+        listar_modelos=listar_modelos,
     )
 
     def alternar_corte() -> None:
@@ -519,6 +526,14 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             avisar(f"{e}. Puedes dictar desde el menú de la bandeja")
             bandeja.estado("error")
         _ajustar_arranque_con_windows(configuracion, avisar)
+        if configuracion.general.motor == "api" and not configuracion.motor.api.clave:
+            # Sin esto, el usuario elige «api», todo se transcribe en local y lo
+            # único que lo delata es un aviso efímero en el indicador flotante.
+            avisar(
+                "Motor por API elegido pero sin clave: se dicta en local. "
+                "Pega tu clave de Groq en Ajustes → Motor."
+            )
+            log.warning("motor = api sin clave: todos los dictados irán al motor local")
         log.info("Voziris %s arrancado", __version__)
         raiz.after(16, bombear)
         if winapi.ES_WINDOWS:

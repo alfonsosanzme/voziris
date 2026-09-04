@@ -41,7 +41,10 @@ def _audio(segundos: float = 1.0) -> Audio:
 
 def _motor(handler: Any, timeout_s: int = 15) -> MotorAPI:
     return MotorAPI(
-        "https://api.groq.com/openai/v1/", "whisper-large-v3-turbo", CLAVE, timeout_s,
+        "https://api.groq.com/openai/v1/",
+        "whisper-large-v3-turbo",
+        CLAVE,
+        timeout_s,
         transporte=httpx.MockTransport(handler),
     )
 
@@ -151,9 +154,12 @@ def test_respuesta_vacia_o_rota() -> None:
 
 
 def test_sin_clave_no_esta_disponible() -> None:
-    motor = MotorAPI("https://api.groq.com/openai/v1", "m", "", transporte=httpx.MockTransport(
-        lambda _: httpx.Response(200)
-    ))
+    motor = MotorAPI(
+        "https://api.groq.com/openai/v1",
+        "m",
+        "",
+        transporte=httpx.MockTransport(lambda _: httpx.Response(200)),
+    )
     assert not motor.disponible()
     with pytest.raises(MotorNoDisponible, match="GROQ_API_KEY"):
         motor.transcribir(_audio(), "es")
@@ -180,8 +186,12 @@ def test_precalentar_y_probar_clave() -> None:
     motor.precalentar()
     assert llamadas == ["/openai/v1/models"]
     assert motor.probar_clave() == (True, "La clave es válida")
-    mala = MotorAPI("https://api.groq.com/openai/v1", "m", "gsk_clave_mala",
-                    transporte=httpx.MockTransport(handler))
+    mala = MotorAPI(
+        "https://api.groq.com/openai/v1",
+        "m",
+        "gsk_clave_mala",
+        transporte=httpx.MockTransport(handler),
+    )
     ok, mensaje = mala.probar_clave()
     assert not ok and "no es válida" in mensaje and "mala" not in mensaje
     motor.cerrar()
@@ -236,3 +246,87 @@ def test_groq_real_transcribe_una_muestra(monkeypatch: pytest.MonkeyPatch) -> No
     print(f"\nGroq: {t.ms_proceso} ms, RTF {t.rtf:.3f}: {t.texto[:100]}")
     assert "sábado" in t.texto.lower() and t.motor == "api:groq"
     motor.cerrar()
+
+
+def test_listar_modelos_separa_voz_de_texto() -> None:
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        assert peticion.url.path.endswith("/models")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "whisper-large-v3", "active": True},
+                    {"id": "whisper-large-v3-turbo", "active": True},
+                    {"id": "llama-3.3-70b-versatile", "active": True},
+                    {"id": "playai-tts", "active": True},
+                    {"id": "modelo-retirado", "active": False},
+                    {"sin_id": True},
+                ]
+            },
+        )
+
+    audio, chat = _motor(handler).listar_modelos()
+    assert audio == ["whisper-large-v3", "whisper-large-v3-turbo"]
+    assert "llama-3.3-70b-versatile" in chat
+    # La síntesis de voz no sirve ni para dictar ni para limpiar: fuera de las dos.
+    assert "playai-tts" not in audio + chat
+    assert "modelo-retirado" not in audio + chat
+
+
+def test_listar_modelos_degrada_sin_clave_ni_red() -> None:
+    sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
+    assert sin_clave.listar_modelos() == ([], [])
+    assert _motor(lambda _: httpx.Response(500)).listar_modelos() == ([], [])
+    roto = _motor(lambda _: (_ for _ in ()).throw(httpx.ConnectError("nada")))
+    assert roto.listar_modelos() == ([], [])
+
+
+def test_el_diccionario_va_en_el_parametro_prompt() -> None:
+    visto: dict[str, Any] = {}
+
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        visto["cuerpo"] = peticion.read()
+        return httpx.Response(200, json={"text": "Creatics y Kairis."})
+
+    motor = MotorAPI(
+        "https://api.groq.com/openai/v1",
+        "whisper-large-v3",
+        CLAVE,
+        transporte=httpx.MockTransport(handler),
+        vocabulario=["Creatics", "Kairis", "Voziris"],
+    )
+    motor.transcribir(_audio(), "es")
+    cuerpo = visto["cuerpo"]
+    assert b'name="prompt"' in cuerpo
+    assert b"Creatics, Kairis, Voziris" in cuerpo
+
+
+def test_el_prompt_se_recorta_por_el_principio() -> None:
+    """Groq solo mira los ULTIMOS 224 tokens: lo que sobra se va por delante."""
+    motor = MotorAPI("https://api.groq.com/openai/v1", "m", CLAVE, vocabulario=["x" * 50] * 100)
+    campos = motor._campos("es")
+    assert len(campos["prompt"]) <= 800
+    assert not campos["prompt"].startswith(", ")
+    assert (
+        MotorAPI("https://api.groq.com/openai/v1", "m", CLAVE)._campos("es").get("prompt") is None
+    )
+
+
+def test_modelos_no_conversacionales_fuera_de_las_dos_listas() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "whisper-large-v3", "active": True},
+                    {"id": "openai/gpt-oss-120b", "active": True},
+                    {"id": "canopylabs/orpheus-v1-english", "active": True},
+                    {"id": "groq/compound", "active": True},
+                    {"id": "meta-llama/llama-guard-4-12b", "active": True},
+                ]
+            },
+        )
+
+    audio, chat = _motor(handler).listar_modelos()
+    assert audio == ["whisper-large-v3"]
+    assert chat == ["openai/gpt-oss-120b"]

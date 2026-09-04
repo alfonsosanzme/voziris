@@ -205,3 +205,31 @@ def test_abrir_dos_veces_no_duplica(raiz: tk.Tk, configuracion: cfg.Config) -> N
     assert a._ventana is ventana
     a.cerrar()
     assert a._ventana is None
+
+
+def test_probar_clave_rellena_los_desplegables(raiz: tk.Tk, configuracion: cfg.Config) -> None:
+    a, _ = _panel(
+        raiz,
+        configuracion,
+        probar_clave=lambda u, k: (True, "La clave es válida"),
+        listar_modelos=lambda u, k: (["whisper-large-v3"], ["llama-3.3-70b-versatile"]),
+    )
+    a._vars["motor.api.clave"].set("gsk_de_prueba")
+    a._probar()
+    _bombear(raiz, 0.8)
+    assert "whisper-large-v3" in a._combos_modelo["audio"].cget("values")
+    assert "llama-3.3-70b-versatile" in a._combos_modelo["llm"].cget("values")
+    assert "" in a._combos_modelo["llm"].cget("values")  # vacío = sin limpieza
+    assert "de voz" in a._resultado_clave.get()
+    a.cerrar()
+
+
+def test_el_modelo_se_puede_escribir_aunque_no_este_en_la_lista(
+    raiz: tk.Tk, configuracion: cfg.Config
+) -> None:
+    """Los nombres de modelo cambian: la lista ayuda, no encierra."""
+    a, aplicadas = _panel(raiz, configuracion)
+    a._vars["motor.api.modelo"].set("modelo-que-saldra-manana")
+    assert a.guardar()
+    assert aplicadas[0].motor.api.modelo == "modelo-que-saldra-manana"
+    a.cerrar()

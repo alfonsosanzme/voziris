@@ -89,6 +89,12 @@ PROMPTS = {Nivel.LIMPIO: PROMPT_LIMPIO, Nivel.REESCRITURA: PROMPT_REESCRITURA}
 
 PREFIJOS = ("texto corregido:", "texto:", "corregido:", "resultado:")
 
+_RAZONAMIENTO = re.compile(
+    r"<(think|thinking|reasoning)>.*?</\1>\s*", re.IGNORECASE | re.DOTALL
+)
+"""Red de seguridad: si un modelo de razonamiento ignora «reasoning_format»,
+su pensamiento no acaba pegado en el documento del usuario."""
+
 # --- red de seguridad -------------------------------------------------------------
 
 MARGEN_LARGO = 0.40
@@ -122,7 +128,7 @@ def es_sospechosa(entrada: str, salida: str) -> bool:
 
 
 def _limpiar_respuesta(texto: str) -> str:
-    texto = texto.strip()
+    texto = _RAZONAMIENTO.sub("", texto).strip()
     for prefijo in PREFIJOS:
         if texto.lower().startswith(prefijo):
             texto = texto[len(prefijo) :].strip()
@@ -205,6 +211,13 @@ class LimpiezaLLM:
             "model": self._modelo,
             "temperature": 0,
             "max_tokens": max(64, len(texto) // 2 + 64),
+            # Los modelos de razonamiento de Groq (gpt-oss, qwen3) piensan antes
+            # de responder. Sin estos dos campos, ese razonamiento se cuela
+            # entre etiquetas <think> en el texto que se pega, y además se
+            # factura a precio de salida. «low» es el mínimo que aceptan los
+            # gpt-oss; los que admiten «none» lo ignoran sin protestar.
+            "reasoning_effort": "low",
+            "reasoning_format": "hidden",
             "messages": [
                 {"role": "system", "content": PROMPTS[nivel].format(idioma=idioma)},
                 {"role": "user", "content": texto},

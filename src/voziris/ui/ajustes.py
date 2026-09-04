@@ -160,6 +160,7 @@ class Ajustes:
         nivel_actual: Callable[[], float] = lambda: 0.0,
         dispositivos: Callable[[], list[tuple[int, str]]] = list,
         probar_clave: Callable[[str, str], tuple[bool, str]] | None = None,
+        listar_modelos: Callable[[str, str], tuple[list[str], list[str]]] | None = None,
         version: str = __version__,
     ) -> None:
         self._raiz = raiz
@@ -168,7 +169,9 @@ class Ajustes:
         self._nivel_actual = nivel_actual
         self._dispositivos = dispositivos
         self._probar_clave = probar_clave
+        self._listar_modelos = listar_modelos
         self._version = version
+        self._combos_modelo: dict[str, ttk.Combobox] = {}
         self._ventana: tk.Toplevel | None = None
         self._vars: dict[str, tk.Variable] = {}
         self._textos: dict[str, tk.Text] = {}
@@ -290,6 +293,19 @@ class Ajustes:
         c.grid(row=fila, column=1, sticky="w", pady=3)
         return c
 
+    def _combo_libre(
+        self, marco: ttk.Frame, fila: int, etiqueta: str, clave: str, valor: str
+    ) -> ttk.Combobox:
+        """Desplegable que además admite escribir: la lista es una ayuda, no una jaula.
+
+        Los nombres de modelo cambian sin avisar, así que el usuario tiene que
+        poder poner uno que la lista todavía no conozca.
+        """
+        self._fila(marco, fila, etiqueta)
+        c = ttk.Combobox(marco, textvariable=self._var(clave, valor), values=[valor], width=37)
+        c.grid(row=fila, column=1, sticky="w", pady=3)
+        return c
+
     # --- pestañas ------------------------------------------------------------------------
 
     def _pestana_atajos(self, m: ttk.Frame) -> None:
@@ -388,16 +404,20 @@ class Ajustes:
             row=6, column=0, sticky="w", pady=(12, 2)
         )
         self._entrada(m, 7, "URL base", "motor.api.base_url", c.motor.api.base_url)
-        self._entrada(m, 8, "Modelo", "motor.api.modelo", c.motor.api.modelo)
+        self._combos_modelo["audio"] = self._combo_libre(
+            m, 8, "Modelo de transcripción", "motor.api.modelo", c.motor.api.modelo
+        )
         self._entrada(
             m, 9, "Clave (vacía = GROQ_API_KEY)", "motor.api.clave", c.motor.api.clave, show="•"
         )
         self._entrada(m, 10, "Timeout (s)", "motor.api.timeout_s", c.motor.api.timeout_s, 8)
         self._resultado_clave = tk.StringVar(master=self._raiz, value="")
-        ttk.Button(m, text="Probar la clave", command=self._probar).grid(
+        ttk.Button(m, text="Probar la clave y ver modelos", command=self._probar).grid(
             row=11, column=0, pady=6, sticky="w"
         )
-        ttk.Label(m, textvariable=self._resultado_clave).grid(row=11, column=1, sticky="w")
+        ttk.Label(m, textvariable=self._resultado_clave, wraplength=360).grid(
+            row=11, column=1, sticky="w"
+        )
 
     def _probar(self) -> None:
         if self._probar_clave is None:
@@ -421,11 +441,46 @@ class Ajustes:
             if resultado:
                 ok, mensaje = resultado[0]
                 self._resultado_clave.set(("✓ " if ok else "✗ ") + mensaje)
+                if ok:
+                    self._cargar_modelos(base_url, clave)
             elif self._ventana is not None:
                 self._raiz.after(100, comprobar)
 
         threading.Thread(target=trabajo, name="voziris-probar-clave", daemon=True).start()
         self._raiz.after(100, comprobar)
+
+    def _cargar_modelos(self, base_url: str, clave: str) -> None:
+        """Rellena los desplegables con los modelos que esa clave puede usar."""
+        if self._listar_modelos is None:
+            return
+        listar = self._listar_modelos
+        listas: list[tuple[list[str], list[str]]] = []
+
+        def trabajo() -> None:
+            try:
+                listas.append(listar(base_url, clave))
+            except Exception:  # noqa: BLE001 — decorativo: si falla, se queda como estaba
+                log.info("no se pudieron listar los modelos", exc_info=True)
+                listas.append(([], []))
+
+        def recoger() -> None:
+            if not listas:
+                if self._ventana is not None:
+                    self._raiz.after(150, recoger)
+                return
+            audio, chat = listas[0]
+            if audio and "audio" in self._combos_modelo:
+                self._combos_modelo["audio"].configure(values=audio)
+            if chat and "llm" in self._combos_modelo:
+                self._combos_modelo["llm"].configure(values=["", *chat])
+            if audio or chat:
+                self._resultado_clave.set(
+                    self._resultado_clave.get()
+                    + f" · {len(audio)} de voz y {len(chat)} de texto en la lista"
+                )
+
+        threading.Thread(target=trabajo, name="voziris-listar-modelos", daemon=True).start()
+        self._raiz.after(150, recoger)
 
     def _pestana_texto(self, m: ttk.Frame) -> None:
         c = self._config.proceso
@@ -441,9 +496,14 @@ class Ajustes:
             ttk.Radiobutton(marco, text=texto, value=valor, variable=var).pack(
                 side="left", padx=(0, 10)
             )
-        self._entrada(
+        self._combos_modelo["llm"] = self._combo_libre(
             m, 1, "Modelo de LLM (vacío = sin limpieza)", "proceso.llm_modelo", c.llm_modelo
         )
+        ttk.Label(
+            m,
+            text="La lista se rellena al probar la clave en la pestaña Motor.",
+            foreground="#555",
+        ).grid(row=1, column=2, sticky="w", padx=(8, 0))
         self._fila(m, 2, "Diccionario (una palabra por línea)")
         dic = tk.Text(m, width=40, height=6, undo=True)
         dic.insert("1.0", "\n".join(c.diccionario))

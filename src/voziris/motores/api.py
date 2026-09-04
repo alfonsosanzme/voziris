@@ -69,7 +69,10 @@ class MotorAPI:
         clave: str,
         timeout_s: int = 15,
         transporte: Any = None,
+        vocabulario: list[str] | None = None,
     ) -> None:
+        self.vocabulario = list(vocabulario or [])
+        """Palabras que el modelo tiende a fallar. Van en el parámetro «prompt»."""
         self.nombre = f"api:{_proveedor_de(base_url)}"
         self._base_url = base_url.rstrip("/")
         self._modelo = modelo
@@ -144,12 +147,7 @@ class MotorAPI:
             respuesta = cliente.post(
                 "/audio/transcriptions",
                 files={"file": ("dictado.wav", a_wav(audio), "audio/wav")},
-                data={
-                    "model": self._modelo,
-                    "language": idioma,
-                    "response_format": "json",
-                    "temperature": "0",
-                },
+                data=self._campos(idioma),
             )
         except httpx.TimeoutException as e:
             raise MotorNoDisponible(f"la API no respondió en {self._timeout} s") from e
@@ -178,6 +176,26 @@ class MotorAPI:
             duracion_audio_s=audio.duracion_s,
         )
 
+    def _campos(self, idioma: str) -> dict[str, str]:
+        """Los campos del multipart. `prompt` siembra el vocabulario propio.
+
+        Groq admite hasta 224 tokens de `prompt` para «denotar la ortografía
+        correcta» de nombres propios y jerga, y solo tiene en cuenta los
+        ÚLTIMOS 224: por eso la lista se recorta por el principio. Es la
+        palanca más barata para que «Creatics» o «Kairis» salgan bien sin
+        pasar por el diccionario de después.
+        """
+        campos = {
+            "model": self._modelo,
+            "language": idioma,
+            "response_format": "json",
+            "temperature": "0",
+        }
+        if self.vocabulario:
+            # ~1 token por palabra corta; 200 deja margen bajo el límite de 224.
+            campos["prompt"] = ", ".join(self.vocabulario)[-200 * 4 :].lstrip(", ")
+        return campos
+
     def probar_clave(self) -> tuple[bool, str]:
         """Para el botón «probar» de los ajustes: dice si la clave vale, sin revelarla."""
         if not self._clave:
@@ -195,6 +213,67 @@ class MotorAPI:
         if respuesta.status_code in (401, 403):
             return False, "La clave no es válida"
         return False, f"La API respondió {respuesta.status_code}"
+
+    def listar_modelos(self) -> tuple[list[str], list[str]]:
+        """(modelos de audio, modelos de chat) que la clave puede usar hoy.
+
+        Para los desplegables de los ajustes: elegir de una lista en vez de
+        escribir el nombre a mano y equivocarse. Si la API no responde,
+        devuelve dos listas vacías y el panel se queda con lo que ya tenía.
+        """
+        if not self._clave or not red.hay_red(self._host, self._puerto):
+            return [], []
+        import httpx
+
+        try:
+            respuesta = self._abrir().get("/models", timeout=TIMEOUT_PRUEBA_S)
+            if respuesta.status_code != 200:
+                return [], []
+            datos = respuesta.json().get("data", [])
+        except (httpx.HTTPError, ValueError, AttributeError) as e:
+            log.info("no se pudo listar modelos: %s", _limpiar(str(e), self._clave))
+            return [], []
+        audio: list[str] = []
+        chat: list[str] = []
+        for modelo in datos:
+            if not isinstance(modelo, dict) or not modelo.get("id"):
+                continue
+            if modelo.get("active") is False:
+                continue
+            identificador = str(modelo["id"])
+            if _es_de_audio(identificador):
+                audio.append(identificador)
+            elif _es_conversacional(identificador):
+                chat.append(identificador)
+        return sorted(audio), sorted(chat)
+
+
+FAMILIAS_NO_CONVERSACIONALES = ("canopylabs/", "groq/compound", "guard", "safeguard", "tts")
+"""Modelos que no valen para limpiar texto: síntesis de voz, moderación y sistemas
+agénticos. Los «compound» buscan en la web y ejecutan código por su cuenta, así que
+podrían meter contenido externo en un dictado."""
+
+
+def _es_de_audio(identificador: str) -> bool:
+    """¿Ese modelo transcribe audio? El endpoint de modelos no lo dice.
+
+    Ningún campo de la respuesta distingue voz de texto, así que se va por el
+    nombre. Lista blanca por «whisper», que es lo único que Groq tiene hoy en
+    transcripción; el sufijo «tts» ya no basta como lista negra desde que la
+    síntesis pasó a llamarse «canopylabs/orpheus-*».
+    """
+    minusculas = identificador.lower()
+    if any(marca in minusculas for marca in FAMILIAS_NO_CONVERSACIONALES):
+        return False
+    return "whisper" in minusculas
+
+
+def _es_conversacional(identificador: str) -> bool:
+    """¿Sirve para el post-proceso con LLM?"""
+    minusculas = identificador.lower()
+    return not _es_de_audio(minusculas) and not any(
+        marca in minusculas for marca in FAMILIAS_NO_CONVERSACIONALES
+    )
 
 
 def _resumen_error(respuesta: Any) -> str:

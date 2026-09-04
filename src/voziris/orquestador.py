@@ -453,8 +453,12 @@ class Orquestador:
             return
         for aviso in transcripcion.avisos:
             self._avisar(aviso)
-        log.info("dictado entregado: %s (%d ms, RTF %.3f)", detalle, transcripcion.ms_proceso,
-                 transcripcion.rtf)
+        # El motor va en el log a propósito: es la forma de saber si la API se
+        # está usando de verdad o si todo cae al local sin que se note.
+        log.info(
+            "dictado entregado por %s: %s (%d ms, RTF %.3f)",
+            transcripcion.motor, detalle, transcripcion.ms_proceso, transcripcion.rtf,
+        )
 
     def _transcribir(self, audio: Audio) -> Transcripcion:
         self.motor_listo.wait()  # el primer dictado del día puede pillar el modelo cargando
