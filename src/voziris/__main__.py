@@ -132,12 +132,17 @@ def _construir(
 
 
 def _postprocesos(configuracion: cfg.Config) -> list[Any]:
-    """La cadena en su orden fijo: diccionario → sustituciones (→ LLM en VOZ-42)."""
+    """La cadena en su orden fijo: diccionario → sustituciones → LLM (si hay modelo)."""
     from voziris.proceso.diccionario import Diccionario
+    from voziris.proceso.llm import LimpiezaLLM
     from voziris.proceso.sustituciones import Sustituciones
 
     p = configuracion.proceso
-    return [Diccionario(p.diccionario), Sustituciones(p.sustituciones)]
+    cadena: list[Any] = [Diccionario(p.diccionario), Sustituciones(p.sustituciones)]
+    if p.llm_modelo:
+        ma = configuracion.motor.api
+        cadena.append(LimpiezaLLM(ma.base_url, p.llm_modelo, ma.clave))
+    return cadena
 
 
 # --- modo consola ---------------------------------------------------------------------

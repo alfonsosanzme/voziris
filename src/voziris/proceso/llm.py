@@ -15,61 +15,217 @@ Los tres niveles (C4):
 
 Regla de oro del prompt: **nunca añadir contenido que el usuario no haya
 dicho.** Un LLM que «mejora» inventando datos convierte la herramienta en algo
-en lo que no se puede confiar. Ante duda, devolver el texto tal cual.
+en lo que no se puede confiar. Y como el prompt no basta, hay una red de
+seguridad: `es_sospechosa()` compara entrada y salida y, si la salida es
+mucho más larga, mucho más corta o trae palabras que no estaban, se descarta
+y se entrega el texto de entrada con aviso.
 
-Ojo con el castellano: hay que verificar el comportamiento en español antes de
-cerrar el prompt. Casi todo lo publicado sobre esto está probado en inglés.
+El modelo y la clave son los de `[motor.api]`; solo `proceso.llm_modelo` es
+propio. Con `llm_modelo` vacío este paso no hace nada. La verificación en
+castellano con dictados reales se hace con `tools/probar_llm.py`.
 
 Issue: VOZ-42.
 """
 
 from __future__ import annotations
 
+import logging
+import re
+import unicodedata
+from typing import Any
+
 from voziris.tipos import Contexto, Nivel, Transcripcion
+
+log = logging.getLogger(__name__)
+
+TIMEOUT_S = 6.0
+"""Más vale texto crudo ya que texto pulido dos segundos tarde.
+
+Groq responde en 0,3–1,5 s para un dictado de un minuto (medido en H0 con la
+API de transcripción, misma infraestructura). Seis segundos cubren un pico
+de carga sin que el usuario se pregunte si la aplicación se ha colgado.
+"""
 
 PROMPT_LIMPIO = """\
 Eres un corrector de dictado. Recibes una transcripción de voz en {idioma} y
-devuelves EXCLUSIVAMENTE el texto corregido, sin comentarios.
+devuelves EXCLUSIVAMENTE el texto corregido, sin comentarios, sin comillas y
+sin encabezados.
 
 Haz esto:
-- Elimina muletillas y repeticiones («eh», «o sea», «este…»).
-- Resuelve las autocorrecciones del hablante: si se corrige, conserva solo la
-  versión final.
-- Arregla la puntuación si está claramente mal.
+- Elimina muletillas y repeticiones («eh», «o sea», «este…», «bueno», «mmm»).
+- Resuelve las autocorrecciones del hablante: si se corrige («el martes, no,
+  el jueves»), conserva solo la versión final («el jueves»).
+- Arregla la puntuación y las mayúsculas si están claramente mal.
 
 No hagas esto:
-- No añadas información que no esté en el texto.
+- No añadas información que no esté en el texto. Ni un nombre, ni una fecha,
+  ni una hora, ni una cortesía.
 - No reordenes las ideas ni cambies el registro.
-- No traduzcas.
-- No resumas.
-
-Transcripción:
-{texto}"""
+- No traduzcas. No resumas. No expliques lo que has hecho.
+- Si el texto ya está bien, devuélvelo tal cual."""
 
 PROMPT_REESCRITURA = """\
-(pendiente de VOZ-42: partir de PROMPT_LIMPIO y añadir formato — listas,
-párrafos, estructura de correo — manteniendo intacta la prohibición de añadir
-contenido)"""
+Eres un corrector de dictado. Recibes una transcripción de voz en {idioma} y
+devuelves EXCLUSIVAMENTE el texto corregido y formateado, sin comentarios, sin
+comillas y sin encabezados.
+
+Haz esto:
+- Elimina muletillas y repeticiones («eh», «o sea», «este…», «bueno», «mmm»).
+- Resuelve las autocorrecciones del hablante: si se corrige, conserva solo la
+  versión final.
+- Arregla la puntuación y las mayúsculas.
+- Aplica formato solo cuando el propio dictado lo pide: enumeraciones
+  («primero… segundo…») como lista con guiones, cambios de tema como párrafos
+  separados, y saludo y despedida en líneas propias si es un correo.
+
+No hagas esto:
+- No añadas información que no esté en el texto. Ni un nombre, ni una fecha,
+  ni una hora, ni una cortesía, ni un asunto.
+- No cambies el registro ni el orden de las ideas.
+- No traduzcas. No resumas. No expliques lo que has hecho.
+- Si el texto ya está bien, devuélvelo tal cual."""
+
+PROMPTS = {Nivel.LIMPIO: PROMPT_LIMPIO, Nivel.REESCRITURA: PROMPT_REESCRITURA}
+
+PREFIJOS = ("texto corregido:", "texto:", "corregido:", "resultado:")
+
+# --- red de seguridad -------------------------------------------------------------
+
+MARGEN_LARGO = 0.40
+"""La salida puede crecer hasta un 40 % (puntuación, mayúsculas, saltos de línea)."""
+MARGEN_CORTO = 0.45
+"""Y encoger hasta un 45 %: las muletillas y las repeticiones se van."""
+PALABRAS_NUEVAS_MAXIMAS = 3
+"""Palabras de cinco letras o más que no estaban en la entrada. Alguna aparece
+al corregir una falta; más de tres es contenido nuevo."""
+
+_PALABRA = re.compile(r"[^\W\d_]{5,}", re.UNICODE)
+
+
+def _normalizar(palabra: str) -> str:
+    sin_acentos = unicodedata.normalize("NFD", palabra.casefold())
+    return "".join(c for c in sin_acentos if unicodedata.category(c) != "Mn")
+
+
+def es_sospechosa(entrada: str, salida: str) -> bool:
+    """True si la salida del modelo no puede venir solo de limpiar la entrada."""
+    if not salida.strip():
+        return True
+    largo_entrada, largo_salida = len(entrada.strip()), len(salida.strip())
+    if largo_salida > largo_entrada * (1 + MARGEN_LARGO) + 20:
+        return True
+    if largo_salida < largo_entrada * (1 - MARGEN_CORTO) - 5:
+        return True
+    conocidas = {_normalizar(p) for p in _PALABRA.findall(entrada)}
+    nuevas = {_normalizar(p) for p in _PALABRA.findall(salida)} - conocidas
+    return len(nuevas) > PALABRAS_NUEVAS_MAXIMAS
+
+
+def _limpiar_respuesta(texto: str) -> str:
+    texto = texto.strip()
+    for prefijo in PREFIJOS:
+        if texto.lower().startswith(prefijo):
+            texto = texto[len(prefijo) :].strip()
+    if len(texto) >= 2 and texto[0] in "\"«“'" and texto[-1] in "\"»”'":
+        texto = texto[1:-1].strip()
+    return texto
 
 
 class LimpiezaLLM:
     nombre = "llm"
     requiere_red = True
 
-    def __init__(self, base_url: str, modelo: str, clave: str, timeout_s: int = 10) -> None:
-        self._base_url = base_url
+    def __init__(
+        self,
+        base_url: str,
+        modelo: str,
+        clave: str,
+        timeout_s: float = TIMEOUT_S,
+        transporte: Any = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
         self._modelo = modelo
         self._clave = clave
         self._timeout = timeout_s
+        self._transporte = transporte
+        self._cliente: Any = None
+
+    def _abrir(self) -> Any:
+        if self._cliente is None:
+            import httpx
+
+            self._cliente = httpx.Client(
+                base_url=self._base_url,
+                timeout=self._timeout,
+                headers={"Authorization": f"Bearer {self._clave}", "User-Agent": "voziris"},
+                transport=self._transporte,
+            )
+        return self._cliente
+
+    def cerrar(self) -> None:
+        cliente, self._cliente = self._cliente, None
+        if cliente is not None:
+            cliente.close()
 
     def aplicar(self, t: Transcripcion, ctx: Contexto) -> Transcripcion:
-        """Aplica el prompt del nivel de `ctx`.
+        """Aplica el prompt del nivel de `ctx`. Nunca lanza; nunca pierde el dictado.
 
-        Si `ctx.nivel is Nivel.LITERAL`, devuelve `t` sin llamar a nada.
-        Si no hay red, no hay clave o la llamada supera el timeout, devuelve
-        `t` con un aviso. El timeout es corto a propósito: más vale texto crudo
-        entregado ya que texto pulido dos segundos tarde.
+        Sin modelo configurado no hace nada. Sin clave o sin red, sin llamar,
+        avisa. Con timeout, error o salida sospechosa, devuelve la entrada
+        con aviso.
         """
-        if ctx.nivel is Nivel.LITERAL:
+        if ctx.nivel is Nivel.LITERAL or not self._modelo or not t.texto.strip():
             return t
-        raise NotImplementedError("VOZ-42")
+        if not self._clave:
+            t.avisos.append("Sin clave de API: entregado sin limpiar")
+            return t
+        if not ctx.hay_red:
+            t.avisos.append("Sin red: entregado sin limpiar")
+            return t
+        try:
+            salida = self._pedir(t.texto, ctx.nivel, t.idioma)
+        except Exception as e:  # noqa: BLE001 — cualquier fallo del LLM degrada, no rompe
+            motivo = _limpiar(str(e), self._clave)
+            log.warning("LLM: %s", motivo)
+            t.avisos.append(f"LLM no disponible ({motivo}): entregado sin limpiar")
+            return t
+        if es_sospechosa(t.texto, salida):
+            log.warning(
+                "LLM: salida sospechosa descartada (%d → %d caracteres)", len(t.texto), len(salida)
+            )
+            t.avisos.append("El LLM alteró demasiado el texto: entregado sin limpiar")
+            return t
+        t.texto = salida
+        return t
+
+    def _pedir(self, texto: str, nivel: Nivel, idioma: str) -> str:
+        import httpx
+
+        cuerpo = {
+            "model": self._modelo,
+            "temperature": 0,
+            "max_tokens": max(64, len(texto) // 2 + 64),
+            "messages": [
+                {"role": "system", "content": PROMPTS[nivel].format(idioma=idioma)},
+                {"role": "user", "content": texto},
+            ],
+        }
+        try:
+            respuesta = self._abrir().post("/chat/completions", json=cuerpo)
+        except httpx.TimeoutException as e:
+            raise RuntimeError(f"sin respuesta en {self._timeout:g} s") from e
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"sin conexión: {e}") from e
+        if respuesta.status_code != 200:
+            raise RuntimeError(f"HTTP {respuesta.status_code}")
+        try:
+            contenido = respuesta.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise RuntimeError("respuesta inesperada") from e
+        return _limpiar_respuesta(str(contenido))
+
+
+def _limpiar(texto: str, clave: str) -> str:
+    if clave and len(clave) >= 8:
+        texto = texto.replace(clave, "***")
+    return texto
