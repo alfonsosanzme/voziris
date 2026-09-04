@@ -93,17 +93,10 @@ def _duracion(wav: Path) -> float:
     return float(info.frames) / info.samplerate
 
 
-RMS_OBJETIVO = 0.30
-"""Nivel al que se normaliza el audio antes del motor, con recorte duro.
-
-Medido en el hito 0 (4 sep 2026) sobre 8 dictados grabados a RMS 0,02: Parakeet
-int8 descarta frases enteras cuando el audio le llega bajo (WER 30,7 % en
-crudo). Normalizar a RMS 0,3 recortando lo que sobrepase ±1 baja el WER medio
-a 16,7 %; la compresión suave (tanh) y la normalización limitada por pico
-funcionan peor (18,7 % y 27,9 %). Contra la intuición, a este modelo el
-recorte no le molesta y el nivel bajo sí. Es la misma constante que aplica
-`Captura.terminar_dictado()` (VOZ-10).
-"""
+# La normalización es la MISMA que aplica la aplicación en cada dictado
+# (`Captura.terminar_dictado()`); la medición que justifica RMS_OBJETIVO está
+# en el docstring de esa constante y en docs/H0.md.
+from voziris.audio.captura import normalizar  # noqa: E402
 
 
 def _cargar(wav: Path):
@@ -119,16 +112,6 @@ def _cargar(wav: Path):
     if sr != SR:
         sys.exit(f"{wav.name} está a {sr} Hz; el banco espera {SR} Hz.")
     return np.ascontiguousarray(datos.mean(axis=1))
-
-
-def normalizar(audio, rms_objetivo: float = RMS_OBJETIVO):
-    """Escala el audio a `rms_objetivo` y recorta a [-1, 1]. Ver RMS_OBJETIVO."""
-    import numpy as np
-
-    rms = float(np.sqrt(np.mean(audio**2)))
-    if rms < 1e-6:
-        return audio
-    return np.clip(audio * (rms_objetivo / rms), -1.0, 1.0).astype(np.float32)
 
 
 # --- WER -------------------------------------------------------------------
