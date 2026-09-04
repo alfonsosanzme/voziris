@@ -166,6 +166,15 @@ class Captura:
         except Exception:  # noqa: BLE001 — al cerrar, nada que hacer con el error
             pass
 
+    @property
+    def ganancia_db(self) -> float:
+        return self._ganancia_db
+
+    @ganancia_db.setter
+    def ganancia_db(self, valor: float) -> None:
+        """Desde los ajustes, en caliente. Se aplica al terminar el dictado siguiente."""
+        self._ganancia_db = max(-20.0, min(20.0, float(valor)))
+
     def cambiar_dispositivo(self, dispositivo: str) -> str | None:
         """A5 — cambia de micrófono sin reiniciar. Nunca durante un dictado."""
         self._dispositivo = dispositivo

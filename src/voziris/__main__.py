@@ -364,9 +364,66 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         if bandeja is not None:
             bandeja.actualizar_menu()
 
+    from voziris.audio.captura import Captura
+    from voziris.destinos.app_activa import AppActiva
+    from voziris.destinos.archivo_md import ArchivoMarkdown
+    from voziris.motores.api import MotorAPI
+    from voziris.ui.ajustes import Ajustes
+
+    def aplicar(nueva: cfg.Config) -> list[str]:
+        """Aplica en caliente lo que se pueda; devuelve lo que exige reiniciar."""
+        nonlocal configuracion
+        vieja, pendientes = configuracion, []
+        if vars(nueva.atajos) != vars(vieja.atajos):
+            for aviso in atajos.registrar(vars(nueva.atajos)):
+                avisar(aviso)
+        if nueva.audio.dispositivo != vieja.audio.dispositivo:
+            if orq.en_curso():
+                pendientes.append("micrófono (hay un dictado en curso)")
+            else:
+                aviso_mic = captura.cambiar_dispositivo(nueva.audio.dispositivo)
+                if aviso_mic:
+                    avisar(aviso_mic)
+        captura.ganancia_db = nueva.audio.ganancia_db
+        if nueva.audio.buffer_previo_ms != vieja.audio.buffer_previo_ms:
+            pendientes.append("búfer previo")
+        vad.silencio_corte_ms = nueva.audio.silencio_corte_ms
+        sonidos.activos = nueva.audio.sonidos
+        motor.preferencia = nueva.general.motor
+        if vars(nueva.motor.local) != vars(vieja.motor.local):
+            pendientes.append("motor local (modelo, carpeta, hilos o cuantización)")
+        if vars(nueva.motor.api) != vars(vieja.motor.api):
+            pendientes.append("motor por API (URL, modelo, clave o timeout)")
+        orq.idioma = nueva.general.idioma
+        orq.nivel = nueva.proceso.nivel
+        orq.postprocesos = _postprocesos(nueva)
+        d = nueva.destino.app_activa
+        destinos["app_activa"] = AppActiva(d.metodo, d.restaurar_portapapeles, d.auto_enter)
+        md = nueva.destino.markdown
+        if md.ruta.parent.is_dir():
+            destinos["markdown"] = ArchivoMarkdown(md.ruta, md.formato, md.sello, md.separador)
+        else:
+            destinos.pop("markdown", None)
+        if vars(nueva.historial) != vars(vieja.historial):
+            pendientes.append("historial (entradas o audio)")
+        configuracion = nueva
+        _ajustar_arranque_con_windows(nueva, avisar)
+        if bandeja is not None:
+            bandeja.actualizar_menu()
+        log.info("ajustes aplicados; pendientes de reinicio: %s", pendientes or "ninguno")
+        return pendientes
+
+    def probar_clave(base_url: str, clave: str) -> tuple[bool, str]:
+        return MotorAPI(base_url, configuracion.motor.api.modelo, clave).probar_clave()
+
+    ajustes = Ajustes(
+        raiz, configuracion, aplicar, nivel_actual=captura.nivel_actual,
+        dispositivos=Captura.dispositivos, probar_clave=probar_clave,
+    )
+
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
-        abrir_ajustes=lambda: avisar("Los ajustes llegan en VOZ-60; edita config.toml"),
+        abrir_ajustes=lambda: en_hilo_tk(ajustes.abrir),
         cambiar_motor=cambiar_motor,
         reintentar=reintentar,
         borrar_entrada=borrar_entrada,

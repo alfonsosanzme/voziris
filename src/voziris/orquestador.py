@@ -234,6 +234,15 @@ class Orquestador:
     def estado(self) -> Estado:
         return self._estado
 
+    @property
+    def postprocesos(self) -> list[PostProceso]:
+        return list(self._postprocesos)
+
+    @postprocesos.setter
+    def postprocesos(self, cadena: list[PostProceso]) -> None:
+        """Desde los ajustes, en caliente. El dictado en curso usa la cadena nueva."""
+        self._postprocesos = list(cadena)
+
     def en_curso(self) -> bool:
         """Para el hook: si hay dictado, «cancelar» actúa y se consume."""
         return self._estado in (Estado.GRABANDO, Estado.PROCESANDO)
