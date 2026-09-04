@@ -125,9 +125,19 @@ def _construir(
     ma = configuracion.motor.api
     api = MotorAPI(ma.base_url, ma.modelo, ma.clave, ma.timeout_s)
     motor = Selector(configuracion.general.motor, local, api)
+    from voziris.destinos.archivo_md import ArchivoMarkdown
+
     d = configuracion.destino.app_activa
-    destinos = {"app_activa": AppActiva(d.metodo, d.restaurar_portapapeles, d.auto_enter)}
-    # VOZ-50 añadirá "markdown"; hasta entonces el atajo avisa de que no está disponible.
+    destinos: dict[str, Any] = {
+        "app_activa": AppActiva(d.metodo, d.restaurar_portapapeles, d.auto_enter),
+    }
+    md = configuracion.destino.markdown
+    if md.ruta.parent.is_dir():
+        destinos["markdown"] = ArchivoMarkdown(md.ruta, md.formato, md.sello, md.separador)
+    else:
+        # C-1: la ruta de relleno del ejemplo no impide arrancar; el atajo de
+        # Markdown responde con tono de error y aviso hasta que se corrija.
+        log.warning("destino Markdown desactivado: la carpeta %s no existe", md.ruta.parent)
     return captura, motor, destinos
 
 
@@ -290,6 +300,22 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         url = configuracion.motor.api.base_url
         return red.hay_red(red.host_de(url), red.puerto_de(url))
 
+    from voziris.historial import Historial
+    from voziris.tipos import Contexto
+
+    def contexto_de_reintento(destino: str) -> Contexto:
+        return Contexto(
+            destino=destino, modo=Modo.CLAVAR,
+            app_activa=destinos["app_activa"].app_en_primer_plano(),
+            hay_red=hay_red_si_hace_falta(), nivel=configuracion.proceso.nivel,
+        )
+
+    h = configuracion.historial
+    historial = Historial(
+        configuracion.carpeta / "historial" / "dictados.jsonl", h.entradas, h.guardar_audio,
+        destinos, contexto_de_reintento,
+    )
+
     sonidos = Sonidos(configuracion.audio.sonidos)
     vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
@@ -299,10 +325,33 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         al_estado=cambiar_estado,
         al_aviso=aviso_de_dictado,
         sonidos=sonidos,
+        historial=historial,
         vad=vad,
         hay_red=hay_red_si_hace_falta,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
     )
+
+    def reintentar(indice: int) -> None:
+        """Desde la bandeja: el menú se cierra y el foco vuelve a la app; se espera un poco."""
+        import threading
+        import time
+
+        def trabajo() -> None:
+            time.sleep(0.4)
+            entrega = historial.reintentar(indice)
+            if entrega.ok:
+                hud.aviso(entrega.detalle)
+            else:
+                hud.aviso(f"No se pudo reentregar: {entrega.detalle}")
+            if bandeja is not None:
+                bandeja.actualizar_menu()
+
+        threading.Thread(target=trabajo, name="voziris-reintento", daemon=True).start()
+
+    def borrar_entrada(indice: int) -> None:
+        historial.borrar(indice)
+        if bandeja is not None:
+            bandeja.actualizar_menu()
 
     def cambiar_motor(preferencia: str) -> None:
         """Desde la bandeja: vale para el dictado siguiente y se intenta guardar."""
@@ -319,14 +368,14 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         dictar_ahora=lambda: orq.alternar_clavar(),
         abrir_ajustes=lambda: avisar("Los ajustes llegan en VOZ-60; edita config.toml"),
         cambiar_motor=cambiar_motor,
-        reintentar=lambda _i: avisar("El historial llega en VOZ-52"),
-        borrar_entrada=lambda _i: avisar("El historial llega en VOZ-52"),
+        reintentar=reintentar,
+        borrar_entrada=borrar_entrada,
         salir=lambda: en_hilo_tk(raiz.quit),
         acerca_de=lambda: en_hilo_tk(
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
         ),
     )
-    bandeja = Bandeja(acciones, motor_actual=lambda: motor.preferencia)
+    bandeja = Bandeja(acciones, ultimas=historial.ultimas, motor_actual=lambda: motor.preferencia)
     atajos = Atajos(orq.al_empezar_atajo, orq.terminar, orq.cancelar, en_curso=orq.en_curso)
 
     try:

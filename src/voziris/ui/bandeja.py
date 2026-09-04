@@ -150,11 +150,11 @@ class Bandeja:
             Item(
                 resumen(entrada),
                 pystray.Menu(
-                    Item("Volver a entregar", reintentar(indice)),
-                    Item("Borrar del historial", borrar(indice)),
+                    Item("Volver a entregar", reintentar(entrada.indice)),
+                    Item("Borrar del historial", borrar(entrada.indice)),
                 ),
             )
-            for indice, entrada in enumerate(entradas)
+            for entrada in entradas
         ]
 
     def _acerca_de(self) -> None:

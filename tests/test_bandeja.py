@@ -43,10 +43,11 @@ class Llamadas:
         )
 
 
-def _entrada(texto: str, entregado: bool = True) -> EntradaHistorial:
+def _entrada(texto: str, entregado: bool = True, indice: int = 0) -> EntradaHistorial:
     return EntradaHistorial(
         momento=datetime(2026, 9, 4, 19, 42), texto=texto, motor="local",
         destino="app_activa", entregado=entregado, ms_total=900, duracion_audio_s=4.0,
+        indice=indice,
     )
 
 
@@ -136,8 +137,10 @@ def test_ultimos_dictados_dinamicos_con_reintento_y_borrado() -> None:
     vacio = _items(submenu)
     assert len(vacio) == 1 and not vacio[0].enabled
 
-    historial[:] = [_entrada("Llamar a la gestoría por lo del modelo 111, que se acaba el plazo."),
-                    _entrada("Idea para Kairis", entregado=False)]
+    historial[:] = [
+        _entrada("Llamar a la gestoría por lo del modelo 111, que se acaba el plazo.", indice=7),
+        _entrada("Idea para Kairis", entregado=False, indice=8),
+    ]
     entradas = _items(submenu)
     assert [_texto(e) for e in entradas] == [
         "19:42 · Llamar a la gestoría por lo del modelo 11…",
@@ -147,7 +150,7 @@ def test_ultimos_dictados_dinamicos_con_reintento_y_borrado() -> None:
     assert [_texto(a) for a in acciones] == ["Volver a entregar", "Borrar del historial"]
     acciones[0](None)
     acciones[1](None)
-    assert llamadas.lista == [("reintentar", 1), ("borrar", 1)]
+    assert llamadas.lista == [("reintentar", 8), ("borrar", 8)]  # el índice del historial
 
     historial[:] = [_entrada(f"dictado {n}") for n in range(15)]
     assert len(_items(submenu)) == 10
