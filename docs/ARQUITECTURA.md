@@ -24,6 +24,13 @@ Tres protocolos sostienen todo el diseño: `MotorSTT`, `PostProceso` y
 `Destino`. `__main__.py` es el único módulo que conoce todas las piezas; los
 demás dependen solo de los protocolos y de `tipos.py`.
 
+Módulos auxiliares sin dependencias del proyecto, aparte de `tipos.py`:
+
+- `winapi.py` — lo que se necesita de Win32 (`SendInput`, ventana en primer
+  plano, portapapeles) con las firmas de `ctypes` declaradas en un solo sitio.
+  Importable en cualquier sistema; sus funciones fallan con `OSError` fuera
+  de Windows. Lo usan `destinos/app_activa.py` y `atajos.py`.
+
 ## Las cinco decisiones que explican el resto
 
 ### 1. Ninguna etapa propaga excepciones hacia arriba

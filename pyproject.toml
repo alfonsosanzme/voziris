@@ -52,7 +52,7 @@ strict = true
 files = ["src/voziris"]
 # Estas bibliotecas no traen stubs de tipos
 [[tool.mypy.overrides]]
-module = ["sounddevice.*", "pystray.*", "onnx_asr.*", "win32.*", "win32clipboard.*"]
+module = ["sounddevice.*", "pystray.*", "onnx_asr.*", "win32.*", "win32clipboard.*", "win32con"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
