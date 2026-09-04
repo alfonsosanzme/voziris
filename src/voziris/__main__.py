@@ -40,7 +40,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from voziris import __version__, winapi
+from voziris import __version__, red, winapi
 from voziris import config as cfg
 from voziris.errores import AtajosNoDisponibles, ConfigInvalida, MicrofonoNoDisponible
 from voziris.tipos import Modo, Nivel
@@ -114,12 +114,17 @@ def _construir(
     """Crea las piezas a partir de la configuración. Devuelve (captura, motor, destinos)."""
     from voziris.audio.captura import Captura
     from voziris.destinos.app_activa import AppActiva
+    from voziris.motores.api import MotorAPI
     from voziris.motores.local import MotorLocal
+    from voziris.motores.selector import Selector
 
     a = configuracion.audio
     captura = Captura(a.dispositivo, a.ganancia_db, a.buffer_previo_ms)
     ml = configuracion.motor.local
-    motor = MotorLocal(ml.modelo, ml.carpeta, ml.hilos, ml.cuantizacion, al_progresar)
+    local = MotorLocal(ml.modelo, ml.carpeta, ml.hilos, ml.cuantizacion, al_progresar)
+    ma = configuracion.motor.api
+    api = MotorAPI(ma.base_url, ma.modelo, ma.clave, ma.timeout_s)
+    motor = Selector(configuracion.general.motor, local, api)
     d = configuracion.destino.app_activa
     destinos = {"app_activa": AppActiva(d.metodo, d.restaurar_portapapeles, d.auto_enter)}
     # VOZ-50 añadirá "markdown"; hasta entonces el atajo avisa de que no está disponible.
@@ -261,6 +266,13 @@ def _aplicacion(configuracion: cfg.Config) -> int:
     from voziris.audio.sonidos import Sonidos
     from voziris.audio.vad import DetectorSilencio
 
+    def hay_red_si_hace_falta() -> bool:
+        """VOZ-32: con motor local y nivel literal no se sondea nada: no sale ni un paquete."""
+        if motor.preferencia == "local" and configuracion.proceso.nivel is Nivel.LITERAL:
+            return False
+        url = configuracion.motor.api.base_url
+        return red.hay_red(red.host_de(url), red.puerto_de(url))
+
     sonidos = Sonidos(configuracion.audio.sonidos)
     vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
@@ -271,13 +283,25 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         al_aviso=aviso_de_dictado,
         sonidos=sonidos,
         vad=vad,
+        hay_red=hay_red_si_hace_falta,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
     )
+
+    def cambiar_motor(preferencia: str) -> None:
+        """Desde la bandeja: vale para el dictado siguiente y se intenta guardar."""
+        motor.preferencia = preferencia
+        configuracion.general.motor = preferencia
+        try:
+            cfg.guardar(configuracion)
+        except ConfigInvalida as e:
+            avisar(f"Motor cambiado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        if bandeja is not None:
+            bandeja.actualizar_menu()
 
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
         abrir_ajustes=lambda: avisar("Los ajustes llegan en VOZ-60; edita config.toml"),
-        cambiar_motor=lambda m: avisar(f"El cambio de motor llega en VOZ-31 (pedido: {m})"),
+        cambiar_motor=cambiar_motor,
         reintentar=lambda _i: avisar("El historial llega en VOZ-52"),
         borrar_entrada=lambda _i: avisar("El historial llega en VOZ-52"),
         salir=lambda: en_hilo_tk(raiz.quit),
@@ -285,7 +309,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
         ),
     )
-    bandeja = Bandeja(acciones, motor_actual=lambda: configuracion.general.motor)
+    bandeja = Bandeja(acciones, motor_actual=lambda: motor.preferencia)
     atajos = Atajos(orq.al_empezar_atajo, orq.terminar, orq.cancelar, en_curso=orq.en_curso)
 
     try:
