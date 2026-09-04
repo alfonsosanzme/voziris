@@ -253,6 +253,95 @@ def ejecutable_en_primer_plano() -> str | None:
         _kernel32.CloseHandle(proceso)
 
 
+# --- ventanas sin foco (HUD) ----------------------------------------------------
+
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOPMOST = 0x00000008
+SW_SHOWNOACTIVATE = 4
+SW_HIDE = 0
+MONITOR_DEFAULTTONEAREST = 2
+SPI_GETCLIENTAREAANIMATION = 0x1042
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = (("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long))
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = (("cbSize", wintypes.DWORD), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", wintypes.DWORD))
+
+
+def hacer_ventana_sin_foco(hwnd: int) -> None:
+    """Marca una ventana para que nunca se active ni salga en Alt+Tab.
+
+    `WS_EX_NOACTIVATE`: recibe clics y se pinta, pero no toma el foco. Si el
+    HUD lo tomara, el texto se pegaría en el propio HUD. `WS_EX_TOOLWINDOW`:
+    fuera de Alt+Tab y de la barra de tareas. `WS_EX_TOPMOST`: siempre encima.
+    """
+    _solo_windows()
+    _user32.GetWindowLongW.argtypes = (wintypes.HWND, ctypes.c_int)
+    _user32.GetWindowLongW.restype = ctypes.c_long
+    _user32.SetWindowLongW.argtypes = (wintypes.HWND, ctypes.c_int, ctypes.c_long)
+    _user32.SetWindowLongW.restype = ctypes.c_long
+    actual = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    _user32.SetWindowLongW(
+        hwnd, GWL_EXSTYLE, actual | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+    )
+
+
+def estilo_extendido(hwnd: int) -> int:
+    _solo_windows()
+    _user32.GetWindowLongW.argtypes = (wintypes.HWND, ctypes.c_int)
+    _user32.GetWindowLongW.restype = ctypes.c_long
+    return int(_user32.GetWindowLongW(hwnd, GWL_EXSTYLE)) & 0xFFFFFFFF
+
+
+def mostrar_sin_activar(hwnd: int) -> None:
+    """Muestra la ventana sin darle el foco. `deiconify()` de Tk sí lo daría."""
+    _solo_windows()
+    _user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+    _user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+
+
+def area_de_trabajo_activa() -> tuple[int, int, int, int]:
+    """(x, y, ancho, alto) del área útil del monitor donde está la ventana activa.
+
+    Sin la barra de tareas. Si no se puede saber, el monitor principal.
+    """
+    _solo_windows()
+    _user32.MonitorFromWindow.argtypes = (wintypes.HWND, wintypes.DWORD)
+    _user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    _user32.GetMonitorInfoW.argtypes = (wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO))
+    _user32.GetMonitorInfoW.restype = wintypes.BOOL
+    monitor = _user32.MonitorFromWindow(_user32.GetForegroundWindow(), MONITOR_DEFAULTTONEAREST)
+    info = _MONITORINFO()
+    info.cbSize = ctypes.sizeof(_MONITORINFO)
+    if not monitor or not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        ancho = int(_user32.GetSystemMetrics(0))
+        alto = int(_user32.GetSystemMetrics(1))
+        return 0, 0, ancho, alto
+    r = info.rcWork
+    return int(r.left), int(r.top), int(r.right - r.left), int(r.bottom - r.top)
+
+
+def animaciones_activas() -> bool:
+    """False si el usuario desactivó las animaciones en Windows (movimiento reducido)."""
+    if not ES_WINDOWS:
+        return True
+    _user32.SystemParametersInfoW.argtypes = (
+        wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT,
+    )
+    _user32.SystemParametersInfoW.restype = wintypes.BOOL
+    valor = wintypes.BOOL(1)
+    if not _user32.SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(valor), 0):
+        return True
+    return bool(valor.value)
+
+
 # --- instancia única ------------------------------------------------------------
 
 ERROR_ALREADY_EXISTS = 183

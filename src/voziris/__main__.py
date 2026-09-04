@@ -43,7 +43,7 @@ from typing import Any
 from voziris import __version__, winapi
 from voziris import config as cfg
 from voziris.errores import AtajosNoDisponibles, ConfigInvalida, MicrofonoNoDisponible
-from voziris.tipos import Nivel
+from voziris.tipos import Modo, Nivel
 
 log = logging.getLogger("voziris")
 
@@ -222,14 +222,12 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         raiz.after(500, vigilar_salida)
 
     bandeja: Bandeja | None = None
+    orq: Orquestador | None = None
 
     def avisar(texto: str) -> None:
+        """Notificación del sistema: para lo que el usuario debe saber aunque no mire."""
         if bandeja is not None:
             bandeja.avisar(texto)
-
-    def cambiar_estado(estado: str) -> None:
-        if bandeja is not None:
-            bandeja.estado(estado)
 
     captura, motor, destinos = _construir(configuracion, lambda m, f: avisar_progreso(m, f))
     ultimo_progreso = [0.0]
@@ -239,6 +237,26 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         if fraccion is None or fraccion >= 1.0 or fraccion - ultimo_progreso[0] >= 0.1:
             ultimo_progreso[0] = fraccion or 0.0
             avisar(mensaje)
+
+    from voziris.ui.hud import Hud
+
+    hud = Hud(raiz, nivel=captura.nivel_actual, en_hilo_tk=en_hilo_tk)
+
+    def cambiar_estado(estado: str) -> None:
+        if bandeja is not None:
+            bandeja.estado(estado)
+        if estado == "grabando":
+            hud.mostrar_grabando(orq.modo or Modo.MANTENER if orq is not None else Modo.MANTENER)
+        elif estado == "procesando":
+            hud.mostrar_procesando()
+        else:
+            hud.ocultar()
+
+    def aviso_de_dictado(texto: str) -> None:
+        """Los avisos del pipeline van al HUD (1,5 s); los errores, también a la bandeja."""
+        hud.aviso(texto)
+        if orq is not None and orq.estado.value == "error":
+            avisar(texto)
 
     from voziris.audio.sonidos import Sonidos
     from voziris.audio.vad import DetectorSilencio
@@ -250,7 +268,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         idioma=configuracion.general.idioma,
         nivel=configuracion.proceso.nivel,
         al_estado=cambiar_estado,
-        al_aviso=avisar,
+        al_aviso=aviso_de_dictado,
         sonidos=sonidos,
         vad=vad,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
@@ -306,6 +324,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         sonidos.cerrar()
         bandeja.cerrar()
         with contextlib.suppress(Exception):
+            hud.destruir()
             raiz.destroy()
     return 0
 
