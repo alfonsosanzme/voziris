@@ -57,3 +57,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "audio: necesita un micrófono real (se salta si no hay dispositivo de entrada)",
+    "win: necesita Windows con sesión interactiva (hook de teclado, portapapeles, ventanas)",
+    "modelo: necesita el modelo local descargado en ./modelos",
+    "red: necesita red y GROQ_API_KEY; cuesta dinero",
+]

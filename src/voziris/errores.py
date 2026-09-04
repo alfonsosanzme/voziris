@@ -37,3 +37,11 @@ class EntregaFallida(VozirisError):
 
 class ConfigInvalida(VozirisError):
     """El config.toml no es válido. Único error que sí detiene el arranque."""
+
+
+class MicrofonoNoDisponible(VozirisError):
+    """No se puede abrir el micrófono, o dejó de entregar audio a media grabación.
+
+    El orquestador descarta el dictado en curso y avisa; la aplicación sigue
+    viva y el usuario puede elegir otro micrófono en los ajustes.
+    """
