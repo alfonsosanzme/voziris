@@ -20,3 +20,6 @@ resultados-h0*.json
 
 # Grabaciones personales de prueba: nunca al repositorio
 prueba de voz/
+
+# Log de la aplicación, junto al ejecutable
+voziris.log*
