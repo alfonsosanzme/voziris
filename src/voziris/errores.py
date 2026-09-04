@@ -45,3 +45,11 @@ class MicrofonoNoDisponible(VozirisError):
     El orquestador descarta el dictado en curso y avisa; la aplicación sigue
     viva y el usuario puede elegir otro micrófono en los ajustes.
     """
+
+
+class AtajosNoDisponibles(VozirisError):
+    """No se pudo instalar el hook de teclado.
+
+    La aplicación arranca igual, con el icono en error: se puede dictar desde
+    el menú de bandeja («Dictar ahora») y reintentar desde los ajustes.
+    """

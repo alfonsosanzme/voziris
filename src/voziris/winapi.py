@@ -76,12 +76,16 @@ class INPUT(ctypes.Structure):
     _fields_ = (("type", wintypes.DWORD), ("union", _UNION_INPUT))
 
 
-def evento_tecla(vk: int, arriba: bool = False) -> INPUT:
-    """Pulsación (o liberación) de una tecla virtual."""
+def evento_tecla(vk: int, arriba: bool = False, marca: int = MARCA_VOZIRIS) -> INPUT:
+    """Pulsación (o liberación) de una tecla virtual.
+
+    `marca` va en `dwExtraInfo`; el hook de teclado ignora lo que lleve
+    `MARCA_VOZIRIS`. Los tests inyectan con `marca=0` para que el hook las
+    trate como pulsaciones físicas.
+    """
     ev = INPUT(type=INPUT_KEYBOARD)
     ev.union.ki = KEYBDINPUT(
-        wVk=vk, wScan=0, dwFlags=KEYEVENTF_KEYUP if arriba else 0, time=0,
-        dwExtraInfo=MARCA_VOZIRIS,
+        wVk=vk, wScan=0, dwFlags=KEYEVENTF_KEYUP if arriba else 0, time=0, dwExtraInfo=marca
     )
     return ev
 
