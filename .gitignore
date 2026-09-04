@@ -16,6 +16,7 @@ historial/
 *.wav
 banco/
 resultados-h0*.md
+resultados-h0*.json
 
 # Grabaciones personales de prueba: nunca al repositorio
 prueba de voz/

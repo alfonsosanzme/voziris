@@ -2,7 +2,7 @@
 
 **Fecha:** 4 de septiembre de 2026
 **Base:** `docs/ENCARGO.md`, `docs/ARQUITECTURA.md`, `docs/BACKLOG.md` y el esqueleto de `src/voziris`.
-**Estado:** análisis terminado, plan listo para aprobar. No se ha tocado código.
+**Estado:** aprobado por el cliente el 4 de septiembre de 2026 (sección 8). Hito 0 ejecutado el mismo día: veredicto en `docs/H0.md`. Las decisiones de ese hito ya están incorporadas aquí (marcadas «H0»).
 
 Este documento no repite el encargo: lo completa. Fija **cómo se comporta** la
 aplicación en cada situación (máquina de estados, hilos, fallos), **cómo se
@@ -29,6 +29,7 @@ resolución por defecto que aplicaré si no se dice lo contrario.
 |---|---|---|
 | `onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3")` | Correcto. Firma real: `load_model(model, path=None, *, quantization=None, sess_options=None, providers=None, ...)` | referencia de onnx-asr 0.12 |
 | ¿`recognize()` acepta `ndarray`? (duda abierta en VOZ-11) | **Sí**: `recognize(waveform: NDArray[float32], *, sample_rate=16_000)`. No hace falta WAV temporal | ídem |
+| `load_model(path=…)` descarga a esa carpeta | **A medias**: descarga ahí solo si la carpeta no existe; si existe, modo offline sin descargar (leído en `resolver.py`, confirmado en H0) | código de onnx-asr 0.12 |
 | Silero VAD «sin dependencias nuevas» | **Sí**: `onnx_asr.load_vad("silero", path=...)` lo descarga y lo sirve con el mismo onnxruntime | ídem |
 | Número de hilos configurable | Sí, vía `sess_options` de onnxruntime (`intra_op_num_threads`) | ídem |
 | Python 3.11–3.13 | onnx-asr soporta 3.10–3.14. En el equipo hay 3.13 (Store) y 3.14; `pyproject` exige `<3.14`, así que **3.13** | `py -0` |
@@ -265,7 +266,7 @@ Comunicación:
 ### 4.2 Diseño por módulo
 
 **`config.py`** — dataclasses anidadas que reflejan el TOML sección a sección:
-`General`, `Atajos`, `AudioCfg`, `MotorLocalCfg`, `MotorApiCfg`, `Proceso`,
+`General`, `Atajos`, `AudioCfg`, `MotorLocalCfg` (con `cuantizacion`, H0), `MotorApiCfg`, `Proceso`,
 `DestinoAppActiva`, `DestinoMarkdown`, `HistorialCfg`, y `Config` que las
 agrupa. Carga con `tomlkit`, valores por defecto tomados del propio
 `config.ejemplo.toml` (así una clave nueva en una versión futura no rompe un
@@ -296,8 +297,13 @@ sirve para ambos. Anillo: `np.ndarray` preasignado de `buffer_previo_ms` +
 margen, con índice de escritura; en `empezar_dictado()` se guarda el índice y
 a partir de ahí los bloques van también a una lista de acumulación. `nivel_actual()`
 devuelve el último RMS calculado en el callback (un float atómico en CPython).
-Ganancia: `np.clip(muestras * 10**(db/20), -1, 1)` al terminar, no en el
-callback. Pérdida de dispositivo: el `status` del callback y una excepción de
+**Normalización (H0):** `terminar_dictado()` escala el dictado a RMS 0,30 y
+recorta a ±1 **antes** de aplicar `ganancia_db`, que queda como ajuste fino.
+Parakeet int8 descarta frases enteras si el audio le llega bajo (WER 30,7 %
+→ 16,7 % al normalizar; ver `docs/H0.md`). La constante `RMS_OBJETIVO` se
+comparte con `tools/banco_h0.py`, donde está la medición. El docstring actual
+de `terminar_dictado()` dice lo contrario y se corrige en VOZ-10. Todo se hace
+al terminar, no en el callback. Pérdida de dispositivo: el `status` del callback y una excepción de
 PortAudio marcan `self._error`; `terminar_dictado()` lanza y el orquestador
 descarta. Cambio de micrófono en caliente: `cerrar()` + `abrir()` fuera de un
 dictado.
@@ -309,20 +315,27 @@ completo: sesión onnxruntime directa sobre el `silero_vad.onnx` que ya
 descargó, con entradas `input[1,512]`, `state[2,1,128]`, `sr` y salida de
 probabilidad. Umbral de voz 0,5; el corte solo tras `silencio_corte_ms`
 **continuos** de probabilidad < 0,35 (histéresis). `reiniciar()` pone el
-estado a cero.
+estado a cero. **H0:** el VAD no se usa para partir el audio antes del motor:
+con trozos de 1–3 s Parakeet cambia de idioma y el WER sube al 34,7 %.
 
 **`audio/sonidos.py`** — tres arrays sintetizados una vez en el constructor:
 inicio (barrido 440→660 Hz, 90 ms), fin (660→440 Hz, 90 ms), error (220 Hz con
 segundo armónico, 110 ms), con envolvente para que no chasquen.
 `sounddevice.play()` en hilo aparte. Con `activos=False`, no hacen nada.
 
-**`motores/local.py`** — `onnx_asr.load_model(modelo, path=carpeta,
-quantization="int8", sess_options=opts)` con `opts.intra_op_num_threads =
-hilos` si `hilos > 0`. `transcribir()` llama a `recognize(audio.muestras,
+**`motores/local.py`** — `onnx_asr.load_model(modelo, path=carpeta / modelo,
+quantization=cuantizacion, sess_options=opts)` con `opts.intra_op_num_threads =
+hilos` si `hilos > 0`. **H0:** `cuantizacion` viene de `[motor.local]`
+(`"int8"` por defecto, `"fp32"` admitido: 3 puntos menos de WER en jerga a
+cambio de RTF 0,12 y 2,5 GB de RAM). Carpeta propia por modelo bajo
+`modelos/`: onnx-asr entra en modo offline si la carpeta existe y descarga en
+ella si no existe, así que una descarga interrumpida deja una carpeta
+incompleta que hace fallar la carga con `ModelFileNotFoundError`; VOZ-11 la
+detecta, borra la carpeta y vuelve a descargar. `transcribir()` llama a `recognize(audio.muestras,
 sample_rate=16000)` y mide solo esa llamada. Descarga: onnx-asr usa
-`huggingface_hub`, que descarga a `.incomplete` y renombra al terminar, lo que
-cubre el criterio de «descarga interrumpida no deja modelo corrupto»; se
-verifica matando el proceso a medias. Progreso: `huggingface_hub` admite una
+`huggingface_hub` con `local_dir`; los archivos a medias quedan como
+`.incomplete` y no se confunden con el modelo, pero la carpeta sí queda creada
+(ver arriba); se verifica matando el proceso a medias. Progreso: `huggingface_hub` admite una
 clase `tqdm` propia; se pasa una que reporta a un callback. Si onnx-asr no
 deja inyectarla, se sondea el tamaño de la carpeta contra el tamaño conocido.
 `disponible()` es `self._modelo is not None`.
@@ -520,7 +533,7 @@ Respeta los hitos del backlog. Dentro de cada hito reordeno para que lo
 verificable con tests vaya antes que lo que solo se prueba a mano, y para que
 cada issue pueda probarse aislada con el modo consola.
 
-### Sesión 0 · Preparación (antes de H0, sin código de la aplicación)
+### Sesión 0 · Preparación (antes de H0, sin código de la aplicación) — **hecha el 4 sep 2026**
 
 1. `git init`, primer commit con el esqueleto tal cual.
 2. `py -3.13 -m venv .venv` e `pip install -e ".[dev,banco,vad]"`.
@@ -531,7 +544,9 @@ cada issue pueda probarse aislada con el modo consola.
    arregla aquí).
 5. **El cliente graba las 10 muestras** (`banco_h0.py grabar`). Esto no lo
    puedo hacer yo: necesita su voz y su micrófono.
-6. `banco_h0.py medir` y `resultados-h0.md` al cliente. Veredicto.
+6. `banco_h0.py medir` y `resultados-h0.md` al cliente. Veredicto: **Parakeet
+   int8 vale** (RTF 0,064–0,074), con normalización de nivel obligatoria en la
+   captura. Detalle y decisiones derivadas en `docs/H0.md`.
 
 ### H1 · El bucle mínimo (7,25 j)
 
@@ -590,14 +605,14 @@ bien calibradas.
 
 ---
 
-## 8. Decisiones que necesito antes de programar
+## 8. Decisiones que necesito antes de programar — **aprobadas el 4 sep 2026**
 
 1. **C-1** — validar la ruta del Markdown al usarla, no al arrancar. *(Propuesta: sí.)*
-2. **C-2** — máscara VK 0xFF para `ctrl+win`, o cambiar el atajo por defecto. *(Propuesta: máscara, y se prueba en VOZ-02; si molesta, `ctrl+alt`.)*
+2. **C-2** — máscara VK 0xFF para `ctrl+win`, o cambiar el atajo por defecto. *(Cliente: `ctrl+win` no le abre Inicio, probado. Se implementa sin máscara; si en VOZ-02 aparece el problema, se añade la máscara como opción.)*
 3. **C-3** — Esc solo se captura con dictado en curso. *(Propuesta: sí.)*
 4. **C-4** — `arranque_con_windows = true` en el ejemplo, con notificación la primera vez. *(Propuesta: sí.)*
 5. **H-10** — añadir VOZ-05 instancia única (0,25 j). *(Propuesta: sí.)*
 6. **Hook único** para las cuatro combinaciones, con `RegisterHotKey` solo como sondeo. *(Propuesta: sí; es consecuencia de que `ctrl+win` no se pueda registrar.)*
 7. **Modo consola** como parte de VOZ-04. *(Propuesta: sí; es media jornada y ahorra más en pruebas.)*
 
-Si estas siete se aprueban como están, la sesión 0 empieza con `git init`.
+Aprobadas las siete. Repositorio: https://github.com/alfonsosanzme/voziris

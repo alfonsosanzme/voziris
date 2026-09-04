@@ -93,8 +93,21 @@ def _duracion(wav: Path) -> float:
     return float(info.frames) / info.samplerate
 
 
+RMS_OBJETIVO = 0.30
+"""Nivel al que se normaliza el audio antes del motor, con recorte duro.
+
+Medido en el hito 0 (4 sep 2026) sobre 8 dictados grabados a RMS 0,02: Parakeet
+int8 descarta frases enteras cuando el audio le llega bajo (WER 30,7 % en
+crudo). Normalizar a RMS 0,3 recortando lo que sobrepase ±1 baja el WER medio
+a 16,7 %; la compresión suave (tanh) y la normalización limitada por pico
+funcionan peor (18,7 % y 27,9 %). Contra la intuición, a este modelo el
+recorte no le molesta y el nivel bajo sí. Es la misma constante que aplica
+`Captura.terminar_dictado()` (VOZ-10).
+"""
+
+
 def _cargar(wav: Path):
-    """Devuelve el audio como float32 mono a 16 kHz, como lo entregará Captura.
+    """Devuelve el audio como float32 mono a 16 kHz, sin tratar.
 
     Se pasa el array al motor en vez de la ruta para que el RTF mida solo la
     inferencia, igual que hará `MotorLocal.transcribir()`.
@@ -106,6 +119,16 @@ def _cargar(wav: Path):
     if sr != SR:
         sys.exit(f"{wav.name} está a {sr} Hz; el banco espera {SR} Hz.")
     return np.ascontiguousarray(datos.mean(axis=1))
+
+
+def normalizar(audio, rms_objetivo: float = RMS_OBJETIVO):
+    """Escala el audio a `rms_objetivo` y recorta a [-1, 1]. Ver RMS_OBJETIVO."""
+    import numpy as np
+
+    rms = float(np.sqrt(np.mean(audio**2)))
+    if rms < 1e-6:
+        return audio
+    return np.clip(audio * (rms_objetivo / rms), -1.0, 1.0).astype(np.float32)
 
 
 # --- WER -------------------------------------------------------------------
@@ -160,8 +183,12 @@ def _ram_mb() -> float:
     return psutil.Process().memory_info().rss / 1024 / 1024
 
 
-def medir_parakeet(wavs: list[Path]) -> dict:
-    """Parakeet TDT 0.6B v3 en ONNX int8, vía onnx-asr."""
+def medir_parakeet(wavs: list[Path], normalizado: bool = True) -> dict:
+    """Parakeet TDT 0.6B v3 en ONNX int8, vía onnx-asr.
+
+    Con `normalizado`, el audio pasa por `normalizar()` antes del motor, como
+    en la aplicación. Sin él se mide el audio crudo, para ver cuánto aporta.
+    """
     import onnx_asr
 
     # Comportamiento de onnx-asr 0.12 (resolver.py), verificado leyendo el código:
@@ -186,6 +213,8 @@ def medir_parakeet(wavs: list[Path]) -> dict:
     for wav in wavs:
         dur = _duracion(wav)
         audio = _cargar(wav)
+        if normalizado:
+            audio = normalizar(audio)
         t0 = time.perf_counter()
         texto = modelo.recognize(audio, sample_rate=SR)
         proceso = time.perf_counter() - t0
@@ -199,7 +228,7 @@ def medir_parakeet(wavs: list[Path]) -> dict:
         print(f"  {wav.name}: RTF {filas[-1]['rtf']:.3f}")
 
     return {
-        "motor": "parakeet-tdt-0.6b-v3-int8",
+        "motor": "parakeet-tdt-0.6b-v3-int8" + ("" if normalizado else " (audio crudo)"),
         "carga_s": round(carga_s, 1),
         "ram_mb": round(_ram_mb() - ram_antes, 1),
         "filas": filas,
@@ -222,7 +251,7 @@ def medir_whisper(wavs: list[Path]) -> dict:
     filas = []
     for wav in wavs:
         dur = _duracion(wav)
-        audio = _cargar(wav)
+        audio = normalizar(_cargar(wav))
         t0 = time.perf_counter()
         segmentos, _ = modelo.transcribe(audio, language="es")
         texto = "".join(s.text for s in segmentos).strip()
@@ -351,7 +380,12 @@ def medir() -> None:
     print(f"{len(wavs)} muestras, {total:.1f} s de audio en total.\n")
 
     resultados = []
-    for nombre, fn in (("Parakeet", medir_parakeet), ("Whisper small", medir_whisper)):
+    motores = (
+        ("Parakeet", medir_parakeet),
+        ("Parakeet crudo", lambda w: medir_parakeet(w, normalizado=False)),
+        ("Whisper small", medir_whisper),
+    )
+    for nombre, fn in motores:
         try:
             resultados.append(fn(wavs))
         except ImportError as e:
