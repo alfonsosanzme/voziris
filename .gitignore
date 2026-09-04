@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/dist/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Datos locales del usuario: nunca al repositorio
+config.toml
+modelos/
+historial/
+*.wav
+banco/
+resultados-h0*.md
+
+# Grabaciones personales de prueba: nunca al repositorio
+prueba de voz/

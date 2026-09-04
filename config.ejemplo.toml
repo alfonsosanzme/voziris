@@ -1,0 +1,67 @@
+# Voziris — configuración
+#
+# Copia este archivo como «config.toml» y déjalo junto al ejecutable.
+# Se puede editar a mano o desde el panel de ajustes de la aplicación.
+# Las rutas relativas se resuelven desde la carpeta del ejecutable, nunca
+# desde el directorio de trabajo: Voziris arranca con Windows y ese
+# directorio no es predecible.
+
+[general]
+idioma = "es"                    # B4: idioma fijo. No hay detección automática.
+motor = "auto"                   # local | api | auto  (auto: API si hay red y clave, si no local)
+arranque_con_windows = true
+
+# ---------------------------------------------------------------------------
+# H2: un atajo por comportamiento. Nunca una doble pulsación sobre el mismo.
+# Sintaxis: teclas separadas por «+». Modificadores: ctrl, alt, shift, win.
+# ---------------------------------------------------------------------------
+[atajos]
+mantener = "ctrl+win"            # A1: graba mientras la combinación siga pulsada
+clavar = "ctrl+shift+space"      # A2: fija el micrófono hasta volver a pulsar
+markdown = "ctrl+alt+m"          # H1: dicta directamente al archivo de captura
+cancelar = "esc"                 # descarta el dictado en curso sin entregarlo
+
+[audio]
+dispositivo = ""                 # vacío = micrófono predeterminado del sistema
+ganancia_db = 0                  # -20 a +20
+buffer_previo_ms = 500           # A3: audio conservado ANTES de pulsar el atajo
+silencio_corte_ms = 1200         # A2: silencio que cierra el dictado en modo «clavar»
+sonidos = true                   # A6
+
+[motor.local]
+modelo = "nemo-parakeet-tdt-0.6b-v3"
+carpeta = "./modelos"            # se descarga aquí en el primer arranque (~680 MB)
+hilos = 0                        # 0 = onnxruntime decide
+
+[motor.api]
+base_url = "https://api.groq.com/openai/v1"
+modelo = "whisper-large-v3-turbo"
+clave = ""                       # vacío = se lee de la variable de entorno GROQ_API_KEY
+timeout_s = 15
+
+[proceso]
+nivel = "limpio"                 # C4: literal | limpio | reescritura
+# E1 — palabras que el motor tiende a fallar. Se aplica sin red.
+diccionario = ["Creatics", "Kairis", "Voziris", "Obsidian", "Valladolid"]
+llm_modelo = ""                  # vacío = sin post-proceso con LLM (modo literal forzado)
+
+# E3 — sustituciones literales sobre el texto final. Se aplican sin red.
+[proceso.sustituciones]
+"punto y aparte" = "\n\n"
+"nueva línea" = "\n"
+
+[destino.app_activa]
+metodo = "portapapeles"          # portapapeles | tecleo
+restaurar_portapapeles = true    # D2: devuelve el portapapeles a su contenido anterior
+auto_enter = false               # D4: NUNCA activado por defecto
+
+[destino.markdown]
+# H1 — captura rápida al vault de Obsidian
+ruta = "C:/Users/CAMBIAME/vault/entrada.md"
+formato = "- {sello} · {texto}"  # marcadores: {sello} {texto}
+sello = "%Y-%m-%d %H:%M"
+separador = ""                   # texto entre entradas; "---" para regla horizontal
+
+[historial]
+entradas = 50                    # D3
+guardar_audio = false            # true solo para depurar: ocupa y es información sensible
