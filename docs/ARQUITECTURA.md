@@ -30,6 +30,10 @@ Módulos auxiliares sin dependencias del proyecto, aparte de `tipos.py`:
   análisis de combinaciones («ctrl+shift+space»). Lo comparten `config.py`
   (validar los atajos sin tocar Win32, así corre en CI) y `atajos.py`
   (traducir cada nombre a lo que ve el hook).
+- `winapi.py` — lo que se necesita de Win32 (`SendInput`, ventana en primer
+  plano, portapapeles) con las firmas de `ctypes` declaradas en un solo sitio.
+  Importable en cualquier sistema; sus funciones fallan con `OSError` fuera
+  de Windows. Lo usan `destinos/app_activa.py` y `atajos.py`.
 
 ## Las cinco decisiones que explican el resto
 

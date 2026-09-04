@@ -88,7 +88,7 @@ arranque.
 | `docs/ARQUITECTURA.md` | Módulos, contratos y por qué están así |
 | `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
-## Dos limitaciones conocidas de Windows
+## Limitaciones conocidas
 
 1. **Ventanas elevadas.** Si la aplicación en primer plano corre como
    administrador y Voziris no, Windows no le entrega la pulsación sintética.
@@ -97,6 +97,12 @@ arranque.
 2. **Antivirus.** Un `.exe` de PyInstaller con un hook global de teclado es una
    firma clásica de falso positivo. Los hashes de cada versión están en las
    notas de la release.
+3. **Portapapeles.** Voziris guarda lo que tenías copiado antes de dictar y lo
+   devuelve después, pero solo si era texto. Una imagen o unos archivos
+   copiados se pierden al dictar: en su lugar queda el texto dictado.
+4. **Aplicaciones que rechazan el pegado.** Algunas terminales y programas
+   con protección de entrada ignoran el Ctrl+V sintético. Para ellos,
+   `metodo = "tecleo"` en `[destino.app_activa]`: más lento, pero entra.
 
 ## Licencia
 

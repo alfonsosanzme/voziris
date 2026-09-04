@@ -54,7 +54,7 @@ files = ["src/voziris"]
 [[tool.mypy.overrides]]
 module = [
     "sounddevice.*", "pystray.*", "onnx_asr.*", "onnxruntime.*", "huggingface_hub.*",
-    "win32.*", "win32clipboard.*",
+    "win32.*", "win32clipboard.*", "win32con", "win32gui", "win32api",
 ]
 ignore_missing_imports = true
 
