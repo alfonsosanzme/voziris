@@ -7,8 +7,7 @@ Dos motores a elegir: **local**, gratis y sin conexión, que funciona en
 portátiles sin GPU; o **por API**, con tu propia clave, por unos céntimos al
 mes. Sin cuentas, sin servidor propio, sin suscripción.
 
-> **Estado: en desarrollo.** El esqueleto, los contratos y el plan están
-> completos; la implementación está por hacer. Ver `docs/ENCARGO.md`.
+![Indicador flotante mientras graba](docs/capturas/hud-grabando.png)
 
 ## Por qué existe
 
@@ -21,72 +20,55 @@ por unos 0,60 $ al mes; en local, por cero.
 
 | | |
 |---|---|
-| **Tres atajos** | Uno graba mientras lo mantienes pulsado, otro deja el micrófono clavado, y un tercero manda el dictado a un archivo Markdown |
+| **Tres atajos** | `Ctrl+Win` graba mientras lo mantienes, `Ctrl+Shift+Espacio` deja el micrófono clavado hasta que vuelves a pulsar o te callas, y `Ctrl+Alt+M` manda el dictado a un archivo Markdown |
 | **Puntuación de serie** | El modelo emite puntuación y mayúsculas en español, también sin conexión |
-| **Limpia lo que dices** | Quita muletillas y resuelve tus autocorrecciones al hablar («el martes, no, el jueves») |
+| **Limpia lo que dices** | Quita muletillas y resuelve tus autocorrecciones al hablar («el martes, no, el jueves»), con un LLM opcional |
 | **No te toca el portapapeles** | Lo guarda antes de escribir y lo devuelve después |
-| **Historial con reintento** | Si el pegado falla, el texto no se pierde |
+| **Historial con reintento** | Si el pegado falla, el texto no se pierde: se reentrega desde el menú de la bandeja |
 | **Diccionario propio** | Para los nombres propios y la jerga que el modelo falla siempre |
 | **Portable** | Se copia y funciona. Sin instalador, sin registro, sin permisos de administrador |
 
-## Cómo funciona
+## Primer arranque
 
-```
-Atajo → búfer previo 500 ms → captura 16 kHz → motor (local o API)
-      → post-proceso (diccionario, sustituciones, LLM opcional)
-      → destino (app activa o archivo .md) → historial
-```
+1. Descarga el ZIP de la última [release](https://github.com/alfonsosanzme/voziris/releases)
+   y descomprímelo donde quieras (un USB vale).
+2. Comprueba el hash SHA-256 que viene en las notas de la release si tu
+   antivirus protesta (ver «Limitaciones conocidas»).
+3. Ejecuta `voziris.exe`. Aparece el icono del micrófono en la bandeja y
+   **empieza a descargar el modelo local** (640 MB, una sola vez, a la
+   carpeta `modelos/` junto al ejecutable). Con una conexión normal tarda
+   entre uno y tres minutos; la bandeja avisa del progreso.
+4. Mientras baja, o si prefieres no esperar, puedes usar el motor por API:
+   menú de la bandeja → Motor → API (necesita una clave, ver abajo).
+5. Pon el cursor en cualquier aplicación, mantén `Ctrl+Win`, habla, suelta.
 
-El búfer previo es lo que evita que se pierda la primera sílaba: el micrófono
-graba siempre en un anillo de medio segundo, así que cuando pulsas el atajo ya
-hay audio anterior a la pulsación.
+El primer arranque también copia `config.ejemplo.toml` a `config.toml` y,
+como el ejemplo trae `arranque_con_windows = true`, deja un acceso directo en
+tu carpeta de Inicio. Se quita desde Ajustes o poniendo `false`.
 
-## Desarrollo
+## Ajustes
 
-Requiere Python 3.11–3.13 y Windows 10 (1903+) o 11, 64 bits.
+Menú de la bandeja → Ajustes. Seis pestañas: atajos (se configuran pulsando
+la combinación), audio (micrófono, ganancia con medidor en vivo, sonidos),
+motor (local, API o automático, clave con botón «probar»), texto (nivel de
+limpieza, diccionario, sustituciones), destinos (método de inserción,
+auto-Enter, ruta del Markdown) y acerca de.
 
-```bash
-git clone <repo> && cd voziris
-python -m venv .venv && .venv\Scripts\activate
-pip install -e ".[dev,banco]"
+![Pestaña de atajos](docs/capturas/ajustes-atajos.png)
 
-copy config.ejemplo.toml config.toml    # y editar la ruta del Markdown
+Todo lo que se guarda va a `config.toml`, junto al ejecutable, con sus
+comentarios intactos: se puede editar a mano igualmente.
 
-pytest                                  # tests
-ruff check src tests                    # linter
-mypy                                    # tipos (estricto)
-python -m voziris                        # arrancar
-```
+## Clave de Groq (motor por API y limpieza con LLM)
 
-**Antes de escribir código de la aplicación, ejecutar el hito 0:**
+1. Crea una cuenta en https://console.groq.com y genera una clave de API.
+2. Ponla en Ajustes → Motor → Clave, o en la variable de entorno
+   `GROQ_API_KEY`. Nunca sale de tu equipo salvo hacia Groq.
+3. Coste real: `whisper-large-v3-turbo` cuesta 0,04 $ por hora de audio.
+   Dictando 30 minutos al día, unos 0,60 $ al mes. La limpieza con LLM
+   añade una cantidad marginal (unos 200 tokens por minuto de dictado).
 
-```bash
-python tools/banco_h0.py grabar --n 10 --segundos 15
-python tools/banco_h0.py medir
-```
-
-Mide en tu equipo si el motor local es lo bastante rápido. Los RTF publicados
-son de un i7 de sobremesa y en portátil serán peores. El script trae el
-criterio de decisión escrito.
-
-### Empaquetado
-
-```bash
-pyinstaller build/voziris.spec --noconfirm
-```
-
-Produce `build/dist/voziris/`. Se comprime y se distribuye tal cual: es la
-carpeta portable. El modelo (~680 MB) no va dentro, se descarga en el primer
-arranque.
-
-### Documentación
-
-| Documento | Para qué |
-|---|---|
-| `docs/ENCARGO.md` | El encargo: qué construir, qué está decidido, qué no tocar |
-| `docs/BACKLOG.md` | Las 25 tareas con criterios de aceptación |
-| `docs/ARQUITECTURA.md` | Módulos, contratos y por qué están así |
-| `docs/issues.csv` | El backlog, importable a GitHub Issues |
+Con `motor = "local"` no hace falta ninguna clave.
 
 ## Qué sale de tu equipo
 
@@ -109,17 +91,73 @@ literal: ningún intento de conexión.
 
 1. **Ventanas elevadas.** Si la aplicación en primer plano corre como
    administrador y Voziris no, Windows no le entrega la pulsación sintética.
-   No hay solución que no sea ejecutar Voziris elevado, y eso choca con no
-   pedir permisos de administrador.
+   El dictado queda en el historial con aviso y el texto en el portapapeles,
+   para pegarlo a mano. No hay solución que no sea ejecutar Voziris elevado,
+   y eso choca con no pedir permisos de administrador.
 2. **Antivirus.** Un `.exe` de PyInstaller con un hook global de teclado es una
-   firma clásica de falso positivo. Los hashes de cada versión están en las
-   notas de la release.
+   firma clásica de falso positivo. Los hashes SHA-256 de cada versión están
+   en las notas de la release: si el archivo coincide, es el que se publicó.
 3. **Portapapeles.** Voziris guarda lo que tenías copiado antes de dictar y lo
    devuelve después, pero solo si era texto. Una imagen o unos archivos
    copiados se pierden al dictar: en su lugar queda el texto dictado.
 4. **Aplicaciones que rechazan el pegado.** Algunas terminales y programas
    con protección de entrada ignoran el Ctrl+V sintético. Para ellos,
    `metodo = "tecleo"` en `[destino.app_activa]`: más lento, pero entra.
+5. **Historial del portapapeles de Windows (Win+V).** Si está activado, lee
+   cada dictado unos milisegundos después de copiarlo; Voziris espera 20 ms
+   antes de pegar para no chocar con él. Los dictados aparecerán en ese
+   historial como cualquier otro texto copiado.
+
+## Desarrollo
+
+Requiere Python 3.11–3.13 y Windows 10 (1903+) o 11, 64 bits.
+
+```bash
+git clone https://github.com/alfonsosanzme/voziris && cd voziris
+python -m venv .venv && .venv\Scripts\activate
+pip install -e ".[dev,banco,vad]"
+
+copy config.ejemplo.toml config.toml    # y editar la ruta del Markdown
+
+pytest                                  # tests (los marcados win roban el foco un instante)
+ruff check src tests tools              # linter
+mypy                                    # tipos (estricto)
+python -m voziris                       # arrancar
+python -m voziris --archivo x.wav       # modo consola: transcribe un WAV y sale
+python -m voziris --salir               # cierra la instancia abierta
+```
+
+Antes de tocar el motor local, el hito 0 mide si aguanta en el equipo real:
+
+```bash
+python tools/banco_h0.py grabar --n 10 --segundos 15
+python tools/banco_h0.py medir
+```
+
+El veredicto de ese hito en el portátil del cliente está en `docs/H0.md`.
+
+### Empaquetado
+
+```bash
+pyinstaller build/voziris.spec --noconfirm --distpath build/dist --workpath build/work
+```
+
+Produce `build/dist/voziris/`. Se comprime y se distribuye tal cual: es la
+carpeta portable. El modelo (~640 MB) no va dentro, se descarga en el primer
+arranque. Ver `docs/RELEASE.md` para la lista de verificación y los pasos de
+la release.
+
+### Documentación
+
+| Documento | Para qué |
+|---|---|
+| `docs/ENCARGO.md` | El encargo: qué construir, qué está decidido, qué no tocar |
+| `docs/BACKLOG.md` | Las 25 tareas con criterios de aceptación |
+| `docs/ARQUITECTURA.md` | Módulos, contratos y por qué están así |
+| `docs/PLAN.md` | El plan de desarrollo: comportamiento, hilos, fallos, pruebas |
+| `docs/H0.md` | Veredicto del hito 0: medidas del motor local en el equipo real |
+| `docs/RELEASE.md` | Cómo verificar el paquete y publicar una versión |
+| `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
 ## Licencia
 
