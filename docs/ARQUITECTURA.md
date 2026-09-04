@@ -37,6 +37,9 @@ Módulos auxiliares sin dependencias del proyecto, aparte de `tipos.py`:
   plano, portapapeles) con las firmas de `ctypes` declaradas en un solo sitio.
   Importable en cualquier sistema; sus funciones fallan con `OSError` fuera
   de Windows. Lo usan `destinos/app_activa.py` y `atajos.py`.
+- `red.py` — la única comprobación de conectividad: conexión TCP al host de
+  la API con timeout corto y resultado cacheado 10 s. La usan el motor por
+  API, el selector y el LLM. En modo local literal nadie la llama.
 - `ui/iconos.py` — los cuatro iconos de estado dibujados con Pillow, y el
   `.ico` del ejecutable (`assets/voziris.ico`, generado con
   `python -m voziris.ui.iconos`). Sin archivos de imagen que licenciar.
