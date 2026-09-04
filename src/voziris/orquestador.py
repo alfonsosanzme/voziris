@@ -25,6 +25,7 @@ Issue: VOZ-04.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import threading
@@ -34,6 +35,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
+
+import numpy as np
 
 from voziris.destinos.base import Destino
 from voziris.errores import (
@@ -64,9 +67,19 @@ class Estado(StrEnum):
 class CapturaDeAudio(Protocol):
     """Lo que el orquestador necesita de `audio.captura.Captura`."""
 
+    oyente_bloques: Callable[[np.ndarray], None] | None
+
     def empezar_dictado(self) -> None: ...
     def terminar_dictado(self) -> Audio: ...
     def cancelar_dictado(self) -> None: ...
+
+
+class DetectorDeSilencio(Protocol):
+    """Lo que el orquestador necesita de `audio.vad.DetectorSilencio` (VOZ-20)."""
+
+    def precalentar(self) -> None: ...
+    def reiniciar(self) -> None: ...
+    def alimentar(self, bloque: np.ndarray) -> bool: ...
 
 
 class Sonidos(Protocol):
@@ -105,6 +118,7 @@ class Orquestador:
         al_aviso: Callable[[str], None] = lambda _t: None,
         sonidos: Sonidos | None = None,
         historial: Historial | None = None,
+        vad: DetectorDeSilencio | None = None,
         hay_red: Callable[[], bool] = lambda: False,
         app_en_primer_plano: Callable[[], str | None] = lambda: None,
     ) -> None:
@@ -118,6 +132,7 @@ class Orquestador:
         self._al_aviso = al_aviso
         self._sonidos = sonidos
         self._historial = historial
+        self._vad = vad
         self._hay_red = hay_red
         self._app_en_primer_plano = app_en_primer_plano
 
@@ -129,12 +144,24 @@ class Orquestador:
         self.motor_listo = threading.Event()
         self.ultimo_error: str | None = None
 
+        # Modo clavar: los bloques van del hilo de audio a la cola, y de ahí al
+        # VAD en su propio hilo. Acotada: si el VAD se atasca, se pierden
+        # bloques de VAD (no de audio) en vez de bloquear la captura.
+        self._cola_vad: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=64)
+        self._hilo_vad: threading.Thread | None = None
+        self._escuchando_vad = False
+
     # --- vida --------------------------------------------------------------------
 
     def arrancar(self) -> None:
-        """Arranca el hilo de trabajo y precalienta el motor en otro hilo."""
+        """Arranca los hilos de trabajo y de VAD, y precalienta en otro hilo."""
         self._hilo = threading.Thread(target=self._trabajar, name="voziris-trabajo", daemon=True)
         self._hilo.start()
+        if self._vad is not None:
+            self._captura.oyente_bloques = self._al_bloque
+            self._hilo_vad = threading.Thread(target=self._vigilar_silencio, name="voziris-vad",
+                                              daemon=True)
+            self._hilo_vad.start()
         threading.Thread(target=self._precalentar, name="voziris-precalentado", daemon=True).start()
 
     def _precalentar(self) -> None:
@@ -146,6 +173,11 @@ class Orquestador:
             self.motor_listo.set()
             if not self._motor.disponible():
                 self._avisar("El motor de voz no está disponible; mira voziris.log")
+        if self._vad is not None:
+            try:
+                self._vad.precalentar()
+            except Exception:  # noqa: BLE001 — sin VAD, «clavar» se cierra a mano
+                log.exception("el precalentado del VAD falló")
 
     def parar(self) -> None:
         self.cancelar()
@@ -153,6 +185,48 @@ class Orquestador:
         if self._hilo is not None:
             self._hilo.join(timeout=5)
             self._hilo = None
+        if self._hilo_vad is not None:
+            self._captura.oyente_bloques = None
+            self._cola_vad.put(None)
+            self._hilo_vad.join(timeout=2)
+            self._hilo_vad = None
+
+    # --- VAD (modo clavar) ---------------------------------------------------------
+
+    def _al_bloque(self, bloque: np.ndarray) -> None:
+        """En el hilo de audio: solo encola, y solo mientras se graba clavado."""
+        if self._escuchando_vad:
+            with contextlib.suppress(queue.Full):
+                self._cola_vad.put_nowait(bloque)
+
+    def _vigilar_silencio(self) -> None:
+        assert self._vad is not None
+        while True:
+            bloque = self._cola_vad.get()
+            if bloque is None:
+                return
+            if not self._escuchando_vad:
+                continue
+            try:
+                if self._vad.alimentar(bloque):
+                    self._escuchando_vad = False
+                    log.info("silencio: se cierra el dictado clavado")
+                    self.terminar()
+            except Exception:  # noqa: BLE001 — el VAD no puede tumbar un dictado
+                log.exception("el VAD falló")
+                self._escuchando_vad = False
+
+    def _empezar_vad(self) -> None:
+        """Con el lock tomado, al empezar un dictado CLAVAR."""
+        if self._vad is None:
+            return
+        while True:
+            try:
+                self._cola_vad.get_nowait()
+            except queue.Empty:
+                break
+        self._vad.reiniciar()
+        self._escuchando_vad = True
 
     # --- estado ----------------------------------------------------------------
 
@@ -208,9 +282,17 @@ class Orquestador:
                 self._dictado = None
                 self._fallar(f"No se pudo empezar a grabar: {e}")
                 return False
+            if modo is Modo.CLAVAR:
+                self._empezar_vad()
             self._cambiar(Estado.GRABANDO)
         self._tono("inicio")
         return True
+
+    @property
+    def modo(self) -> Modo | None:
+        """El modo del dictado en curso, para que el HUD distinga clavar de mantener."""
+        dictado = self._dictado
+        return dictado.modo if dictado is not None and self.en_curso() else None
 
     def terminar(self, duracion_ms: int | None = None) -> None:
         """Cierra la grabación y encola el procesado. Solo actúa en GRABANDO.
@@ -222,6 +304,7 @@ class Orquestador:
             if self._estado != Estado.GRABANDO or self._dictado is None:
                 return
             dictado = self._dictado
+            self._escuchando_vad = False
             if duracion_ms is not None and duracion_ms < PULSACION_MINIMA_MS:
                 self._captura.cancelar_dictado()
                 self._dictado = None
@@ -263,6 +346,7 @@ class Orquestador:
         """Descarta el dictado en curso sin entregar nada."""
         with self._lock:
             if self._estado == Estado.GRABANDO:
+                self._escuchando_vad = False
                 self._captura.cancelar_dictado()
                 self._dictado = None
                 self._cambiar(Estado.REPOSO)

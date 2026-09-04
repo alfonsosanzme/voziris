@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from typing import Any
 
 import numpy as np
 import pytest
@@ -31,6 +32,12 @@ class CapturaFalsa:
         self.grabando = False
         self.cancelados = 0
         self.falla_al_terminar = False
+        self.oyente_bloques: Any = None
+
+    def bloque(self) -> None:
+        """Simula al hilo de audio entregando un bloque de 32 ms."""
+        if self.oyente_bloques is not None:
+            self.oyente_bloques(np.zeros(512, dtype=np.float32))
 
     def empezar_dictado(self) -> None:
         self.grabando = True
@@ -115,21 +122,44 @@ class HistorialFalso:
         self.entradas.append(entrada)
 
 
+class VadFalso:
+    """Corta en el bloque `corta_en` (contando desde reiniciar)."""
+
+    def __init__(self, corta_en: int = 3) -> None:
+        self.corta_en = corta_en
+        self.bloques = 0
+        self.reinicios = 0
+
+    def precalentar(self) -> None: ...
+
+    def reiniciar(self) -> None:
+        self.reinicios += 1
+        self.bloques = 0
+
+    def alimentar(self, bloque: np.ndarray) -> bool:
+        self.bloques += 1
+        return self.bloques >= self.corta_en
+
+
 class Banco:
     """Todas las piezas falsas juntas y el orquestador arrancado."""
 
-    def __init__(self, motor: MotorFalso | None = None, precalentado: bool = True) -> None:
+    def __init__(
+        self, motor: MotorFalso | None = None, precalentado: bool = True,
+        vad: VadFalso | None = None,
+    ) -> None:
         self.captura = CapturaFalsa()
         self.motor = motor or MotorFalso()
         self.destino = DestinoFalso()
         self.sonidos = SonidosFalsos()
         self.historial = HistorialFalso()
+        self.vad = vad
         self.estados: list[str] = []
         self.avisos: list[str] = []
         self.orq = Orquestador(
             self.captura, self.motor, {"app_activa": self.destino}, [],
             al_estado=self.estados.append, al_aviso=self.avisos.append,
-            sonidos=self.sonidos, historial=self.historial,
+            sonidos=self.sonidos, historial=self.historial, vad=vad,
             app_en_primer_plano=lambda: "notepad.exe",
         )
         self.orq.arrancar()
@@ -363,6 +393,101 @@ def test_postproceso_que_lanza_no_pierde_el_dictado(banco: Banco) -> None:
     assert texto == "Hola, mundo."
     banco.esperar_reposo()
     assert any("roto" in a for a in banco.avisos) and any("Sin red" in a for a in banco.avisos)
+
+
+# --- modo clavar con VAD (VOZ-24) ---------------------------------------------------------
+
+
+def _bloques(banco: Banco, n: int, espera_s: float = 0.0) -> None:
+    for _ in range(n):
+        banco.captura.bloque()
+        if espera_s:
+            time.sleep(espera_s)
+
+
+def test_el_vad_cierra_el_dictado_clavado() -> None:
+    b = Banco(vad=VadFalso(corta_en=3))
+    try:
+        assert b.captura.oyente_bloques is not None  # el orquestador se enganchó a la captura
+        b.orq.alternar_clavar()
+        assert b.orq.modo is Modo.CLAVAR and b.vad is not None and b.vad.reinicios == 1
+        _bloques(b, 2, 0.02)
+        time.sleep(0.05)
+        assert b.orq.estado is Estado.GRABANDO  # dos bloques: aún no
+        _bloques(b, 1)
+        assert b.destino.esperar()[0][1].modo is Modo.CLAVAR
+        b.esperar_reposo()
+        assert b.orq.estado is Estado.REPOSO and b.orq.modo is None
+    finally:
+        b.parar()
+
+
+def test_en_mantener_el_vad_no_interviene() -> None:
+    b = Banco(vad=VadFalso(corta_en=1))
+    try:
+        b.orq.empezar(Modo.MANTENER, "app_activa")
+        _bloques(b, 20, 0.005)
+        time.sleep(0.1)
+        assert b.orq.estado is Estado.GRABANDO
+        assert b.vad is not None and b.vad.bloques == 0 and b.vad.reinicios == 0
+        b.orq.terminar(1000)
+        assert b.destino.esperar()
+    finally:
+        b.parar()
+
+
+def test_los_dos_atajos_conviven_con_vad() -> None:
+    """H2: clavar, cierre por VAD, y luego mantener, sin interferencias."""
+    b = Banco(vad=VadFalso(corta_en=2))
+    try:
+        b.orq.alternar_clavar()
+        _bloques(b, 2, 0.02)
+        b.destino.esperar(1)
+        b.esperar_reposo()
+        b.orq.empezar(Modo.MANTENER, "app_activa")
+        _bloques(b, 5, 0.005)  # bloques durante mantener: el VAD no los cuenta
+        b.orq.terminar(1000)
+        entregas = b.destino.esperar(2)
+        assert [e[1].modo for e in entregas] == [Modo.CLAVAR, Modo.MANTENER]
+        assert b.vad is not None and b.vad.reinicios == 1
+    finally:
+        b.parar()
+
+
+def test_cerrar_a_mano_antes_del_vad_y_cancelar_desconectan_el_vad() -> None:
+    b = Banco(vad=VadFalso(corta_en=100))
+    try:
+        b.orq.alternar_clavar()
+        _bloques(b, 3, 0.005)
+        b.orq.alternar_clavar()  # segunda pulsación: cierra sin esperar al VAD
+        b.destino.esperar()
+        b.esperar_reposo()
+        b.orq.alternar_clavar()
+        b.orq.cancelar()
+        assert b.orq.estado is Estado.REPOSO
+        _bloques(b, 5, 0.005)
+        time.sleep(0.05)
+        assert b.orq.estado is Estado.REPOSO
+    finally:
+        b.parar()
+
+
+def test_la_cola_del_vad_no_bloquea_al_hilo_de_audio() -> None:
+    class VadLento(VadFalso):
+        def alimentar(self, bloque: np.ndarray) -> bool:
+            time.sleep(0.05)
+            return False
+
+    b = Banco(vad=VadLento())
+    try:
+        b.orq.alternar_clavar()
+        t0 = time.perf_counter()
+        _bloques(b, 500)  # muchos más de los que caben en la cola
+        assert time.perf_counter() - t0 < 0.5  # put_nowait: se descartan, no se espera
+        b.orq.alternar_clavar()
+        assert b.destino.esperar()
+    finally:
+        b.parar()
 
 
 # --- modo consola ------------------------------------------------------------------------

@@ -160,6 +160,8 @@ def _modo_consola(configuracion: cfg.Config, archivo: Path, destino: str, nivel:
     destinos["ninguno"] = _DestinoNulo()
 
     class SinCaptura:
+        oyente_bloques: Any = None
+
         def empezar_dictado(self) -> None: ...
 
         def terminar_dictado(self) -> Audio:
@@ -239,8 +241,10 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             avisar(mensaje)
 
     from voziris.audio.sonidos import Sonidos
+    from voziris.audio.vad import DetectorSilencio
 
     sonidos = Sonidos(configuracion.audio.sonidos)
+    vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
         captura, motor, destinos, [],
         idioma=configuracion.general.idioma,
@@ -248,6 +252,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         al_estado=cambiar_estado,
         al_aviso=avisar,
         sonidos=sonidos,
+        vad=vad,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
     )
 
