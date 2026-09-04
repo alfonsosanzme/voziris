@@ -36,6 +36,15 @@ En el log, la diferencia entre la primera línea y «arrancado» es el tiempo de
 arranque: tiene que ser menor de 3 segundos. «cerrando» al final confirma el
 cierre limpio.
 
+### Primer arranque de verdad, sin `--config`
+
+Lo anterior no prueba lo que ve un usuario: una carpeta recién extraída, sin
+`config.toml`. Hay que copiar `build/dist/voziris/` a una carpeta temporal
+(con `modelos/` del repositorio al lado, para no descargar 640 MB) y
+ejecutar `voziris.exe` sin argumentos. Tiene que copiar `config.ejemplo.toml`
+desde `_internal/` a `config.toml`, arrancar y responder a `voziris.exe
+--salir`. La primera versión del paquete falló justo aquí.
+
 ## 3. Empaquetar
 
 ```powershell

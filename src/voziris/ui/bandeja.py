@@ -313,9 +313,14 @@ def _crear_acceso_directo(acceso: Path, ejecutable: str, argumentos: str, trabaj
         atajo.Arguments = argumentos
         atajo.WorkingDirectory = trabajo
         atajo.Description = "Voziris — dictado por voz"
-        ico = Path(trabajo) / "assets" / "voziris.ico"
-        if ico.exists():
-            atajo.IconLocation = str(ico)
+        if getattr(sys, "frozen", False):
+            atajo.IconLocation = ejecutable  # el .exe lleva el icono dentro
+        else:
+            from voziris.config import carpeta_recursos
+
+            ico = carpeta_recursos() / "assets" / "voziris.ico"
+            if ico.exists():
+                atajo.IconLocation = str(ico)
         atajo.Save()
     finally:
         pythoncom.CoUninitialize()

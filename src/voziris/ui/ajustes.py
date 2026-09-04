@@ -189,7 +189,7 @@ class Ajustes:
         v = tk.Toplevel(self._raiz)
         v.title("Ajustes de Voziris")
         v.minsize(560, 480)
-        ico = cfg.carpeta_base() / "assets" / "voziris.ico"
+        ico = cfg.carpeta_recursos() / "assets" / "voziris.ico"
         if ico.exists():
             try:
                 v.iconbitmap(str(ico))  # type: ignore[no-untyped-call]

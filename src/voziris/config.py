@@ -62,6 +62,28 @@ def carpeta_base() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def carpeta_recursos() -> Path:
+    """Donde viven los datos que viajan con el programa: config.ejemplo.toml, assets/.
+
+    Congelado en modo onedir, PyInstaller los deja en `_internal/` (que es
+    `sys._MEIPASS`), no junto al .exe. En desarrollo, en la raíz del proyecto.
+    Lo que el usuario edita (config.toml, modelos/, historial/) sigue en
+    `carpeta_base()`.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and base:
+        return Path(base)
+    return carpeta_base()
+
+
+def _ejemplo_junto_a(carpeta: Path) -> Path:
+    """El config.ejemplo.toml: junto al config.toml si está, o en los recursos."""
+    candidato = carpeta / NOMBRE_EJEMPLO
+    if candidato.is_file():
+        return candidato
+    return carpeta_recursos() / NOMBRE_EJEMPLO
+
+
 # ---------------------------------------------------------------------------
 # Secciones. Un campo por opción, con el mismo nombre que en el TOML.
 # Los valores por defecto son los de config.ejemplo.toml.
@@ -536,7 +558,7 @@ def cargar(ruta: Path | None = None, ejemplo: Path | None = None, estricto: bool
     """
     ruta = (ruta or carpeta_base() / NOMBRE_ARCHIVO).resolve()
     if not ruta.exists():
-        ejemplo = ejemplo or ruta.parent / NOMBRE_EJEMPLO
+        ejemplo = ejemplo or _ejemplo_junto_a(ruta.parent)
         if not ejemplo.is_file():
             raise ConfigInvalida(
                 f"No existe {ruta} ni el ejemplo {ejemplo} del que copiarlo. "
@@ -625,7 +647,7 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
             ejemplo, la carpeta del Markdown no existe).
     """
     ruta = (ruta or config.ruta_archivo).resolve()
-    origen = ruta if ruta.exists() else ruta.parent / NOMBRE_EJEMPLO
+    origen = ruta if ruta.exists() else _ejemplo_junto_a(ruta.parent)
     documento = _leer_documento(origen) if origen.exists() else tomlkit.document()
     base = ruta.parent
 

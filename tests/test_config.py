@@ -84,7 +84,8 @@ def test_primer_arranque_copia_el_ejemplo(carpeta: Path) -> None:
     assert any("no existe" in a for a in cfg.avisos)
 
 
-def test_sin_ejemplo_no_se_puede_arrancar(tmp_path: Path) -> None:
+def test_sin_ejemplo_no_se_puede_arrancar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "carpeta_recursos", lambda: tmp_path)  # tampoco en los recursos
     with pytest.raises(ConfigInvalida, match="ni el ejemplo"):
         config.cargar(tmp_path / config.NOMBRE_ARCHIVO)
 
@@ -293,3 +294,20 @@ def test_guardar_es_atomico_no_deja_temporal(toml: Path) -> None:
     config.guardar(cfg)
     assert not list(toml.parent.glob("*.tmp"))
     assert os.path.getsize(toml) > 0
+
+
+def test_congelado_copia_el_ejemplo_desde_los_recursos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """En el exe, PyInstaller deja config.ejemplo.toml en _internal (sys._MEIPASS),
+    no junto al .exe. El primer arranque tiene que encontrarlo ahí."""
+    interno = tmp_path / "_internal"
+    interno.mkdir()
+    (interno / config.NOMBRE_EJEMPLO).write_text(EJEMPLO.read_text(encoding="utf-8"), "utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(interno), raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "voziris.exe"))
+    assert config.carpeta_recursos() == interno
+    cfg = config.cargar()  # sin ruta: junto al ejecutable
+    assert (tmp_path / config.NOMBRE_ARCHIVO).exists()
+    assert cfg.general.motor == "auto"
