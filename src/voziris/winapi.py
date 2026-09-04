@@ -372,6 +372,20 @@ def instancia_unica(nombre: str = "Local\\Voziris") -> bool:
     return True
 
 
+def hay_instancia_abierta(nombre: str = "Local\\Voziris") -> bool:
+    """True si otro proceso tiene el mutex, sin tomarlo. Para scripts y tests."""
+    _solo_windows()
+    if _mutex_instancia is not None:
+        return False
+    _kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.OpenMutexW.restype = wintypes.HANDLE
+    manejador = _kernel32.OpenMutexW(0x00100000, False, nombre)  # SYNCHRONIZE
+    if not manejador:
+        return False
+    _kernel32.CloseHandle(manejador)
+    return True
+
+
 NOMBRE_EVENTO_SALIDA = "Local\\Voziris.Salir"
 WAIT_OBJECT_0 = 0
 EVENT_MODIFY_STATE = 0x0002

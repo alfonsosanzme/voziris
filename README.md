@@ -88,6 +88,23 @@ arranque.
 | `docs/ARQUITECTURA.md` | Módulos, contratos y por qué están así |
 | `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
+## Qué sale de tu equipo
+
+Voziris no tiene telemetría de ningún tipo: ni anónima, ni opcional, ni
+comprobación de versiones. Lo único que puede salir depende de dos opciones
+de `config.toml`, `general.motor` y `proceso.nivel`:
+
+| Modo | Sale del equipo |
+|---|---|
+| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. |
+| `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
+| `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
+| Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
+
+Está verificado con un test (`tests/test_offline.py`) que bloquea toda
+conexión saliente del proceso y transcribe diez dictados en modo local
+literal: ningún intento de conexión.
+
 ## Limitaciones conocidas
 
 1. **Ventanas elevadas.** Si la aplicación en primer plano corre como
