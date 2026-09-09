@@ -128,13 +128,37 @@ class Hud:
         """El HWND del marco de nivel superior de la ventana Tk."""
         return int(ventana.frame(), 16)
 
-    def _colocar(self, v: tk.Toplevel) -> None:
+    def _colocar(self, v: tk.Toplevel) -> tuple[int, int]:
+        """Calcula la posición (abajo, centrado, en el monitor activo) y se la dice a Tk."""
         try:
             x, y, ancho, alto = winapi.area_de_trabajo_activa()
         except OSError:
             x, y = 0, 0
             ancho, alto = self._raiz.winfo_screenwidth(), self._raiz.winfo_screenheight()
-        v.geometry(f"{ANCHO}x{ALTO}+{x + (ancho - ANCHO) // 2}+{y + alto - ALTO - MARGEN_INFERIOR}")
+        px, py = x + (ancho - ANCHO) // 2, y + alto - ALTO - MARGEN_INFERIOR
+        v.geometry(f"{ANCHO}x{ALTO}+{px}+{py}")
+        return px, py
+
+    def _presentar(self, v: tk.Toplevel) -> None:
+        """Coloca y muestra sin activar, reaplicando los estilos cada vez.
+
+        Tk puede recrear la ventana nativa detrás de un `withdraw()` con
+        `overrideredirect`, y con ella se van WS_EX_NOACTIVATE y TOPMOST. Y
+        difiere la geometría de una ventana retirada hasta que la mapea él,
+        que aquí no ocurre porque la mapeamos nosotros. Resultado, a veces:
+        la barra no sale, o sale detrás. Por eso en cada muestra se ponen los
+        estilos otra vez y se usa `SetWindowPos` con posición, TOPMOST y
+        SHOWWINDOW en la misma llamada (VOZ-63).
+        """
+        px, py = self._colocar(v)
+        v.update_idletasks()
+        try:
+            hwnd = self.hwnd(v)
+            winapi.hacer_ventana_sin_foco(hwnd)
+            winapi.colocar_sin_activar(hwnd, px, py, ANCHO, ALTO)
+        except OSError as e:
+            log.info("no se pudo mostrar el HUD con SetWindowPos (%s); deiconify", e)
+            v.deiconify()  # fuera de Windows (tests en CI): mejor visible que nada
 
     def _mostrar(self, texto: str, grabando: bool) -> None:
         v = self._crear()
@@ -145,12 +169,7 @@ class Hud:
         self._lienzo.itemconfigure(self._barra_id, fill=BARRA if grabando else PROCESANDO)
         if not grabando:
             self._dibujar_nivel(1.0 if not self._animaciones else 0.0)
-        self._colocar(v)
-        v.update_idletasks()
-        try:
-            winapi.mostrar_sin_activar(self.hwnd(v))
-        except OSError:
-            v.deiconify()  # fuera de Windows (tests en CI): mejor visible que nada
+        self._presentar(v)
         self.visible = True
         if grabando:
             self._tic()
@@ -187,12 +206,7 @@ class Hud:
             self._lienzo.itemconfigure(self._texto_id, text=aviso)
             self._dibujar_nivel(0.0)
             if not self.visible:
-                self._colocar(v)
-                v.update_idletasks()
-                try:
-                    winapi.mostrar_sin_activar(self.hwnd(v))
-                except OSError:
-                    v.deiconify()
+                self._presentar(v)
                 self.visible = True
             self._temporizador = self._raiz.after(AVISO_MS, lambda: self._ocultar(None))
             return

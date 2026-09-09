@@ -13,6 +13,7 @@ Se usa en `destinos/app_activa.py` (VOZ-12) y en `atajos.py` (VOZ-02).
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import sys
 import time
@@ -307,6 +308,31 @@ def mostrar_sin_activar(hwnd: int) -> None:
     _user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
 
 
+HWND_TOPMOST = ctypes.c_void_p(-1 & 0xFFFFFFFFFFFFFFFF)
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+
+
+def colocar_sin_activar(hwnd: int, x: int, y: int, ancho: int, alto: int) -> None:
+    """Posición, tamaño, «siempre encima» y visible, en una sola llamada y sin foco.
+
+    Tk difiere la geometría de una ventana retirada hasta que la mapea él, y
+    aquí la mapeamos nosotros: si se confía en `geometry()` + `ShowWindow`, la
+    ventana puede aparecer donde estaba antes, detrás de otra, o no aparecer.
+    `SetWindowPos` con `HWND_TOPMOST` deja las cuatro cosas atadas.
+    """
+    _solo_windows()
+    _user32.SetWindowPos.argtypes = (
+        wintypes.HWND, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.UINT,
+    )
+    _user32.SetWindowPos.restype = wintypes.BOOL
+    if not _user32.SetWindowPos(
+        hwnd, HWND_TOPMOST, x, y, ancho, alto, SWP_NOACTIVATE | SWP_SHOWWINDOW
+    ):
+        raise OSError(f"SetWindowPos falló (error {ctypes.get_last_error()})")
+
+
 def area_de_trabajo_activa() -> tuple[int, int, int, int]:
     """(x, y, ancho, alto) del área útil del monitor donde está la ventana activa.
 
@@ -471,13 +497,31 @@ def leer_portapapeles() -> str | None:
 
 
 def escribir_portapapeles(texto: str) -> None:
+    """Deja `texto` en el portapapeles. Reintenta la secuencia entera.
+
+    Abrirlo puede fallar porque otra aplicación lo tiene; y `SetClipboardData`
+    puede fallar con «controlador no válido» aunque se haya abierto bien
+    (visto con WhatsApp y el historial del portapapeles de Windows en
+    medio). Se repite todo, no solo la apertura, y si al final no hay manera
+    se lanza `OSError`: el destino lo convierte en `EntregaFallida` y el texto
+    queda en el historial.
+    """
     _solo_windows()
     import win32clipboard
     import win32con
 
-    _abrir_portapapeles()
-    try:
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, texto)
-    finally:
-        win32clipboard.CloseClipboard()
+    ultimo: Exception | None = None
+    for _ in range(INTENTOS_PORTAPAPELES):
+        try:
+            _abrir_portapapeles()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, texto)
+                return
+            finally:
+                with contextlib.suppress(Exception):  # ya cerrado o nunca abierto
+                    win32clipboard.CloseClipboard()
+        except Exception as e:  # noqa: BLE001 — pywintypes.error u OSError
+            ultimo = e
+            time.sleep(ESPERA_PORTAPAPELES_S)
+    raise OSError(f"no se pudo escribir en el portapapeles: {ultimo}")

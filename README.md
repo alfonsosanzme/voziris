@@ -49,6 +49,25 @@ El primer arranque también copia `config.ejemplo.toml` a `config.toml` y,
 como el ejemplo trae `arranque_con_windows = true`, deja un acceso directo en
 tu carpeta de Inicio. Se quita desde Ajustes o poniendo `false`.
 
+## Instalarlo en el equipo (opcional)
+
+Voziris es portable: la carpeta se copia y funciona. Si prefieres verlo como
+un programa más, con su entrada al escribir «voziris» en la búsqueda de
+Windows y en Configuración → Aplicaciones, haz doble clic en
+`Instalar Voziris.cmd`, que va junto al ejecutable, o usa el menú de la
+bandeja → «Instalar en este equipo…». Sin permisos de administrador:
+
+- copia el programa a `%LOCALAPPDATA%\Programs\Voziris`, con tu
+  `config.toml`, el modelo ya descargado y el historial;
+- crea el acceso directo en el menú Inicio de tu usuario, que es lo que hace
+  que la búsqueda lo encuentre, y corrige el de Inicio de sesión;
+- apunta la entrada de «Aplicaciones instaladas» en la rama del registro de
+  tu usuario, con su botón de desinstalar.
+
+Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar, o
+`voziris.exe --desinstalar`. La carpeta de la instalación se borra entera,
+incluido el modelo.
+
 ## Ajustes
 
 Menú de la bandeja → Ajustes. Seis pestañas: atajos (se configuran pulsando
@@ -183,6 +202,26 @@ Está verificado con un test (`tests/test_offline.py`) que bloquea toda
 conexión saliente del proceso y transcribe diez dictados en modo local
 literal: ningún intento de conexión.
 
+## Si algo falla: el registro y el diagnóstico
+
+Junto al ejecutable hay dos archivos de registro:
+
+- `voziris.log`: lo que hace la aplicación, dictado a dictado, con qué motor
+  entregó cada uno y cualquier error de Python. Se abre desde la bandeja →
+  «Ver registro».
+- `voziris-fallos.log`: solo se escribe si el proceso muere por un fallo
+  nativo del que Python aún pudo dejar rastro (una violación de acceso).
+
+Hay un tipo de cierre que no deja nada ahí: cuando una biblioteca nativa
+corrompe la memoria, Windows mata el proceso al instante. Se reconoce porque
+el registro acaba sin la línea «cerrando», y el visor de eventos de Windows
+anota un fallo con código `0xc0000374`. Para ese caso está la bandeja →
+«Guardar diagnóstico…» (o `voziris.exe --diagnostico`): escribe
+`diagnostico.txt` con la cola del registro, los fallos que Windows tiene
+apuntados sobre `voziris.exe` y las instrucciones para activar un volcado de
+memoria del próximo fallo, que sí exige un comando como administrador. Ese
+archivo es lo que hay que enviar cuando algo se cierra solo.
+
 ## Limitaciones conocidas
 
 1. **Ventanas elevadas.** Si la aplicación en primer plano corre como
@@ -236,10 +275,12 @@ El veredicto de ese hito en el portátil del cliente está en `docs/H0.md`.
 
 ```bash
 pyinstaller build/voziris.spec --noconfirm --distpath build/dist --workpath build/work
+python tools/empaquetar.py
 ```
 
-Produce `build/dist/voziris/`. Se comprime y se distribuye tal cual: es la
-carpeta portable. El modelo (~640 MB) no va dentro, se descarga en el primer
+El primero produce `build/dist/voziris/`; el segundo añade
+`Instalar Voziris.cmd`, lo comprime sin los datos del usuario y calcula el
+SHA-256. La carpeta es portable tal cual. El modelo (~640 MB) no va dentro, se descarga en el primer
 arranque. Ver `docs/RELEASE.md` para la lista de verificación y los pasos de
 la release.
 

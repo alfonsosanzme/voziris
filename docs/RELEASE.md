@@ -47,10 +47,13 @@ desde `_internal/` a `config.toml`, arrancar y responder a `voziris.exe
 
 ## 3. Empaquetar
 
-```powershell
-Compress-Archive -Path build\dist\voziris -DestinationPath build\dist\voziris-<versión>-win64.zip
-Get-FileHash build\dist\voziris-<versión>-win64.zip -Algorithm SHA256
+```bash
+python tools/empaquetar.py
 ```
+
+Crea `Instalar Voziris.cmd` junto al ejecutable, comprime la carpeta sin
+`config.toml`, `modelos/`, `historial/` ni los logs, y deja el SHA-256 en
+`build/dist/SHA256SUMS.txt` y en `docs/notas-release.md`.
 
 El ZIP tiene que pesar menos de 120 MB. El hash va en las notas de la release
 y en `SHA256SUMS.txt`.
@@ -65,6 +68,8 @@ convierte «funciona aquí» en «funciona»:
 - [ ] Arranca en menos de 3 segundos desde el doble clic (icono en la bandeja).
 - [ ] Descarga el modelo a `modelos/` con avisos de progreso y, al terminar,
       dicta con `Ctrl+Win`.
+- [ ] `Instalar Voziris.cmd` deja la entrada en la búsqueda de Inicio y en
+      Configuración → Aplicaciones, y «Desinstalar» desde ahí la quita.
 - [ ] No pide permisos de administrador en ningún momento (ni UAC al
       arrancar, ni al crear el acceso directo de Inicio, ni al guardar ajustes).
 - [ ] Copiar la carpeta a otro equipo con el `config.toml` ya editado: los

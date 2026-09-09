@@ -243,3 +243,48 @@ def test_icono_real_se_muestra_cambia_de_estado_y_se_cierra() -> None:
     bandeja.actualizar_menu()
     bandeja.cerrar()
     assert not hilo.is_alive()
+
+
+def test_entradas_opcionales_del_menu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ver registro, diagnóstico e instalar solo aparecen si la aplicación los cablea."""
+    llamadas = Llamadas()
+    acciones = llamadas.acciones()
+    acciones.ver_registro = lambda: llamadas.lista.append(("registro", None))
+    acciones.diagnostico = lambda: llamadas.lista.append(("diagnostico", None))
+    acciones.instalar = lambda: llamadas.lista.append(("instalar", None))
+    b = Bandeja(acciones)
+    items = {str(i.text): i for i in b.construir_menu().items}
+    assert "Ver registro (voziris.log)" in items
+    assert "Guardar diagnóstico…" in items
+    assert "Instalar en este equipo…" in items
+    textos = [str(i.text) for i in b.construir_menu().items]
+    assert textos.index("Ajustes…") < textos.index("Ver registro (voziris.log)")
+    assert textos.index("Instalar en este equipo…") < textos.index("Acerca de Voziris")
+    items["Ver registro (voziris.log)"](None)
+    items["Guardar diagnóstico…"](None)
+    items["Instalar en este equipo…"](None)
+    assert llamadas.lista[-3:] == [("registro", None), ("diagnostico", None), ("instalar", None)]
+
+
+def test_el_mismo_estado_no_vuelve_a_tocar_el_icono() -> None:
+    b = Bandeja(Llamadas().acciones())
+
+    class IconoFalso:
+        def __init__(self) -> None:
+            self.cambios = 0
+            self.title = ""
+
+        @property
+        def icon(self) -> object:
+            return None
+
+        @icon.setter
+        def icon(self, valor: object) -> None:
+            self.cambios += 1
+
+    b._icono = IconoFalso()  # type: ignore[assignment]
+    b.estado("grabando")
+    b.estado("grabando")
+    b.estado("grabando")
+    b.estado("reposo")
+    assert b._icono.cambios == 2  # type: ignore[attr-defined]

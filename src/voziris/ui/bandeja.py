@@ -73,6 +73,12 @@ class AccionesBandeja:
     salir: Callable[[], None]
     acerca_de: Callable[[], None] | None = None
     """Si falta, «Acerca de» se muestra como notificación."""
+    ver_registro: Callable[[], None] | None = None
+    """Abre voziris.log. Si falta, la entrada no aparece."""
+    diagnostico: Callable[[], None] | None = None
+    """Genera y abre diagnostico.txt. Si falta, la entrada no aparece."""
+    instalar: Callable[[], None] | None = None
+    """Instala en el equipo (menú Inicio). Solo cuando se corre portable."""
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -101,6 +107,11 @@ class Bandeja:
         self._estado = "reposo"
         self._icono: Any = None
         self._hilo: threading.Thread | None = None
+        # pystray no es seguro entre hilos: cambiar el icono desde el hilo de
+        # trabajo mientras el suyo atiende un WM_DISPLAYCHANGE (que también
+        # recrea el icono) es una carrera sobre el mismo HICON. Un cerrojo
+        # para todo lo que toque el icono, y sin cambios redundantes (VOZ-63).
+        self._cerrojo = threading.Lock()
         self._imagenes = {e: iconos.imagen(e) for e in iconos.ESTADOS}
 
     # --- menú ------------------------------------------------------------------
@@ -138,10 +149,29 @@ class Bandeja:
                 ),
             ),
             Item("Ajustes…", lambda: self._acciones.abrir_ajustes()),
+            *self._items_opcionales(),
             Item("Acerca de Voziris", lambda: self._acerca_de()),
             pystray.Menu.SEPARATOR,
             Item("Salir", lambda: self._acciones.salir()),
         )
+
+    def _items_opcionales(self) -> list[Any]:
+        """Registro, diagnóstico e instalar: solo si la aplicación los cablea."""
+        import pystray
+
+        Item = pystray.MenuItem
+        elementos: list[Any] = []
+        a = self._acciones
+        if a.ver_registro is not None:
+            ver = a.ver_registro
+            elementos.append(Item("Ver registro (voziris.log)", lambda: ver()))
+        if a.diagnostico is not None:
+            diag = a.diagnostico
+            elementos.append(Item("Guardar diagnóstico…", lambda: diag()))
+        if a.instalar is not None:
+            inst = a.instalar
+            elementos.append(Item("Instalar en este equipo…", lambda: inst()))
+        return elementos
 
     def _items_ultimos(self) -> list[Any]:
         import pystray
@@ -232,10 +262,13 @@ class Bandeja:
         """Cambia el icono: "reposo" | "grabando" | "procesando" | "error"."""
         if nombre not in iconos.ESTADOS:
             raise ValueError(f"estado desconocido: {nombre!r}")
-        self._estado = nombre
-        if self._icono is not None:
-            self._icono.icon = self._imagenes[nombre]
-            self._icono.title = self._titulo()
+        with self._cerrojo:
+            if nombre == self._estado and self._icono is not None:
+                return
+            self._estado = nombre
+            if self._icono is not None:
+                self._icono.icon = self._imagenes[nombre]
+                self._icono.title = self._titulo()
 
     def _titulo(self) -> str:
         etiquetas = {
@@ -248,8 +281,9 @@ class Bandeja:
 
     def actualizar_menu(self) -> None:
         """Tras cambiar el historial o el motor desde fuera del menú."""
-        if self._icono is not None:
-            self._icono.update_menu()
+        with self._cerrojo:
+            if self._icono is not None:
+                self._icono.update_menu()
 
     def avisar(self, texto: str, titulo: str = "Voziris") -> None:
         """Notificación del sistema. Solo para lo que el usuario debe saber.
@@ -261,7 +295,8 @@ class Bandeja:
             log.info("aviso (sin bandeja): %s", texto)
             return
         try:
-            self._icono.notify(texto, titulo)
+            with self._cerrojo:
+                self._icono.notify(texto, titulo)
         except Exception:  # noqa: BLE001 — una notificación fallida no es un fallo
             log.warning("no se pudo mostrar la notificación: %s", texto)
 
@@ -306,12 +341,12 @@ class Bandeja:
             return False
         ejecutable, argumentos, trabajo = cls.destino_arranque()
         carpeta.mkdir(parents=True, exist_ok=True)
-        _crear_acceso_directo(acceso, ejecutable, argumentos, trabajo)
+        crear_acceso_directo(acceso, ejecutable, argumentos, trabajo)
         return True
 
 
-def _crear_acceso_directo(acceso: Path, ejecutable: str, argumentos: str, trabajo: str) -> None:
-    """Un .lnk con WScript.Shell, que es lo que Windows entiende en Startup."""
+def crear_acceso_directo(acceso: Path, ejecutable: str, argumentos: str, trabajo: str) -> None:
+    """Un .lnk con WScript.Shell, que es lo que Windows entiende en Startup e Inicio."""
     import pythoncom
     from win32com.client import Dispatch
 
@@ -347,3 +382,6 @@ def leer_acceso_directo(acceso: Path) -> tuple[str, str, str]:
         return str(atajo.TargetPath), str(atajo.Arguments), str(atajo.WorkingDirectory)
     finally:
         pythoncom.CoUninitialize()
+
+
+_crear_acceso_directo = crear_acceso_directo  # nombre anterior

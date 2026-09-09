@@ -34,6 +34,7 @@ import argparse
 import contextlib
 import logging
 import logging.handlers
+import os
 import queue
 import sys
 from collections.abc import Callable
@@ -91,6 +92,27 @@ def _sin_consola() -> None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — vive lo que el proceso
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+
+
+_archivo_fallos: Any = None
+
+
+def activar_faulthandler(carpeta: Path) -> None:
+    """Traza de Python en `voziris-fallos.log` si el proceso muere por un fallo nativo.
+
+    No lo ve todo: una corrupción del montón (0xc0000374) mata el proceso sin
+    pasar por aquí, y para eso están los volcados de Windows (ver
+    `diagnostico.py`). Pero una violación de acceso o un desbordamiento de
+    pila sí dejan aquí qué hilo y qué línea de Python estaban en marcha.
+    """
+    global _archivo_fallos
+    import faulthandler
+
+    try:
+        _archivo_fallos = open(carpeta / "voziris-fallos.log", "a", encoding="utf-8")  # noqa: SIM115
+        faulthandler.enable(_archivo_fallos, all_threads=True)
+    except OSError as e:
+        log.warning("sin voziris-fallos.log: %s", e)
 
 
 def configurar_log(carpeta: Path, depurar: bool, a_consola: bool) -> None:
@@ -488,6 +510,9 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         reintentar=reintentar,
         borrar_entrada=borrar_entrada,
         salir=lambda: en_hilo_tk(raiz.quit),
+        ver_registro=lambda: _abrir_con_windows(configuracion.carpeta / NOMBRE_LOG),
+        diagnostico=lambda: _abrir_con_windows(_generar_diagnostico(configuracion.carpeta)),
+        instalar=_accion_instalar(),
         acerca_de=lambda: en_hilo_tk(
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
         ),
@@ -553,6 +578,26 @@ def _aplicacion(configuracion: cfg.Config) -> int:
     return 0
 
 
+def _generar_diagnostico(carpeta: Path) -> Path:
+    from voziris import diagnostico
+
+    return diagnostico.generar(carpeta)
+
+
+def _accion_instalar() -> Callable[[], None] | None:
+    """La entrada «Instalar en este equipo…» solo cuando se corre portable."""
+    from voziris import instalador
+
+    if not getattr(sys, "frozen", False) or instalador.esta_instalado():
+        return None
+
+    def instalar() -> None:
+        # En otro proceso: el instalador cierra esta instancia y arranca la nueva.
+        _lanzar_desatendido(_comando_propio("--instalar"))
+
+    return instalar
+
+
 def _ajustar_arranque_con_windows(configuracion: cfg.Config, avisar: Callable[[str], None]) -> None:
     """C-4: el acceso directo se crea o borra solo cuando el valor cambia respecto al real."""
     from voziris.ui.bandeja import Bandeja
@@ -565,6 +610,103 @@ def _ajustar_arranque_con_windows(configuracion: cfg.Config, avisar: Callable[[s
                 avisar("Voziris ya no arrancará con Windows")
     except Exception as e:  # noqa: BLE001 — no es motivo para no arrancar
         log.warning("no se pudo ajustar el arranque con Windows: %s", e)
+
+
+# --- instalación y diagnóstico desde la línea de comandos --------------------------------------
+
+
+def _comando_propio(*argumentos: str) -> list[str]:
+    """Cómo volver a lanzar Voziris: el .exe congelado o `python -m voziris`."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *argumentos]
+    return [sys.executable, "-m", "voziris", *argumentos]
+
+
+def _lanzar_desatendido(orden: list[str], cwd: Path | None = None) -> None:
+    import subprocess
+
+    subprocess.Popen(  # noqa: S603 — orden construida aquí, no por el usuario
+        orden,
+        cwd=str(cwd) if cwd else None,
+        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        close_fds=True,
+    )
+
+
+def _abrir_con_windows(ruta: Path) -> None:
+    try:
+        os.startfile(str(ruta))
+    except (OSError, AttributeError) as e:
+        log.warning("no se pudo abrir %s: %s", ruta, e)
+
+
+def _mensaje(titulo: str, texto: str) -> None:
+    """Un cuadro de diálogo cuando no hay consola que leer."""
+    print(f"{titulo}: {texto}")
+    if getattr(sys, "frozen", False):
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            raiz = tk.Tk()
+            raiz.withdraw()
+            messagebox.showinfo(titulo, texto)
+            raiz.destroy()
+        except Exception:  # noqa: BLE001 — ya está impreso y en el log
+            pass
+
+
+def _cerrar_la_abierta() -> None:
+    if winapi.ES_WINDOWS and winapi.pedir_salida():
+        import time
+
+        for _ in range(30):
+            time.sleep(0.2)
+            if not winapi.hay_instancia_abierta():
+                break
+
+
+def _instalar_cli() -> int:
+    from voziris import instalador
+
+    _cerrar_la_abierta()
+    try:
+        destino = instalador.instalar()
+    except (FileNotFoundError, OSError) as e:
+        _error_fatal(f"No se pudo instalar Voziris: {e}", con_ventana=True)
+        return 1
+    log.info("instalado en %s", destino)
+    _lanzar_desatendido([str(destino / "voziris.exe")], cwd=destino)
+    _mensaje(
+        "Voziris instalado",
+        "Ya puedes escribir «Voziris» en la búsqueda de Windows.\n\n"
+        f"Carpeta: {destino}\n"
+        "Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar.",
+    )
+    return 0
+
+
+def _desinstalar_cli() -> int:
+    from voziris import instalador
+
+    _cerrar_la_abierta()
+    try:
+        instalador.desinstalar()
+    except OSError as e:
+        _error_fatal(f"No se pudo desinstalar del todo: {e}", con_ventana=True)
+        return 1
+    _mensaje("Voziris desinstalado", "La carpeta se borra en unos segundos. Hasta otra.")
+    return 0
+
+
+def _diagnostico_cli(carpeta: Path) -> int:
+    from voziris import diagnostico
+
+    ruta = diagnostico.generar(carpeta)
+    print(f"Diagnóstico en {ruta}")
+    _abrir_con_windows(ruta)
+    return 0
 
 
 # --- entrada ---------------------------------------------------------------------------------
@@ -586,6 +728,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--salir", action="store_true", help="cierra limpiamente la Voziris que esté abierta"
     )
+    parser.add_argument(
+        "--instalar", action="store_true",
+        help="copia Voziris a Programs, lo pone en el menú Inicio y en Aplicaciones instaladas",
+    )
+    parser.add_argument(
+        "--desinstalar", action="store_true", help="deshace --instalar (accesos, registro, carpeta)"
+    )
+    parser.add_argument(
+        "--diagnostico", action="store_true",
+        help="escribe diagnostico.txt con el registro y los fallos que anotó Windows, y lo abre",
+    )
     parser.add_argument("--version", action="version", version=f"voziris {__version__}")
     _sin_consola()
     args = parser.parse_args(argv)
@@ -600,7 +753,15 @@ def main(argv: list[str] | None = None) -> int:
     consola = args.archivo is not None
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
     configurar_log(carpeta, args.debug, a_consola=consola or args.debug)
+    activar_faulthandler(carpeta)
     log.info("arrancando Voziris %s", __version__)  # la marca de tiempo del arranque
+
+    if args.instalar:
+        return _instalar_cli()
+    if args.desinstalar:
+        return _desinstalar_cli()
+    if args.diagnostico:
+        return _diagnostico_cli(carpeta)
 
     if not consola and winapi.ES_WINDOWS and not winapi.instancia_unica():
         _error_fatal("Voziris ya está abierto: mira el icono de la bandeja.", con_ventana=True)
