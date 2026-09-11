@@ -31,7 +31,9 @@ class Llamadas:
     def __init__(self) -> None:
         self.lista: list[tuple[str, object]] = []
 
-    def acciones(self, con_acerca_de: bool = True) -> AccionesBandeja:
+    def acciones(
+        self, con_acerca_de: bool = True, con_transcribir: bool = False
+    ) -> AccionesBandeja:
         return AccionesBandeja(
             dictar_ahora=lambda: self.lista.append(("dictar", None)),
             dictar_markdown=lambda: self.lista.append(("dictar_md", None)),
@@ -42,6 +44,9 @@ class Llamadas:
             borrar_entrada=lambda i: self.lista.append(("borrar", i)),
             salir=lambda: self.lista.append(("salir", None)),
             acerca_de=(lambda: self.lista.append(("acerca", None))) if con_acerca_de else None,
+            transcribir=(
+                (lambda: self.lista.append(("transcribir", None))) if con_transcribir else None
+            ),
         )
 
 
@@ -112,6 +117,15 @@ def test_menu_completo_en_orden() -> None:
         "Últimos dictados", "Motor", "Ajustes…", "Acerca de Voziris",
         "- - - -", "Salir",  # el separador de pystray se muestra así
     ]
+
+
+def test_transcribir_grabacion_solo_si_la_aplicacion_lo_cablea() -> None:
+    llamadas = Llamadas()
+    bandeja = Bandeja(llamadas.acciones(con_transcribir=True))
+    items = {_texto(i): i for i in _items(bandeja.construir_menu())}
+    assert list(items)[:3] == ["Dictar ahora", "Dictar al Markdown", "Transcribir una grabación…"]
+    items["Transcribir una grabación…"](None)
+    assert llamadas.lista == [("transcribir", None)]
 
 
 def test_las_acciones_del_menu_llaman_a_la_aplicacion() -> None:

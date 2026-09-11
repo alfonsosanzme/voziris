@@ -25,6 +25,14 @@ Modo consola, para probar el pipeline sin teclado ni bandeja:
 Y `python -m voziris --salir` cierra limpiamente la instancia abierta, para
 scripts y para la verificación en máquina virtual (VOZ-61).
 
+Transcribir una grabación entera a Markdown (VOZ-70/71/72), sin bandeja ni
+mutex, en un proceso aparte de la Voziris que esté dictando:
+
+    voziris.exe --transcribir reunion.m4a --hablantes auto [--salida x.md] [--ventana]
+
+`--ventana` muestra el progreso en una ventana en vez de en la consola; es lo
+que usan el menú contextual del Explorador y la entrada de la bandeja.
+
 Issue: VOZ-04 (orquestación), VOZ-05 (instancia única).
 """
 
@@ -92,6 +100,13 @@ def _sin_consola() -> None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — vive lo que el proceso
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    # Lanzado desde una consola en cp1252, un «→» en un print tumbaba el
+    # instalador con UnicodeEncodeError. Lo que no se pueda mostrar, se sustituye.
+    for flujo in (sys.stdout, sys.stderr):
+        reconfigurar = getattr(flujo, "reconfigure", None)
+        if reconfigurar is not None:
+            with contextlib.suppress(Exception):
+                reconfigurar(errors="replace")
 
 
 _archivo_fallos: Any = None
@@ -160,20 +175,10 @@ def _construir(
     """Crea las piezas a partir de la configuración. Devuelve (captura, motor, destinos)."""
     from voziris.audio.captura import Captura
     from voziris.destinos.app_activa import AppActiva
-    from voziris.motores.api import MotorAPI
-    from voziris.motores.local import MotorLocal
-    from voziris.motores.selector import Selector
 
     a = configuracion.audio
     captura = Captura(a.dispositivo, a.ganancia_db, a.buffer_previo_ms)
-    ml = configuracion.motor.local
-    local = MotorLocal(ml.modelo, ml.carpeta, ml.hilos, ml.cuantizacion, al_progresar)
-    ma = configuracion.motor.api
-    api = MotorAPI(
-        ma.base_url, ma.modelo, ma.clave, ma.timeout_s,
-        vocabulario=configuracion.proceso.diccionario,
-    )
-    motor = Selector(configuracion.general.motor, local, api)
+    motor = _motor(configuracion, al_progresar)
     from voziris.destinos.archivo_md import ArchivoMarkdown
 
     d = configuracion.destino.app_activa
@@ -188,6 +193,22 @@ def _construir(
         # Markdown responde con tono de error y aviso hasta que se corrija.
         log.warning("destino Markdown desactivado: la carpeta %s no existe", md.ruta.parent)
     return captura, motor, destinos
+
+
+def _motor(configuracion: cfg.Config, al_progresar: Callable[[str, float | None], None]) -> Any:
+    """El selector con sus dos motores, tal como lo usa el dictado y la transcripción."""
+    from voziris.motores.api import MotorAPI
+    from voziris.motores.local import MotorLocal
+    from voziris.motores.selector import Selector
+
+    ml = configuracion.motor.local
+    local = MotorLocal(ml.modelo, ml.carpeta, ml.hilos, ml.cuantizacion, al_progresar)
+    ma = configuracion.motor.api
+    api = MotorAPI(
+        ma.base_url, ma.modelo, ma.clave, ma.timeout_s,
+        vocabulario=configuracion.proceso.diccionario,
+    )
+    return Selector(configuracion.general.motor, local, api)
 
 
 def _postprocesos(configuracion: cfg.Config) -> list[Any]:
@@ -279,10 +300,92 @@ def _modo_consola(configuracion: cfg.Config, archivo: Path, destino: str, nivel:
     return 0
 
 
+# --- transcribir una grabación -----------------------------------------------------------
+
+
+def _transcribir_grabacion(
+    configuracion: cfg.Config,
+    ruta: Path,
+    hablantes: str,
+    salida: Path | None,
+    con_ventana: bool,
+) -> int:
+    """VOZ-72: de un archivo de audio a un .md al lado, con ventana de progreso o consola."""
+    from voziris import grabaciones
+    from voziris.archivos import ArchivoNoLegible
+    from voziris.hablantes import SeparadorHablantes
+    from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
+
+    Progreso = Callable[[str, float | None], None]
+
+    def trabajo(progreso: Progreso) -> tuple[grabaciones.Resultado, Path]:
+        motor = _motor(configuracion, progreso)
+        progreso("Cargando el motor…", None)
+        motor.precalentar()
+        separador: SeparadorHablantes | None = None
+        if hablantes != "1":
+            separador = SeparadorHablantes(configuracion.motor.local.carpeta, progreso)
+            separador.precalentar()
+            if not separador.disponible():
+                log.warning("sin separador de hablantes: %s", separador.error)
+                separador = None
+        resultado = grabaciones.transcribir_archivo(
+            ruta, motor, configuracion.general.idioma, hablantes, separador, progreso
+        )
+        return resultado, grabaciones.guardar(resultado, ruta, salida)
+
+    def en_consola(mensaje: str, fraccion: float | None) -> None:
+        print(f"  {mensaje}" + (f" ({fraccion:.0%})" if fraccion is not None else ""))
+
+    try:
+        if con_ventana:
+            resultado, destino = ejecutar_con_progreso(
+                "Transcribiendo con Voziris", ruta.name, trabajo
+            )
+        else:
+            resultado, destino = trabajo(en_consola)
+    except TranscripcionCancelada:
+        log.info("transcripción de %s cancelada", ruta.name)
+        return 3
+    except (ArchivoNoLegible, VozirisError, OSError) as e:
+        log.error("transcripción de %s: %s", ruta.name, e)
+        _error_fatal(f"No se pudo transcribir {ruta.name}: {e}", con_ventana)
+        return 1
+    log.info(
+        "transcripción: %s → %s · %.0f s de audio · %d líneas · %d hablantes · motor %s · %d ms",
+        ruta.name, destino, resultado.duracion_s, len(resultado.lineas), resultado.hablantes,
+        resultado.motor, resultado.ms_proceso,
+    )
+    if con_ventana:
+        _abrir_con_windows(destino)
+    else:
+        print(f"\n{destino}")
+        print(f"{len(resultado.lineas)} líneas · {resultado.hablantes} hablante(s) · "
+              f"motor {resultado.motor} · {resultado.ms_proceso} ms de motor")
+        for aviso in resultado.avisos:
+            print(f"aviso: {aviso}")
+    return 0
+
+
+def _pedir_transcripcion(raiz: Any, carpeta_config: Path | None) -> None:
+    """Desde la bandeja, en el hilo de Tk: pregunta y lanza el proceso aparte."""
+    from voziris.ui.transcripcion import elegir_grabacion
+
+    eleccion = elegir_grabacion(raiz)
+    if eleccion is None:
+        return
+    ruta, hablantes = eleccion
+    extra = ["--config", str(carpeta_config)] if carpeta_config else []
+    _lanzar_desatendido(_comando_propio(
+        *extra, "--transcribir", str(ruta), "--hablantes", hablantes, "--ventana",
+    ))
+    log.info("transcripción de %s (%s hablantes) lanzada en otro proceso", ruta.name, hablantes)
+
+
 # --- aplicación -------------------------------------------------------------------------
 
 
-def _aplicacion(configuracion: cfg.Config) -> int:
+def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> int:
     import tkinter as tk
     from tkinter import messagebox
 
@@ -504,6 +607,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
         dictar_markdown=lambda: orq.alternar_clavar("markdown"),
+        transcribir=lambda: en_hilo_tk(lambda: _pedir_transcripcion(raiz, ruta_config)),
         alternar_corte=alternar_corte,
         abrir_ajustes=lambda: en_hilo_tk(ajustes.abrir),
         cambiar_motor=cambiar_motor,
@@ -567,6 +671,7 @@ def _aplicacion(configuracion: cfg.Config) -> int:
         raiz.mainloop()
     finally:
         log.info("cerrando")
+        _forzar_salida_en(10)
         orq.parar()
         atajos.liberar()
         captura.cerrar()
@@ -576,6 +681,25 @@ def _aplicacion(configuracion: cfg.Config) -> int:
             hud.destruir()
             raiz.destroy()
     return 0
+
+
+def _forzar_salida_en(segundos: float) -> None:
+    """Si el cierre limpio se atasca (un hilo nativo que no vuelve), el proceso muere igual.
+
+    Visto en VOZ-72: `--instalar` pidió salir a la Voziris abierta, escribió
+    «cerrando» y se quedó viva sin bucle de eventos, con el hook de teclado
+    puesto. Un proceso zombi es peor que uno que se va sin recoger.
+    """
+    import threading
+
+    def matar() -> None:
+        log.error("el cierre no terminó en %.0f s: salida forzada", segundos)
+        logging.shutdown()
+        os._exit(0)
+
+    temporizador = threading.Timer(segundos, matar)
+    temporizador.daemon = True
+    temporizador.start()
 
 
 def _generar_diagnostico(carpeta: Path) -> Path:
@@ -700,6 +824,21 @@ def _desinstalar_cli() -> int:
     return 0
 
 
+def _menu_contextual_cli(activar: bool) -> int:
+    from voziris import instalador
+
+    if activar:
+        instalador.registrar_menu_contextual(_comando_propio())
+        _mensaje(
+            "Menú contextual activado",
+            "Botón derecho sobre una grabación → «Transcribir con Voziris».",
+        )
+    else:
+        instalador.quitar_menu_contextual()
+        _mensaje("Menú contextual quitado", "Ya no aparece «Transcribir con Voziris».")
+    return 0
+
+
 def _diagnostico_cli(carpeta: Path) -> int:
     from voziris import diagnostico
 
@@ -739,6 +878,26 @@ def main(argv: list[str] | None = None) -> int:
         "--diagnostico", action="store_true",
         help="escribe diagnostico.txt con el registro y los fallos que anotó Windows, y lo abre",
     )
+    parser.add_argument(
+        "--transcribir", type=Path, metavar="GRABACION",
+        help="transcribe una grabación (m4a, mp3, wav…) a un .md junto a ella y sale",
+    )
+    parser.add_argument(
+        "--hablantes", default="auto", metavar="auto|1|N",
+        help="con --transcribir: 1 (una voz), auto (varias, las distingue) o cuántas son",
+    )
+    parser.add_argument("--salida", type=Path, help="con --transcribir: el .md de destino")
+    parser.add_argument(
+        "--ventana", action="store_true",
+        help="con --transcribir: progreso en una ventana (lo usan la bandeja y el Explorador)",
+    )
+    parser.add_argument(
+        "--menu-contextual", action="store_true",
+        help="añade «Transcribir con Voziris» al botón derecho de las grabaciones (sin instalar)",
+    )
+    parser.add_argument(
+        "--sin-menu-contextual", action="store_true", help="quita ese menú contextual"
+    )
     parser.add_argument("--version", action="version", version=f"voziris {__version__}")
     _sin_consola()
     args = parser.parse_args(argv)
@@ -751,8 +910,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     consola = args.archivo is not None
+    transcribir = args.transcribir is not None
+    if transcribir and not _hablantes_validos(args.hablantes):
+        parser.error("--hablantes tiene que ser auto, 1 o un número de 2 a 50")
+    con_ventana = transcribir and (args.ventana or bool(getattr(sys, "frozen", False)))
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
-    configurar_log(carpeta, args.debug, a_consola=consola or args.debug)
+    configurar_log(
+        carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug
+    )
     activar_faulthandler(carpeta)
     log.info("arrancando Voziris %s", __version__)  # la marca de tiempo del arranque
 
@@ -762,8 +927,10 @@ def main(argv: list[str] | None = None) -> int:
         return _desinstalar_cli()
     if args.diagnostico:
         return _diagnostico_cli(carpeta)
+    if args.menu_contextual or args.sin_menu_contextual:
+        return _menu_contextual_cli(activar=args.menu_contextual)
 
-    if not consola and winapi.ES_WINDOWS and not winapi.instancia_unica():
+    if not consola and not transcribir and winapi.ES_WINDOWS and not winapi.instancia_unica():
         _error_fatal("Voziris ya está abierto: mira el icono de la bandeja.", con_ventana=True)
         return 0
 
@@ -774,10 +941,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     logging.getLogger().addFilter(_TacharClave(configuracion.motor.api.clave))
 
+    if transcribir:
+        return _transcribir_grabacion(
+            configuracion, args.transcribir, args.hablantes, args.salida, con_ventana
+        )
     if consola:
         nivel = Nivel(args.nivel) if args.nivel else configuracion.proceso.nivel
         return _modo_consola(configuracion, args.archivo, args.destino, nivel)
-    return _aplicacion(configuracion)
+    return _aplicacion(configuracion, args.config)
+
+
+def _hablantes_validos(valor: str) -> bool:
+    return valor in ("auto", "1") or (valor.isdigit() and 2 <= int(valor) <= 50)
 
 
 if __name__ == "__main__":

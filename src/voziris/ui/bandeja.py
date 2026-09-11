@@ -55,7 +55,11 @@ def texto_acerca_de(version: str = __version__) -> str:
         "\n"
         "Motor local: NVIDIA Parakeet TDT 0.6B v3, © NVIDIA Corporation,\n"
         "distribuido bajo Creative Commons Attribution 4.0 (CC-BY-4.0).\n"
-        "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"
+        "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3\n"
+        "\n"
+        "Separación de hablantes: NVIDIA TitaNet small, © NVIDIA Corporation\n"
+        "(CC-BY-4.0), y pyannote segmentation 3.0 (MIT), con sherpa-onnx\n"
+        "(Apache-2.0). Grabaciones decodificadas con PyAV y FFmpeg (GPL)."
     )
 
 
@@ -79,6 +83,8 @@ class AccionesBandeja:
     """Genera y abre diagnostico.txt. Si falta, la entrada no aparece."""
     instalar: Callable[[], None] | None = None
     """Instala en el equipo (menú Inicio). Solo cuando se corre portable."""
+    transcribir: Callable[[], None] | None = None
+    """Transcribir una grabación a Markdown (VOZ-72). Si falta, la entrada no aparece."""
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -133,6 +139,7 @@ class Bandeja:
         return pystray.Menu(
             Item("Dictar ahora", lambda: self._acciones.dictar_ahora(), default=True),
             Item("Dictar al Markdown", lambda: self._acciones.dictar_markdown()),
+            *self._item_transcribir(),
             Item(
                 "Cortar al callar (modo clavar)",
                 lambda: self._acciones.alternar_corte(),
@@ -154,6 +161,14 @@ class Bandeja:
             pystray.Menu.SEPARATOR,
             Item("Salir", lambda: self._acciones.salir()),
         )
+
+    def _item_transcribir(self) -> list[Any]:
+        import pystray
+
+        if self._acciones.transcribir is None:
+            return []
+        transcribir = self._acciones.transcribir
+        return [pystray.MenuItem("Transcribir una grabación…", lambda: transcribir())]
 
     def _items_opcionales(self) -> list[Any]:
         """Registro, diagnóstico e instalar: solo si la aplicación los cablea."""
@@ -219,8 +234,9 @@ class Bandeja:
     def mostrar(self) -> None:
         """Crea el icono y entra en el bucle de eventos. Bloquea hasta `cerrar()`.
 
-        Menú: Dictar ahora · Últimos dictados (submenú) · Motor
-        (local/API/auto) · Ajustes · Acerca de · Salir.
+        Menú: Dictar ahora · Dictar al Markdown · Transcribir una grabación… ·
+        Cortar al callar · Últimos dictados (submenú) · Motor (local/API/auto) ·
+        Ajustes · Acerca de · Salir.
 
         «Acerca de» incluye la atribución a NVIDIA por CC-BY-4.0. Es una
         obligación de licencia, no un adorno.

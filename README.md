@@ -68,6 +68,45 @@ Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar, o
 `voziris.exe --desinstalar`. La carpeta de la instalación se borra entera,
 incluido el modelo.
 
+## Transcribir una grabación (m4a, mp3, wav…)
+
+Además de dictar, Voziris convierte una grabación entera en un archivo
+Markdown, con marcas de tiempo y, si hay varias personas, con quién habla en
+cada momento. Tres formas de pedirlo:
+
+- **Botón derecho** sobre la grabación en el Explorador → «Transcribir con
+  Voziris» → «Una sola voz» o «Varios hablantes». Aparece al instalar
+  Voziris; en la copia portable se activa con `voziris.exe --menu-contextual`
+  (y se quita con `--sin-menu-contextual`).
+- **Bandeja** → «Transcribir una grabación…»: elige el archivo y cuántas
+  personas hablan (una, varias sin saber cuántas, o el número exacto).
+- **Línea de comandos**:
+  `voziris.exe --transcribir "reunion.m4a" --hablantes auto`
+  (`--hablantes 1` para una voz, `--hablantes 3` si se sabe cuántas;
+  `--salida otro.md` para elegir el destino).
+
+Sale una ventana con el progreso y, al terminar, se abre `reunion.md` junto
+a la grabación (si ya existía, `reunion (2).md`). Con varias voces, cada
+intervención va como `**Hablante 2** (03:41) …`; el número es el orden de
+aparición, no el nombre: quién es quién se cambia luego con un
+buscar-y-reemplazar. Se transcribe con el motor que esté elegido (local o
+API) mientras la Voziris de la bandeja sigue disponible para dictar.
+
+La primera vez que se pide con varios hablantes se descargan dos modelos
+pequeños (44 MB) a `modelos/hablantes/`. Qué esperar de la separación:
+
+- Con **el número de hablantes conocido** acierta mucho más que en
+  automático: si se sabe, hay que decirlo.
+- **Llamadas de teléfono grabadas desde un lado** son el peor caso: la voz
+  de enfrente llega comprimida y baja, y a veces acaba mezclada con la
+  propia. Una reunión presencial o una videollamada grabada por la
+  aplicación separa bien.
+- Un «Hablante 3» con dos frases sueltas en una charla de dos suele ser
+  ruido de la agrupación, no una tercera persona.
+
+Formatos: lo que abre ffmpeg (m4a, mp3, wav, flac, ogg, opus, aac, wma, mp4,
+webm, mkv…). Una hora de audio tarda unos minutos con el motor local.
+
 ## Ajustes
 
 Menú de la bandeja → Ajustes. Seis pestañas: atajos (se configuran pulsando
@@ -197,6 +236,7 @@ de `config.toml`, `general.motor` y `proceso.nivel`:
 | `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
 | `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
 | Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
+| Transcribir una grabación | el audio, troceado, va al mismo sitio que un dictado según `general.motor`; la primera vez con varios hablantes, dos modelos se descargan de **GitHub** (releases de sherpa-onnx) a `modelos/hablantes/` |
 
 Está verificado con un test (`tests/test_offline.py`) que bloquea toda
 conexión saliente del proceso y transcribe diez dictados en modo local
@@ -242,6 +282,9 @@ archivo es lo que hay que enviar cuando algo se cierra solo.
    cada dictado unos milisegundos después de copiarlo; Voziris espera 20 ms
    antes de pegar para no chocar con él. Los dictados aparecerán en ese
    historial como cualquier otro texto copiado.
+6. **Separación de hablantes en llamadas telefónicas.** La voz del otro
+   extremo llega por el altavoz, comprimida, y los modelos de voz la
+   confunden a ratos con la propia. Ver «Transcribir una grabación».
 
 ## Desarrollo
 
@@ -259,6 +302,7 @@ ruff check src tests tools              # linter
 mypy                                    # tipos (estricto)
 python -m voziris                       # arrancar
 python -m voziris --archivo x.wav       # modo consola: transcribe un WAV y sale
+python -m voziris --transcribir r.m4a --hablantes auto   # grabación entera a r.md
 python -m voziris --salir               # cierra la instancia abierta
 ```
 
@@ -281,8 +325,10 @@ python tools/empaquetar.py
 El primero produce `build/dist/voziris/`; el segundo añade
 `Instalar Voziris.cmd`, lo comprime sin los datos del usuario y calcula el
 SHA-256. La carpeta es portable tal cual. El modelo (~640 MB) no va dentro, se descarga en el primer
-arranque. Ver `docs/RELEASE.md` para la lista de verificación y los pasos de
-la release.
+arranque. Dentro sí van ffmpeg (PyAV, para abrir las grabaciones) y
+sherpa-onnx (separación de hablantes): son la mayor parte del peso del ZIP.
+Ver `docs/RELEASE.md` para la lista de verificación y los pasos de la
+release.
 
 ### Documentación
 

@@ -36,6 +36,19 @@ En el log, la diferencia entre la primera línea y «arrancado» es el tiempo de
 arranque: tiene que ser menor de 3 segundos. «cerrando» al final confirma el
 cierre limpio.
 
+### Transcribir una grabación desde el paquete
+
+```bash
+build\dist\voziris\voziris.exe --transcribir "prueba de voz\nota.m4a" --hablantes 1 --config build\work\prueba\config.toml
+```
+
+Sin consola, así que aparece la ventana de progreso y al terminar se abre el
+`.md` junto al archivo. En el log queda «transcripción: nota.m4a → …». Con
+`--hablantes auto` tiene que descargar los dos modelos a `modelos/hablantes/`
+la primera vez (44 MB) y el `.md` lleva `**Hablante N**`. Es lo que verifica
+que PyAV (ffmpeg) y sherpa-onnx viajan bien en el paquete: si falta una DLL,
+falla aquí y no en el dictado.
+
 ### Primer arranque de verdad, sin `--config`
 
 Lo anterior no prueba lo que ve un usuario: una carpeta recién extraída, sin
@@ -55,8 +68,9 @@ Crea `Instalar Voziris.cmd` junto al ejecutable, comprime la carpeta sin
 `config.toml`, `modelos/`, `historial/` ni los logs, y deja el SHA-256 en
 `build/dist/SHA256SUMS.txt` y en `docs/notas-release.md`.
 
-El ZIP tiene que pesar menos de 120 MB. El hash va en las notas de la release
-y en `SHA256SUMS.txt`.
+El ZIP tiene que pesar menos de 200 MB (con ffmpeg y sherpa-onnx dentro; sin
+la transcripción de grabaciones eran 120). El hash va en las notas de la
+release y en `SHA256SUMS.txt`.
 
 ## 4. Verificar en una máquina limpia (a mano)
 

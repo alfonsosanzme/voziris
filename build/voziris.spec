@@ -25,7 +25,7 @@ directorio de trabajo, para que funcione desde cualquier sitio.
 
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 RAIZ = os.path.abspath(os.path.join(SPECPATH, ".."))
 
@@ -37,12 +37,16 @@ METADATOS = copy_metadata("onnx-asr") + copy_metadata("huggingface_hub") + copy_
 # paquete; PyInstaller no los ve porque no son módulos.
 DATOS_ONNX_ASR = collect_data_files("onnx_asr")
 
+# VOZ-72: sherpa-onnx trae sus DLL (y su propio onnxruntime) en sherpa_onnx/lib;
+# PyAV lleva ffmpeg en av.libs, que recoge el hook de pyinstaller-hooks-contrib.
+BINARIOS_SHERPA = collect_dynamic_libs("sherpa_onnx")
+
 block_cipher = None
 
 a = Analysis(
     [os.path.join(RAIZ, "src", "voziris", "__main__.py")],
     pathex=[os.path.join(RAIZ, "src")],
-    binaries=[],
+    binaries=BINARIOS_SHERPA,
     datas=[
         (os.path.join(RAIZ, "config.ejemplo.toml"), "."),
         (os.path.join(RAIZ, "ATRIBUCIONES.md"), "."),   # obligación de CC-BY-4.0: viaja con el binario
@@ -56,6 +60,8 @@ a = Analysis(
         "huggingface_hub",
         "sounddevice",
         "soundfile",
+        "sherpa_onnx",
+        "av",
         "pystray._win32",
         "win32clipboard",
         "win32gui",

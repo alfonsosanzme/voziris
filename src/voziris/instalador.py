@@ -16,6 +16,12 @@ desinstalar. Se hace sin permisos de administrador:
 
 `config.toml`, `modelos/` e `historial/` viajan con la copia si estaban al
 lado del ejecutable: no hay que volver a descargar 640 MB ni reconfigurar.
+
+Con la instalación va también el menú contextual del Explorador: botón
+derecho sobre un .m4a (o .mp3, .wav…) → «Transcribir con Voziris» → «Una sola
+voz» / «Varios hablantes» (VOZ-72). También es una clave de HKCU, bajo
+`Software\\Classes\\SystemFileAssociations`, y también se puede pedir sin
+instalar (`voziris.exe --menu-contextual`) para la copia portable.
 """
 
 from __future__ import annotations
@@ -39,6 +45,13 @@ ACCESO_MENU = "Voziris.lnk"
 ACCESO_STARTUP = "Voziris.lnk"
 DATOS_DEL_USUARIO = ("config.toml", "modelos", "historial")
 """Lo que se lleva a la instalación si está junto al ejecutable de origen."""
+BASE_MENU_CONTEXTUAL = r"Software\Classes\SystemFileAssociations"
+NOMBRE_MENU_CONTEXTUAL = "Voziris"
+VERBOS_MENU_CONTEXTUAL: tuple[tuple[str, str, str], ...] = (
+    ("01uno", "Una sola voz", "1"),
+    ("02varios", "Varios hablantes", "auto"),
+)
+"""(subclave, etiqueta, valor de --hablantes). Windows ordena las subclaves por nombre."""
 
 
 def carpeta_instalacion() -> Path:
@@ -74,6 +87,7 @@ def instalar(
     startup: Path | None = None,
     raiz_registro: int | None = None,
     clave_registro: str = CLAVE_DESINSTALAR,
+    base_menu: str = BASE_MENU_CONTEXTUAL,
     version: str = __version__,
 ) -> Path:
     """Copia el programa, crea el acceso directo de Inicio y la entrada de desinstalación.
@@ -128,6 +142,7 @@ def instalar(
         log.info("acceso directo de Inicio de sesión actualizado: %s", arranque)
 
     _registrar(destino, exe, version, raiz_registro, clave_registro)
+    registrar_menu_contextual([str(exe)], raiz=raiz_registro, base=base_menu)
     return destino
 
 
@@ -138,6 +153,7 @@ def desinstalar(
     startup: Path | None = None,
     raiz_registro: int | None = None,
     clave_registro: str = CLAVE_DESINSTALAR,
+    base_menu: str = BASE_MENU_CONTEXTUAL,
     borrar_carpeta: bool = True,
     aplazado: bool | None = None,
 ) -> None:
@@ -156,6 +172,7 @@ def desinstalar(
             acceso.unlink()
             log.info("borrado %s", acceso)
     _desregistrar(raiz_registro, clave_registro)
+    quitar_menu_contextual(raiz=raiz_registro, base=base_menu)
     if not borrar_carpeta or not destino.exists():
         return
     if aplazado is None:
@@ -164,6 +181,106 @@ def desinstalar(
         _borrar_aplazado(destino)
     else:
         shutil.rmtree(destino, ignore_errors=True)
+
+
+# --- menú contextual del Explorador ------------------------------------------------------
+
+
+def registrar_menu_contextual(
+    orden: list[str],
+    extensiones: tuple[str, ...] | None = None,
+    raiz: int | None = None,
+    base: str = BASE_MENU_CONTEXTUAL,
+) -> None:
+    """«Transcribir con Voziris» en el botón derecho de cada extensión de audio.
+
+    Un menú en cascada con dos verbos. `orden` es cómo lanzar Voziris
+    (`["C:\\...\\voziris.exe"]` o `[python, "-m", "voziris"]`); a cada verbo
+    se le añade `--transcribir "%1" --hablantes … --ventana`. Solo en HKCU: el
+    Explorador lo lee sin permisos y no afecta a otros usuarios.
+    """
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    from voziris.archivos import FORMATOS
+
+    raiz = winreg.HKEY_CURRENT_USER if raiz is None else raiz
+    exe = orden[0]
+    # El ejecutable siempre entre comillas (rutas con espacios); las opciones, tal cual.
+    prefijo = " ".join(f'"{parte}"' if i == 0 or " " in parte else parte
+                       for i, parte in enumerate(orden))
+    for ext in extensiones or FORMATOS:
+        clave = f"{base}\\{ext}\\shell\\{NOMBRE_MENU_CONTEXTUAL}"
+        with winreg.CreateKeyEx(raiz, clave, 0, winreg.KEY_WRITE) as k:
+            winreg.SetValueEx(k, "MUIVerb", 0, winreg.REG_SZ, "Transcribir con Voziris")
+            winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, f'"{exe}",0')
+            winreg.SetValueEx(k, "SubCommands", 0, winreg.REG_SZ, "")
+        for subclave, etiqueta, hablantes in VERBOS_MENU_CONTEXTUAL:
+            verbo = f"{clave}\\shell\\{subclave}"
+            with winreg.CreateKeyEx(raiz, verbo, 0, winreg.KEY_WRITE) as k:
+                winreg.SetValueEx(k, None, 0, winreg.REG_SZ, etiqueta)
+            with winreg.CreateKeyEx(raiz, verbo + "\\command", 0, winreg.KEY_WRITE) as k:
+                mandato = f'{prefijo} --transcribir "%1" --hablantes {hablantes} --ventana'
+                winreg.SetValueEx(k, None, 0, winreg.REG_SZ, mandato)
+    log.info("menú contextual «Transcribir con Voziris» registrado para %d extensiones",
+             len(extensiones or FORMATOS))
+
+
+def quitar_menu_contextual(
+    extensiones: tuple[str, ...] | None = None,
+    raiz: int | None = None,
+    base: str = BASE_MENU_CONTEXTUAL,
+) -> None:
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    from voziris.archivos import FORMATOS
+
+    raiz = winreg.HKEY_CURRENT_USER if raiz is None else raiz
+    quitadas = 0
+    for ext in extensiones or FORMATOS:
+        clave = f"{base}\\{ext}\\shell\\{NOMBRE_MENU_CONTEXTUAL}"
+        if _borrar_clave(raiz, clave):
+            quitadas += 1
+    if quitadas:
+        log.info("menú contextual quitado de %d extensiones", quitadas)
+
+
+def hay_menu_contextual(raiz: int | None = None, base: str = BASE_MENU_CONTEXTUAL) -> bool:
+    if sys.platform != "win32":
+        return False
+    import winreg
+
+    raiz = winreg.HKEY_CURRENT_USER if raiz is None else raiz
+    try:
+        with winreg.OpenKey(raiz, f"{base}\\.m4a\\shell\\{NOMBRE_MENU_CONTEXTUAL}"):
+            return True
+    except FileNotFoundError:
+        return False
+
+
+def _borrar_clave(raiz: int, clave: str) -> bool:
+    """`winreg.DeleteKey` no borra subclaves; esto sí. False si no existía."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(raiz, clave, 0, winreg.KEY_READ) as k:
+            hijas = []
+            i = 0
+            while True:
+                try:
+                    hijas.append(winreg.EnumKey(k, i))
+                except OSError:
+                    break
+                i += 1
+    except FileNotFoundError:
+        return False
+    for hija in hijas:
+        _borrar_clave(raiz, f"{clave}\\{hija}")
+    winreg.DeleteKey(raiz, clave)
+    return True
 
 
 # --- detalles ----------------------------------------------------------------------
