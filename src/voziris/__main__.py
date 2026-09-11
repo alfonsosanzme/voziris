@@ -100,6 +100,13 @@ def _sin_consola() -> None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — vive lo que el proceso
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    # Lanzado desde una consola en cp1252, un «→» en un print tumbaba el
+    # instalador con UnicodeEncodeError. Lo que no se pueda mostrar, se sustituye.
+    for flujo in (sys.stdout, sys.stderr):
+        reconfigurar = getattr(flujo, "reconfigure", None)
+        if reconfigurar is not None:
+            with contextlib.suppress(Exception):
+                reconfigurar(errors="replace")
 
 
 _archivo_fallos: Any = None
@@ -664,6 +671,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         raiz.mainloop()
     finally:
         log.info("cerrando")
+        _forzar_salida_en(10)
         orq.parar()
         atajos.liberar()
         captura.cerrar()
@@ -673,6 +681,25 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             hud.destruir()
             raiz.destroy()
     return 0
+
+
+def _forzar_salida_en(segundos: float) -> None:
+    """Si el cierre limpio se atasca (un hilo nativo que no vuelve), el proceso muere igual.
+
+    Visto en VOZ-72: `--instalar` pidió salir a la Voziris abierta, escribió
+    «cerrando» y se quedó viva sin bucle de eventos, con el hook de teclado
+    puesto. Un proceso zombi es peor que uno que se va sin recoger.
+    """
+    import threading
+
+    def matar() -> None:
+        log.error("el cierre no terminó en %.0f s: salida forzada", segundos)
+        logging.shutdown()
+        os._exit(0)
+
+    temporizador = threading.Timer(segundos, matar)
+    temporizador.daemon = True
+    temporizador.start()
 
 
 def _generar_diagnostico(carpeta: Path) -> Path:
