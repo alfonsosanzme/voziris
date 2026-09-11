@@ -306,3 +306,36 @@ de mensajes.
 - [ ] Cómo conseguir una clave de Groq y qué cuesta de verdad.
 - [ ] Release en GitHub con el ZIP y **el hash SHA-256**, por lo de los antivirus.
 - [ ] La atribución a NVIDIA presente en el repositorio, en el binario y en «Acerca de». Las tres.
+
+## H7 · Grabaciones a Markdown — 3 jornadas
+
+Pedido después de la primera entrega: «que Voziris convierta grabaciones
+(m4a) a un Markdown, y que autodetecte los interlocutores».
+
+### VOZ-70 · Transcribir un archivo de audio
+**Estimación:** 1 j · **Archivos:** `archivos.py`, `grabaciones.py`
+
+**Criterios de aceptación**
+- [x] Abre lo que abre ffmpeg (m4a, mp3, wav, ogg, opus, flac, mp4…) sin instalar nada: PyAV va dentro del paquete.
+- [x] Trocea en ventanas de ≤ 30 s cortadas en el punto más silencioso; funciona con el motor local y con la API (25 MB por petición).
+- [x] Cada trozo se normaliza por su cuenta: la voz de enfrente en una llamada no se pierde.
+- [x] `reunion.m4a` → `reunion.md` al lado, con cabecera (fecha, duración, motor) y marcas de tiempo; no pisa un `.md` que ya exista.
+
+### VOZ-71 · Quién habla cuándo
+**Estimación:** 1,5 j · **Archivo:** `hablantes.py`
+
+**Criterios de aceptación**
+- [x] Modelos pequeños (pyannote segmentation 3.0 + TitaNet small, 44 MB) descargados a `modelos/hablantes/` la primera vez; en CPU con sherpa-onnx.
+- [x] Con el número de hablantes conocido, los grupos residuales (< 3 % del habla) no cuentan como persona.
+- [x] Automático calibrado con una llamada real de dos personas (umbral de enlace medio 0,75).
+- [x] «Hablante 1, 2, 3…» por orden de aparición; intervenciones del mismo hablante separadas por menos de 1 s se funden.
+- [ ] Calibrar también con una reunión presencial de tres o más personas (pendiente de grabación).
+
+### VOZ-72 · Tres formas de pedirlo
+**Estimación:** 0,5 j · **Archivos:** `__main__.py`, `ui/transcripcion.py`, `instalador.py`
+
+**Criterios de aceptación**
+- [x] `voziris.exe --transcribir x.m4a --hablantes auto|1|N [--salida y.md]`, sin mutex: convive con la Voziris de la bandeja.
+- [x] Bandeja → «Transcribir una grabación…»: selector de archivo y pregunta de hablantes; corre en otro proceso con ventana de progreso y botón Cancelar.
+- [x] Botón derecho en el Explorador → «Transcribir con Voziris» → «Una sola voz» / «Varios hablantes». Con la instalación; en portable, `--menu-contextual`. Solo HKCU.
+- [x] Al terminar se abre el `.md`; los errores salen en un cuadro y en `voziris.log`.

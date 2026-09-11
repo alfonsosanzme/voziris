@@ -19,6 +19,11 @@ propia clave).
   y borrado desde la bandeja.
 - Panel de ajustes con seis pestañas. Portable: sin instalador, sin
   registro, sin permisos de administrador.
+- Transcribe grabaciones enteras (m4a, mp3, wav…) a Markdown, con quién
+  habla en cada momento: desde la bandeja, con el botón derecho del
+  Explorador o con `voziris.exe --transcribir`.
+- Instalación opcional por usuario (menú Inicio y «Aplicaciones
+  instaladas»), sin administrador; registro y diagnóstico desde la bandeja.
 
 ## Instalación
 
@@ -30,7 +35,7 @@ la clave de Groq y qué sale de tu equipo en cada modo.
 
 ```
 SHA-256  voziris-0.1.0-win64.zip
-939c2838c8889fda17cd5fb3347c1ba3699a03247933f5077b2d92846015ace2
+7137237de0bbd0c1b4dfa63ef4c872c967295100145138541d7190537560368a
 ```
 
 Un `.exe` de PyInstaller con un hook global de teclado es una firma clásica
