@@ -63,7 +63,6 @@ a = Analysis(
         "sherpa_onnx",
         "av",
         "pystray._win32",
-        "win32clipboard",
         "win32gui",
         "win32con",
         "win32api",

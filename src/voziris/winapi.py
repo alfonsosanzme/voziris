@@ -13,7 +13,6 @@ Se usa en `destinos/app_activa.py` (VOZ-12) y en `atajos.py` (VOZ-02).
 
 from __future__ import annotations
 
-import contextlib
 import ctypes
 import sys
 import time
@@ -462,17 +461,41 @@ ESPERA_PORTAPAPELES_S = 0.02
 """Otra aplicación puede tener el portapapeles abierto unos milisegundos."""
 
 
-def _abrir_portapapeles() -> None:
-    import win32clipboard
+GMEM_MOVEABLE = 0x0002
+CF_UNICODETEXT = 13
 
-    ultimo: Exception | None = None
+if ES_WINDOWS:
+    _user32.OpenClipboard.argtypes = (wintypes.HWND,)
+    _user32.OpenClipboard.restype = wintypes.BOOL
+    _user32.CloseClipboard.argtypes = ()
+    _user32.CloseClipboard.restype = wintypes.BOOL
+    _user32.EmptyClipboard.argtypes = ()
+    _user32.EmptyClipboard.restype = wintypes.BOOL
+    _user32.IsClipboardFormatAvailable.argtypes = (wintypes.UINT,)
+    _user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    _user32.GetClipboardData.argtypes = (wintypes.UINT,)
+    _user32.GetClipboardData.restype = wintypes.HANDLE
+    _user32.SetClipboardData.argtypes = (wintypes.UINT, wintypes.HANDLE)
+    _user32.SetClipboardData.restype = wintypes.HANDLE
+    _kernel32.GlobalAlloc.argtypes = (wintypes.UINT, ctypes.c_size_t)
+    _kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    _kernel32.GlobalFree.argtypes = (wintypes.HGLOBAL,)
+    _kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    _kernel32.GlobalLock.argtypes = (wintypes.HGLOBAL,)
+    _kernel32.GlobalLock.restype = wintypes.LPVOID
+    _kernel32.GlobalUnlock.argtypes = (wintypes.HGLOBAL,)
+    _kernel32.GlobalUnlock.restype = wintypes.BOOL
+    _kernel32.GlobalSize.argtypes = (wintypes.HGLOBAL,)
+    _kernel32.GlobalSize.restype = ctypes.c_size_t
+
+
+def _abrir_portapapeles() -> None:
+    ultimo: str | None = None
     for _ in range(INTENTOS_PORTAPAPELES):
-        try:
-            win32clipboard.OpenClipboard()
+        if _user32.OpenClipboard(None):
             return
-        except Exception as e:  # noqa: BLE001 — pywintypes.error, sin stubs
-            ultimo = e
-            time.sleep(ESPERA_PORTAPAPELES_S)
+        ultimo = f"error {ctypes.get_last_error()}"
+        time.sleep(ESPERA_PORTAPAPELES_S)
     raise OSError(f"el portapapeles está ocupado por otra aplicación: {ultimo}")
 
 
@@ -484,44 +507,70 @@ def leer_portapapeles() -> str | None:
     documentada en el README).
     """
     _solo_windows()
-    import win32clipboard
-    import win32con
-
     _abrir_portapapeles()
     try:
-        if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+        if not _user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
             return None
-        return str(win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT))
+        manejador = _user32.GetClipboardData(CF_UNICODETEXT)
+        if not manejador:
+            return None
+        puntero = _kernel32.GlobalLock(manejador)
+        if not puntero:
+            return None
+        try:
+            # Sin pasarse del bloque aunque falte el terminador (lo pone otro programa).
+            caracteres = _kernel32.GlobalSize(manejador) // 2
+            return ctypes.wstring_at(puntero, caracteres).split("\x00", 1)[0]
+        finally:
+            _kernel32.GlobalUnlock(manejador)
     finally:
-        win32clipboard.CloseClipboard()
+        _user32.CloseClipboard()
 
 
 def escribir_portapapeles(texto: str) -> None:
     """Deja `texto` en el portapapeles. Reintenta la secuencia entera.
 
+    Con ctypes y la memoria a la vista, a propósito: el bloque se reserva con
+    GlobalAlloc, se copia el texto con su terminador, y desde que
+    SetClipboardData lo acepta es de Windows y no se toca más. Si lo rechaza,
+    se libera aquí. Antes lo hacía pywin32 y un cierre por corrupción de
+    montón (0xc0000374) señaló justo a esta llamada (VOZ-63, 16/09/2026).
+
     Abrirlo puede fallar porque otra aplicación lo tiene; y `SetClipboardData`
     puede fallar con «controlador no válido» aunque se haya abierto bien
-    (visto con WhatsApp y el historial del portapapeles de Windows en
-    medio). Se repite todo, no solo la apertura, y si al final no hay manera
-    se lanza `OSError`: el destino lo convierte en `EntregaFallida` y el texto
-    queda en el historial.
+    (visto con WhatsApp y el historial del portapapeles de Windows en medio).
+    Se repite todo, no solo la apertura, y si al final no hay manera se lanza
+    `OSError`: el destino lo convierte en `EntregaFallida` y el texto queda
+    en el historial.
     """
     _solo_windows()
-    import win32clipboard
-    import win32con
-
-    ultimo: Exception | None = None
+    ultimo: str | None = None
     for _ in range(INTENTOS_PORTAPAPELES):
         try:
             _abrir_portapapeles()
-            try:
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, texto)
-                return
-            finally:
-                with contextlib.suppress(Exception):  # ya cerrado o nunca abierto
-                    win32clipboard.CloseClipboard()
-        except Exception as e:  # noqa: BLE001 — pywintypes.error u OSError
-            ultimo = e
-            time.sleep(ESPERA_PORTAPAPELES_S)
+        except OSError as e:
+            ultimo = str(e)
+            continue
+        try:
+            if not _user32.EmptyClipboard():
+                ultimo = f"EmptyClipboard: error {ctypes.get_last_error()}"
+                continue
+            datos = texto.encode("utf-16-le") + b"\x00\x00"
+            bloque = _kernel32.GlobalAlloc(GMEM_MOVEABLE, len(datos))
+            if not bloque:
+                raise MemoryError("GlobalAlloc devolvió NULL")
+            puntero = _kernel32.GlobalLock(bloque)
+            if not puntero:
+                _kernel32.GlobalFree(bloque)
+                ultimo = f"GlobalLock: error {ctypes.get_last_error()}"
+                continue
+            ctypes.memmove(puntero, datos, len(datos))
+            _kernel32.GlobalUnlock(bloque)
+            if _user32.SetClipboardData(CF_UNICODETEXT, bloque):
+                return  # el bloque es ya del sistema: ni GlobalFree ni nada
+            ultimo = f"SetClipboardData: error {ctypes.get_last_error()}"
+            _kernel32.GlobalFree(bloque)
+        finally:
+            _user32.CloseClipboard()
+        time.sleep(ESPERA_PORTAPAPELES_S)
     raise OSError(f"no se pudo escribir en el portapapeles: {ultimo}")

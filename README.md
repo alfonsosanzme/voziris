@@ -95,12 +95,12 @@ API) mientras la Voziris de la bandeja sigue disponible para dictar.
 La primera vez que se pide con varios hablantes se descargan dos modelos
 pequeños (44 MB) a `modelos/hablantes/`. Qué esperar de la separación:
 
-- Con **el número de hablantes conocido** acierta mucho más que en
-  automático: si se sabe, hay que decirlo.
-- **Llamadas de teléfono grabadas desde un lado** son el peor caso: la voz
-  de enfrente llega comprimida y baja, y a veces acaba mezclada con la
-  propia. Una reunión presencial o una videollamada grabada por la
-  aplicación separa bien.
+- Está probado con una llamada de teléfono y con una reunión presencial,
+  las dos de dos personas: en automático detecta las dos voces y las
+  reparte bien. Con más gente, si se sabe cuántos son, decirlo ayuda.
+- **Llamadas de teléfono grabadas desde un lado** son el caso más difícil:
+  la voz de enfrente llega comprimida y baja. Se transcribe igual, pero
+  alguna frase corta de esa voz puede acabar atribuida a la otra.
 - Un «Hablante 3» con dos frases sueltas en una charla de dos suele ser
   ruido de la agrupación, no una tercera persona.
 
