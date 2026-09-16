@@ -20,6 +20,7 @@ Issue: VOZ-72.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import threading
@@ -119,11 +120,17 @@ def preguntar_hablantes(raiz: tk.Misc, nombre: str) -> str | None:
     )
     v.bind("<Return>", lambda _e: aceptar())
     v.bind("<Escape>", lambda _e: v.destroy())
-    if isinstance(raiz, tk.Wm):
-        v.transient(raiz)
-    v.grab_set()
+    # Nada de `transient(raiz)`: la raíz de Voziris está retirada (withdraw) y
+    # una ventana transitoria de una raíz retirada se retira con ella. Quedaba
+    # invisible con el grab puesto y bloqueaba hasta los Ajustes (VOZ-72).
+    v.lift()
     v.focus_force()
-    raiz.wait_window(v)
+    try:
+        v.grab_set()
+        raiz.wait_window(v)
+    finally:
+        with contextlib.suppress(tk.TclError):
+            v.grab_release()
     return resultado[0]
 
 

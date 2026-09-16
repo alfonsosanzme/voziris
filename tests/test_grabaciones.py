@@ -312,3 +312,30 @@ def test_parece_relleno() -> None:
     assert not parece_relleno("Sí.", "es")
     assert not parece_relleno("Recogida de nombre tal, tener sitio, datos.", "es")
     assert not parece_relleno("Yeah.", "en")  # solo hay lista para el español
+
+
+def test_preguntar_hablantes_se_ve_con_la_raiz_retirada() -> None:
+    """La raíz de Voziris está retirada; el diálogo tiene que verse igual (VOZ-72)."""
+    import tkinter as tk
+
+    from voziris.ui import transcripcion
+
+    try:
+        raiz = tk.Tk()
+    except tk.TclError as e:
+        pytest.skip(f"sin Tk: {e}")
+    raiz.withdraw()
+    visto: list[bool] = []
+
+    def comprobar_y_aceptar() -> None:
+        dialogos = [w for w in raiz.winfo_children() if isinstance(w, tk.Toplevel)]
+        assert dialogos, "no se creó el diálogo"
+        v = dialogos[0]
+        visto.append(bool(v.winfo_viewable()))
+        v.event_generate("<Return>")
+
+    raiz.after(300, comprobar_y_aceptar)
+    eleccion = transcripcion.preguntar_hablantes(raiz, "nota.m4a")
+    raiz.destroy()
+    assert visto == [True]
+    assert eleccion == "auto"

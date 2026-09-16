@@ -26,3 +26,5 @@ voziris.log*
 
 # Trabajo temporal de PyInstaller
 build/work/
+voziris-fallos.log
+diagnostico.txt
