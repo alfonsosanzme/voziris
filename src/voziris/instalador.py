@@ -287,9 +287,22 @@ def _borrar_clave(raiz: int, clave: str) -> bool:
 
 
 def _copiar_arbol(fuente: Path, destino: Path, *, reemplazar: bool) -> None:
-    """Copia `fuente` en `destino`. Con `reemplazar`, lo que hubiera desaparece."""
+    """Copia `fuente` en `destino`. Con `reemplazar`, lo viejo se borra en lo posible.
+
+    El borrado previo no puede ser fatal: el indexador o el antivirus de
+    Windows dejan a veces una carpeta de `_internal` con el acceso denegado
+    unos segundos (visto al reinstalar, VOZ-73). Se borra lo que se deje, se
+    copia encima, y lo que sobreviva del paquete anterior no estorba: el
+    ejecutable nuevo carga sus propias DLL por nombre.
+    """
     if reemplazar and destino.exists():
-        shutil.rmtree(destino)
+        for _ in range(3):
+            shutil.rmtree(destino, ignore_errors=True)
+            if not destino.exists():
+                break
+            time.sleep(0.5)
+        else:
+            log.warning("no se pudo vaciar %s del todo; se copia encima", destino)
     shutil.copytree(fuente, destino, dirs_exist_ok=True)
 
 
