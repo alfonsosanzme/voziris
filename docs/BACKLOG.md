@@ -327,9 +327,9 @@ Pedido después de la primera entrega: «que Voziris convierta grabaciones
 **Criterios de aceptación**
 - [x] Modelos pequeños (pyannote segmentation 3.0 + TitaNet small, 44 MB) descargados a `modelos/hablantes/` la primera vez; en CPU con sherpa-onnx.
 - [x] Con el número de hablantes conocido, los grupos residuales (< 3 % del habla) no cuentan como persona.
-- [x] Automático calibrado con una llamada real de dos personas (umbral de enlace medio 0,75).
+- [x] Automático por agrupación espectral con eigengap (NME-SC): el enlace medio fundía a una persona que habla 25 min con otra que habla 8. Validado con una llamada de teléfono y una reunión presencial, las dos de dos personas.
 - [x] «Hablante 1, 2, 3…» por orden de aparición; intervenciones del mismo hablante separadas por menos de 1 s se funden.
-- [ ] Calibrar también con una reunión presencial de tres o más personas (pendiente de grabación).
+- [ ] Validar con una reunión de tres o más personas (pendiente de grabación).
 
 ### VOZ-72 · Tres formas de pedirlo
 **Estimación:** 0,5 j · **Archivos:** `__main__.py`, `ui/transcripcion.py`, `instalador.py`

@@ -112,12 +112,18 @@ def test_agrupar_con_numero_conocido_ignora_los_restos() -> None:
     assert etiquetas[35] in (etiquetas[0], etiquetas[20])  # el ruido se reparte, no es hablante
 
 
-def test_agrupar_automatico_por_umbral() -> None:
+def test_agrupar_automatico_por_eigengap() -> None:
     huellas, duraciones = _huellas([(0, 12), (1, 12), (2, 12)])
-    etiquetas = agrupar(huellas, duraciones, hablantes=None, umbral=0.5)
+    etiquetas = agrupar(huellas, duraciones, hablantes=None)
     assert len(set(etiquetas)) == 3
-    # Con un umbral imposible de superar, todo es una voz.
-    assert len(set(agrupar(huellas, duraciones, None, umbral=5.0))) == 1
+    assert len({etiquetas[0], etiquetas[12], etiquetas[24]}) == 3
+    # Una sola voz con ruido: un grupo, no ocho.
+    huellas, duraciones = _huellas([(0, 30)])
+    assert len(set(agrupar(huellas, duraciones, hablantes=None))) == 1
+    # Una que habla mucho y otra poco (lo que rompía el enlace medio).
+    huellas, duraciones = _huellas([(0, 60), (1, 10)])
+    etiquetas = agrupar(huellas, duraciones, hablantes=None)
+    assert len(set(etiquetas)) == 2 and len(set(etiquetas[60:])) == 1
 
 
 def test_agrupar_casos_borde() -> None:

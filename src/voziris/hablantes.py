@@ -17,10 +17,16 @@ hace en tres pasos con control de cada uno:
      ahí solo se toman las fronteras, dónde empieza y acaba cada voz.
   2. Cada segmento se parte en piezas de ≤ 6 s y se calcula la huella de
      cada pieza con TitaNet.
-  3. Agrupación aglomerativa de enlace medio con distancia coseno. Con N
-     conocido se corta en N grupos *grandes* (los grupos residuales, menos
-     del 3 % del habla, no cuentan y se reparten al grupo más parecido).
-     En automático se corta por umbral, calibrado con una llamada real.
+  3. Agrupación espectral sobre la matriz de parecidos (coseno): se poda
+     cada fila a sus vecinos más parecidos, se calcula el laplaciano y sus
+     autovalores. El número de hablantes sale del «eigengap» (el salto
+     mayor entre autovalores consecutivos) y las etiquetas, de k-means
+     sobre los primeros autovectores. Es el método NME-SC de la literatura
+     de diarización, y aguanta lo que el enlace medio no: una persona que
+     habla 25 minutos y otra 8 (reunión naturfab, VOZ-71) acababan en el
+     mismo grupo por enlace medio; aquí el eigengap dice «2» solo. Los
+     grupos residuales (menos del 3 % del habla) se reparten al grupo grande
+     de huella media más parecida.
 
 No sabe nombres: devuelve «Hablante 1, 2, 3…» por orden de aparición.
 """
@@ -52,12 +58,10 @@ URL_EMBEDDINGS = (
 )
 ARCHIVO_EMBEDDINGS = "nemo_en_titanet_small.onnx"
 
-UMBRAL_AUTOMATICO = 0.75
-"""Distancia coseno (enlace medio) por encima de la cual dos grupos son dos personas.
-
-Calibrado en VOZ-71 con una llamada de dos personas: las dos voces se funden
-a 0,86 y todo lo demás (misma voz con distinto ruido) por debajo de 0,68.
-"""
+HABLANTES_MAXIMOS = 8
+"""En automático no se buscan más de estos: una reunión con más gente se pide con N."""
+VECINOS_ESPECTRALES = 0.10
+"""Fracción de vecinos más parecidos que conserva cada fila antes del laplaciano."""
 UMBRAL_SEGMENTACION = 0.5
 """Lo que se le pide a sherpa-onnx: bajo, para que sobresegmente y no pegue dos voces."""
 PIEZA_MAXIMA_S = 6.0
@@ -167,7 +171,7 @@ class SeparadorHablantes:
         huellas = self._huellas(muestras, [piezas[i] for i in con_huella])
         duraciones = np.array([piezas[i][1] - piezas[i][0] for i in con_huella])
         self._al_progresar("Agrupando voces…", None)
-        grupos = agrupar(huellas, duraciones, hablantes, UMBRAL_AUTOMATICO)
+        grupos = agrupar(huellas, duraciones, hablantes)
         etiquetas = heredar_etiquetas(len(piezas), dict(zip(con_huella, grupos, strict=True)))
         brutos = [(a, b, h) for (a, b), h in zip(piezas, etiquetas, strict=True)]
         log.info(
@@ -248,90 +252,97 @@ def agrupar(
     huellas: np.ndarray,
     duraciones: np.ndarray,
     hablantes: int | None = None,
-    umbral: float = UMBRAL_AUTOMATICO,
     resto: float = RESTO_MINIMO,
 ) -> list[int]:
     """Etiqueta de grupo de cada huella (vectores unitarios, uno por fila).
 
-    Con `hablantes` se corta el árbol donde quedan tantos grupos *grandes*;
-    sin él, por `umbral`. Los grupos pequeños (menos de `resto` del habla)
-    se reparten al grupo grande de huella media más parecida.
+    Con `hablantes` se buscan tantos grupos; sin él, los que diga el eigengap
+    del laplaciano. Los grupos pequeños (menos de `resto` del habla) se
+    reparten al grupo grande de huella media más parecida.
     """
     n = len(huellas)
     if n == 0:
         return []
     if n == 1:
         return [0]
-    fusiones = _enlace_medio(huellas)
+    autovalores, autovectores = _espectro(huellas)
+    k = min(max(1, hablantes), n) if hablantes else _eigengap(autovalores)
+    if k == 1:
+        return [0] * n
+    Y = autovectores[:, :k]
+    Y = Y / (np.linalg.norm(Y, axis=1, keepdims=True) + 1e-9)
+    etiquetas = _kmedias(Y, k)
+
     habla = float(duraciones.sum()) or 1.0
-
-    def grandes(etiquetas: list[int]) -> list[int]:
-        tiempo: dict[int, float] = {}
-        for e, d in zip(etiquetas, duraciones, strict=True):
-            tiempo[e] = tiempo.get(e, 0.0) + float(d)
-        orden = sorted(tiempo, key=lambda k: -tiempo[k])
-        return [k for k in orden if tiempo[k] / habla >= resto] or orden[:1]
-
+    tiempo: dict[int, float] = {}
+    for e, d in zip(etiquetas, duraciones, strict=True):
+        tiempo[e] = tiempo.get(e, 0.0) + float(d)
+    orden = sorted(tiempo, key=lambda g: -tiempo[g])
+    principales = [g for g in orden if tiempo[g] / habla >= resto] or orden[:1]
     if hablantes:
-        k = min(max(1, hablantes), n)
-        etiquetas = _cortar(fusiones, n, k)
-        while len(grandes(etiquetas)) < hablantes and k < n:
-            k += 1
-            etiquetas = _cortar(fusiones, n, k)
-        principales = grandes(etiquetas)[:hablantes]
-    else:
-        k = 1 + sum(1 for d, _, _ in fusiones if d > umbral)
-        etiquetas = _cortar(fusiones, n, k)
-        principales = grandes(etiquetas)
-
+        principales = principales[:hablantes]
     centroides = {}
-    for p in principales:
-        miembros = huellas[[i for i, e in enumerate(etiquetas) if e == p]]
+    for g in principales:
+        miembros = huellas[[i for i, e in enumerate(etiquetas) if e == g]]
         centro = miembros.mean(axis=0)
-        centroides[p] = centro / (np.linalg.norm(centro) + 1e-9)
+        centroides[g] = centro / (np.linalg.norm(centro) + 1e-9)
     salida = []
     for i, e in enumerate(etiquetas):
         if e in centroides:
-            salida.append(e)
+            salida.append(int(e))
         else:
-            salida.append(max(centroides, key=lambda p: float(huellas[i] @ centroides[p])))
+            salida.append(max(centroides, key=lambda g: float(huellas[i] @ centroides[g])))
     return salida
 
 
-def _enlace_medio(huellas: np.ndarray) -> list[tuple[float, int, int]]:
-    """Fusiones (distancia, grupo que absorbe, grupo absorbido) de menor a mayor distancia."""
+def _espectro(huellas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Autovalores (ascendentes) y autovectores del laplaciano de la matriz de parecidos podada."""
     n = len(huellas)
-    distancia = 1.0 - huellas @ huellas.T
-    np.fill_diagonal(distancia, np.inf)
-    activo = np.ones(n, dtype=bool)
-    tamano = np.ones(n)
-    fusiones: list[tuple[float, int, int]] = []
-    for _ in range(n - 1):
-        plano = int(np.argmin(distancia))
-        i, j = divmod(plano, n)
-        if i > j:
-            i, j = j, i
-        d = float(distancia[i, j])
-        # Lance–Williams para enlace medio: la distancia del grupo unido a
-        # cualquier otro es la media ponderada por tamaños.
-        nueva = (tamano[i] * distancia[i] + tamano[j] * distancia[j]) / (tamano[i] + tamano[j])
-        distancia[i, :] = nueva
-        distancia[:, i] = nueva
-        distancia[i, i] = np.inf
-        distancia[j, :] = np.inf
-        distancia[:, j] = np.inf
-        tamano[i] += tamano[j]
-        activo[j] = False
-        fusiones.append((d, i, j))
-    return fusiones
+    parecido = huellas @ huellas.T
+    np.fill_diagonal(parecido, 1.0)
+    vecinos = max(2, int(round(n * VECINOS_ESPECTRALES)))
+    podada = np.zeros_like(parecido)
+    for i in range(n):
+        indices = np.argpartition(parecido[i], -vecinos)[-vecinos:]
+        podada[i, indices] = parecido[i, indices]
+    podada = np.maximum(podada, podada.T)
+    np.maximum(podada, 0.0, out=podada)
+    laplaciano = np.diag(podada.sum(axis=1)) - podada
+    autovalores, autovectores = np.linalg.eigh(laplaciano)
+    return autovalores, autovectores
 
 
-def _cortar(fusiones: list[tuple[float, int, int]], n: int, k: int) -> list[int]:
-    """Etiquetas cuando quedan `k` grupos: se aplican las primeras n-k fusiones."""
-    etiqueta = list(range(n))
-    for _, i, j in fusiones[: max(0, n - k)]:
-        etiqueta = [i if e == j else e for e in etiqueta]
-    return etiqueta
+def _eigengap(autovalores: np.ndarray, maximo: int = HABLANTES_MAXIMOS) -> int:
+    """Cuántos grupos: donde más saltan los autovalores consecutivos, hasta `maximo`."""
+    candidatos = autovalores[: maximo + 1]
+    if len(candidatos) < 2:
+        return 1
+    saltos = np.diff(candidatos)
+    return int(np.argmax(saltos)) + 1
+
+
+def _kmedias(puntos: np.ndarray, k: int, intentos: int = 10, iteraciones: int = 100) -> list[int]:
+    """k-means esférico con varios arranques; se queda con el de menor dispersión."""
+    rng = np.random.default_rng(0)
+    mejor: tuple[float, np.ndarray] | None = None
+    for _ in range(intentos):
+        centros = puntos[rng.choice(len(puntos), k, replace=False)]
+        etiquetas = np.zeros(len(puntos), dtype=int)
+        for _ in range(iteraciones):
+            etiquetas = np.argmax(puntos @ centros.T, axis=1)
+            nuevos = np.stack([
+                puntos[etiquetas == j].mean(axis=0) if np.any(etiquetas == j) else centros[j]
+                for j in range(k)
+            ])
+            nuevos /= np.linalg.norm(nuevos, axis=1, keepdims=True) + 1e-9
+            if np.allclose(nuevos, centros):
+                break
+            centros = nuevos
+        dispersion = -float(np.sum(np.max(puntos @ centros.T, axis=1)))
+        if mejor is None or dispersion < mejor[0]:
+            mejor = (dispersion, etiquetas)
+    assert mejor is not None
+    return [int(e) for e in mejor[1]]
 
 
 def heredar_etiquetas(cuantas: int, conocidas: dict[int, int]) -> list[int]:
