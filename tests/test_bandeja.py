@@ -18,6 +18,7 @@ import pytest
 from voziris.tipos import EntradaHistorial
 from voziris.ui import iconos
 from voziris.ui.bandeja import (
+    ETIQUETA_REENTREGAR,
     NOMBRE_ACCESO_DIRECTO,
     AccionesBandeja,
     Bandeja,
@@ -111,7 +112,7 @@ def test_el_ico_del_repositorio_esta_al_dia() -> None:
 
 def test_menu_completo_en_orden() -> None:
     bandeja = Bandeja(Llamadas().acciones())
-    textos = [_texto(i) for i in _items(bandeja.construir_menu())]
+    textos = [_texto(i) for i in _items(bandeja.construir_menu()) if i.visible]
     assert textos == [
         "Dictar ahora", "Dictar al Markdown", "Cortar al callar (modo clavar)",
         "Últimos dictados", "Motor", "Ajustes…", "Acerca de Voziris",
@@ -168,7 +169,7 @@ def test_ultimos_dictados_dinamicos_con_reintento_y_borrado() -> None:
         "19:42 · Idea para Kairis ⚠",
     ]
     acciones = _items(entradas[1].submenu)
-    assert [_texto(a) for a in acciones] == ["Volver a entregar", "Borrar del historial"]
+    assert [_texto(a) for a in acciones] == [ETIQUETA_REENTREGAR, "Borrar del historial"]
     acciones[0](None)
     acciones[1](None)
     assert llamadas.lista == [("reintentar", 8), ("borrar", 8)]  # el índice del historial

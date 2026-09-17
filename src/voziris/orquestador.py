@@ -34,6 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -46,6 +47,7 @@ from voziris.errores import (
     TranscripcionFallida,
 )
 from voziris.motores.base import MotorSTT
+from voziris.pendientes import Pendientes
 from voziris.proceso.base import PostProceso
 from voziris.tipos import Audio, Contexto, EntradaHistorial, Modo, Nivel, Transcripcion
 
@@ -121,6 +123,7 @@ class Orquestador:
         vad: DetectorDeSilencio | None = None,
         hay_red: Callable[[], bool] = lambda: False,
         app_en_primer_plano: Callable[[], str | None] = lambda: None,
+        pendientes: Pendientes | None = None,
     ) -> None:
         self._captura = captura
         self._motor = motor
@@ -135,11 +138,12 @@ class Orquestador:
         self._vad = vad
         self._hay_red = hay_red
         self._app_en_primer_plano = app_en_primer_plano
+        self._pendientes = pendientes
 
         self._lock = threading.Lock()
         self._estado = Estado.REPOSO
         self._dictado: Dictado | None = None
-        self._cola: queue.Queue[tuple[Dictado, Audio] | None] = queue.Queue()
+        self._cola: queue.Queue[tuple[Dictado, Audio, Path | None] | None] = queue.Queue()
         self._hilo: threading.Thread | None = None
         self.motor_listo = threading.Event()
         self.ultimo_error: str | None = None
@@ -329,9 +333,10 @@ class Orquestador:
                 self._dictado = None
                 self._fallar(f"Dictado descartado: {e}")
                 return
+            pendiente = getattr(self._captura, "ultimo_pendiente", None)
             self._cambiar(Estado.PROCESANDO)
         self._tono("fin")
-        self._cola.put((dictado, audio))
+        self._cola.put((dictado, audio, pendiente))
 
     def alternar_clavar(self, destino: str = "app_activa") -> None:
         """Los atajos «clavar» y «Dictar ahora»: empiezan, o terminan si ya está clavado.
@@ -405,9 +410,10 @@ class Orquestador:
             trabajo = self._cola.get()
             if trabajo is None:
                 return
-            dictado, audio = trabajo
+            dictado, audio, pendiente = trabajo
+            a_salvo = False
             try:
-                self._procesar(dictado, audio)
+                a_salvo = self._procesar(dictado, audio)
             except Exception as e:  # noqa: BLE001 — última red: la app sigue viva
                 log.exception("fallo inesperado procesando un dictado")
                 with self._lock:
@@ -418,8 +424,20 @@ class Orquestador:
                         self._dictado = None
                     if self._estado == Estado.PROCESANDO:
                         self._cambiar(Estado.REPOSO)
+            self._cerrar_pendiente(pendiente, a_salvo)
 
-    def _procesar(self, dictado: Dictado, audio: Audio) -> None:
+    def _cerrar_pendiente(self, pendiente: Path | None, a_salvo: bool) -> None:
+        """El audio en disco se borra solo cuando lo dicho ya está a salvo como texto."""
+        if pendiente is None or self._pendientes is None:
+            return
+        if a_salvo:
+            self._pendientes.borrar(pendiente)
+        else:
+            log.warning("el audio del dictado queda en %s para reintentarlo", pendiente)
+            self._avisar("El audio está guardado: bandeja → Dictados sin transcribir")
+
+    def _procesar(self, dictado: Dictado, audio: Audio) -> bool:
+        """True si lo dicho está a salvo (entregado, en el historial, o no había nada)."""
         t0 = time.perf_counter()
         ctx = Contexto(
             destino=dictado.destino,
@@ -433,24 +451,27 @@ class Orquestador:
         except MotorNoDisponible as e:
             with self._lock:
                 self._fallar(f"No se pudo transcribir: {e}")
-            return
+            return False
         except TranscripcionFallida as e:
             self._avisar(f"Nada que escribir: {e}")
-            return
+            return True
 
         transcripcion = self.postprocesar(transcripcion, ctx)
 
         if dictado.cancelado.is_set():
-            log.info("dictado cancelado antes de entregar")
-            return
+            # Cancelar es «no lo pegues», no «tíralo»: el texto ya existe y se
+            # guarda sin entregar, por si la cancelación fue por impaciencia.
+            log.info("dictado cancelado antes de entregar: el texto queda en el historial")
+            ms_total = int((time.perf_counter() - t0) * 1000)
+            return self._registrar(dictado, transcripcion, False, ms_total, audio)
 
         entregado, detalle = self.entregar(transcripcion.texto, ctx)
         ms_total = int((time.perf_counter() - t0) * 1000)
-        self._registrar(dictado, transcripcion, entregado, ms_total, audio)
+        registrado = self._registrar(dictado, transcripcion, entregado, ms_total, audio)
         if not entregado:
             with self._lock:
                 self._fallar(f"{detalle}. El texto está en el historial")
-            return
+            return registrado
         for aviso in transcripcion.avisos:
             self._avisar(aviso)
         # El motor va en el log a propósito: es la forma de saber si la API se
@@ -459,6 +480,34 @@ class Orquestador:
             "dictado entregado por %s: %s (%d ms, RTF %.3f)",
             transcripcion.motor, detalle, transcripcion.ms_proceso, transcripcion.rtf,
         )
+        return True
+
+    # --- recuperar un dictado que no llegó a texto (VOZ-74) ------------------------------
+
+    def recuperar(self, ruta: Path) -> str | None:
+        """Transcribe un pendiente, lo deja en el historial y devuelve el texto.
+
+        No entrega en ninguna ventana: quien llama lo copia al portapapeles.
+        El archivo solo se borra si el texto quedó en el historial.
+        """
+        if self._pendientes is None:
+            return None
+        audio = self._pendientes.cargar(ruta)
+        ctx = Contexto(destino="app_activa", modo=Modo.CLAVAR, app_activa=None,
+                       hay_red=self._hay_red(), nivel=self.nivel)
+        t0 = time.perf_counter()
+        try:
+            transcripcion = self.postprocesar(self._transcribir(audio), ctx)
+        except TranscripcionFallida:
+            self._pendientes.borrar(ruta)  # era silencio: no hay nada que recuperar
+            return ""
+        ms_total = int((time.perf_counter() - t0) * 1000)
+        dictado = Dictado(modo=Modo.CLAVAR, destino="app_activa")
+        if self._registrar(dictado, transcripcion, False, ms_total, audio):
+            self._pendientes.borrar(ruta)
+        log.info("pendiente %s recuperado por %s (%d caracteres)", ruta.name,
+                 transcripcion.motor, len(transcripcion.texto))
+        return transcripcion.texto
 
     def _transcribir(self, audio: Audio) -> Transcripcion:
         self.motor_listo.wait()  # el primer dictado del día puede pillar el modelo cargando
@@ -489,9 +538,10 @@ class Orquestador:
 
     def _registrar(
         self, dictado: Dictado, t: Transcripcion, entregado: bool, ms_total: int, audio: Audio
-    ) -> None:
+    ) -> bool:
+        """True si el texto está a salvo: entregado, o escrito en el historial."""
         if self._historial is None:
-            return
+            return entregado
         entrada = EntradaHistorial(
             momento=datetime.now(),
             texto=t.texto,
@@ -505,6 +555,8 @@ class Orquestador:
             self._historial.registrar(entrada, audio)
         except Exception:  # noqa: BLE001 — el historial es la red, no la trampa
             log.exception("no se pudo registrar en el historial")
+            return entregado
+        return True
 
     # --- modo consola -------------------------------------------------------------------
 

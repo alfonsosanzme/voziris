@@ -339,3 +339,21 @@ Pedido después de la primera entrega: «que Voziris convierta grabaciones
 - [x] Bandeja → «Transcribir una grabación…»: selector de archivo y pregunta de hablantes; corre en otro proceso con ventana de progreso y botón Cancelar.
 - [x] Botón derecho en el Explorador → «Transcribir con Voziris» → «Una sola voz» / «Varios hablantes». Con la instalación; en portable, `--menu-contextual`. Solo HKCU.
 - [x] Al terminar se abre el `.md`; los errores salen en un cuadro y en `voziris.log`.
+
+## H8 · Que lo dicho no se pierda — 1 jornada
+
+Pedido tras dos «se ha quedado pillado» (la API sin contestar 15 s): «mantener
+la grabación de lo que se ha hecho mientras se estaba escuchando, por si luego
+no se transcribe», y poder copiar desde «Últimos dictados».
+
+### VOZ-74 · Audio a salvo, API con paciencia, historial que se puede copiar
+**Archivos:** `pendientes.py`, `audio/captura.py`, `orquestador.py`, `motores/selector.py`, `ui/bandeja.py`
+
+**Criterios de aceptación**
+- [x] Cada dictado se escribe a `historial/pendientes/*.f32` según llega del micrófono (búfer previo incluido), volcando cada bloque: un cierre de golpe pierde 32 ms.
+- [x] El archivo se borra solo cuando el texto está entregado o en el historial; si el motor falla o hay una excepción, se queda y se avisa.
+- [x] Bandeja → «Dictados sin transcribir (N)» → «Transcribir y copiar» / «Borrar el audio». Aviso al arrancar si hay alguno.
+- [x] Limpieza sola: 7 días, 20 archivos, y los de menos de 1 s.
+- [x] La API espera 3 s + 0,1 s por segundo de audio; pasado eso, local con aviso. La respuesta tardía se tira.
+- [x] Cancelar en «procesando» guarda el texto en el historial sin entregarlo.
+- [x] «Últimos dictados»: «Copiar al portapapeles» y reentrega a los 3 s para poder elegir la ventana.

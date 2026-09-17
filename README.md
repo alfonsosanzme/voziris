@@ -236,11 +236,34 @@ de `config.toml`, `general.motor` y `proceso.nivel`:
 | `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
 | `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
 | Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
+| Siempre, mientras dictas | nada sale, pero el **audio del dictado se escribe en tu disco** (`historial/pendientes/`) hasta que el texto está a salvo; después se borra |
 | Transcribir una grabación | el audio, troceado, va al mismo sitio que un dictado según `general.motor`; la primera vez con varios hablantes, dos modelos se descargan de **GitHub** (releases de sherpa-onnx) a `modelos/hablantes/` |
 
 Está verificado con un test (`tests/test_offline.py`) que bloquea toda
 conexión saliente del proceso y transcribe diez dictados en modo local
 literal: ningún intento de conexión.
+
+## Lo dicho no se pierde
+
+Tres redes, de la más fina a la más gruesa:
+
+- **El audio va a disco mientras hablas.** Cada dictado se escribe en
+  `historial/pendientes/` bloque a bloque (32 ms), y el archivo solo se borra
+  cuando el texto está a salvo: entregado, o guardado en el historial. Si el
+  motor falla, si cancelas porque tarda, o si el programa se cierra de golpe
+  a media frase, el audio sigue ahí. Aparece en la bandeja como **«Dictados
+  sin transcribir (N)»** → «Transcribir y copiar»: lo pasa a texto, lo copia
+  al portapapeles y lo deja en «Últimos dictados». Se limpian solos a los
+  siete días (veinte como mucho).
+- **La API tiene la paciencia contada.** Groq contesta en medio segundo. Si a
+  los 3 s (más una décima por segundo de audio) no ha dicho nada, el dictado
+  se transcribe en local y sigue su camino, en vez de quedarse 15 s en
+  «procesando».
+- **El historial.** «Últimos dictados» → cada entrada tiene **«Copiar al
+  portapapeles»** y «Volver a entregar (en 3 s…)»: esos tres segundos son
+  para hacer clic donde quieres el texto, porque abrir el menú de la bandeja
+  le quita el foco a la ventana. Cancelar con Esc mientras procesa significa
+  «no lo pegues», no «tíralo»: el texto queda en el historial, marcado ⚠.
 
 ## Si algo falla: el registro y el diagnóstico
 

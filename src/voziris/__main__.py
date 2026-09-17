@@ -482,6 +482,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         destinos, contexto_de_reintento,
     )
 
+    from voziris.pendientes import Pendientes
+
+    pendientes = Pendientes(configuracion.carpeta / "historial" / "pendientes")
+    captura.pendientes = pendientes
     sonidos = Sonidos(configuracion.audio.sonidos)
     vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
@@ -495,6 +499,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         vad=vad,
         hay_red=hay_red_si_hace_falta,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
+        pendientes=pendientes,
     )
     orq.corte_por_silencio = configuracion.audio.corte_por_silencio
 
@@ -503,8 +508,13 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         import threading
         import time
 
+        from voziris.ui.bandeja import ESPERA_REENTREGA_S
+
         def trabajo() -> None:
-            time.sleep(0.4)
+            # Tres segundos: el clic en la bandeja se ha llevado el foco, y así
+            # da tiempo a ponerlo donde se quiere el texto.
+            hud.aviso(f"Haz clic donde lo quieras: se pega en {ESPERA_REENTREGA_S} s")
+            time.sleep(ESPERA_REENTREGA_S)
             entrega = historial.reintentar(indice)
             if entrega.ok:
                 hud.aviso(entrega.detalle)
@@ -514,6 +524,52 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
                 bandeja.actualizar_menu()
 
         threading.Thread(target=trabajo, name="voziris-reintento", daemon=True).start()
+
+    def copiar_entrada(indice: int) -> None:
+        entrada = historial.buscar(indice)
+        if entrada is None:
+            return
+        try:
+            winapi.escribir_portapapeles(entrada.texto)
+            hud.aviso("Copiado: pégalo con Ctrl+V")
+        except OSError as e:
+            avisar(f"No se pudo copiar: {e}")
+
+    def en_curso_ahora() -> Path | None:
+        return getattr(captura, "_escritor", None) and captura._escritor.ruta
+
+    def recuperar_pendiente(pendiente: Any) -> None:
+        """Transcribe un audio que se quedó sin texto, lo copia y lo deja en el historial."""
+        import threading
+
+        def trabajo() -> None:
+            hud.aviso("Transcribiendo el audio guardado…")
+            try:
+                texto = orq.recuperar(pendiente.ruta)
+            except VozirisError as e:
+                avisar(f"No se pudo transcribir el audio guardado: {e}")
+                return
+            except Exception as e:  # noqa: BLE001
+                log.exception("fallo recuperando %s", pendiente.ruta)
+                avisar(f"No se pudo transcribir el audio guardado: {e}")
+                return
+            if texto:
+                try:
+                    winapi.escribir_portapapeles(texto)
+                    avisar("Dictado recuperado: está copiado (Ctrl+V) y en Últimos dictados")
+                except OSError:
+                    avisar("Dictado recuperado: está en Últimos dictados")
+            else:
+                avisar("En ese audio no había nada que transcribir")
+            if bandeja is not None:
+                bandeja.actualizar_menu()
+
+        threading.Thread(target=trabajo, name="voziris-recuperar", daemon=True).start()
+
+    def borrar_pendiente(pendiente: Any) -> None:
+        pendientes.borrar(pendiente.ruta)
+        if bandeja is not None:
+            bandeja.actualizar_menu()
 
     def borrar_entrada(indice: int) -> None:
         historial.borrar(indice)
@@ -613,6 +669,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         cambiar_motor=cambiar_motor,
         reintentar=reintentar,
         borrar_entrada=borrar_entrada,
+        copiar=copiar_entrada,
+        pendientes=lambda: pendientes.listar(excepto=en_curso_ahora()),
+        recuperar=recuperar_pendiente,
+        borrar_pendiente=borrar_pendiente,
         salir=lambda: en_hilo_tk(raiz.quit),
         ver_registro=lambda: _abrir_con_windows(configuracion.carpeta / NOMBRE_LOG),
         diagnostico=lambda: _abrir_con_windows(_generar_diagnostico(configuracion.carpeta)),
@@ -655,6 +715,14 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             avisar(f"{e}. Puedes dictar desde el menú de la bandeja")
             bandeja.estado("error")
         _ajustar_arranque_con_windows(configuracion, avisar)
+        pendientes.limpiar()
+        sin_texto = pendientes.listar()
+        if sin_texto:
+            avisar(
+                f"Hay {len(sin_texto)} dictado(s) cuyo audio se guardó sin llegar a texto: "
+                "bandeja → Dictados sin transcribir"
+            )
+            log.info("pendientes al arrancar: %d", len(sin_texto))
         if configuracion.general.motor == "api" and not configuracion.motor.api.clave:
             # Sin esto, el usuario elige «api», todo se transcribe en local y lo
             # único que lo delata es un aviso efímero en el indicador flotante.

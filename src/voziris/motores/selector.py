@@ -11,6 +11,12 @@ Reglas, en este orden:
 El respaldo es solo en esa dirección: de la nube al local. Nunca al revés,
 para que nadie acabe mandando audio fuera sin haberlo pedido.
 
+La API tiene paciencia limitada (VOZ-74): Groq contesta en medio segundo; si
+a los pocos segundos no ha dicho nada, esperar a su `timeout_s` (15 s) con el
+indicador en «procesando» es lo que el usuario vive como «se ha quedado
+pillado». Pasada la paciencia, se transcribe en local y la respuesta de la
+API, si llega, se tira.
+
 La preferencia se puede cambiar en caliente desde la bandeja: vale para el
 dictado siguiente. Si pasa a necesitar la API y esta no se había
 precalentado, se precalienta en un hilo aparte.
@@ -30,6 +36,9 @@ from voziris.tipos import Audio, Transcripcion
 log = logging.getLogger(__name__)
 
 PREFERENCIAS = ("local", "api", "auto")
+PACIENCIA_BASE_S = 3.0
+PACIENCIA_POR_SEGUNDO = 0.1
+"""Espera a la API: 3 s más una décima por segundo de audio (un minuto → 9 s)."""
 
 
 class Selector:
@@ -38,7 +47,13 @@ class Selector:
     nombre = "selector"
     requiere_red = False
 
-    def __init__(self, preferencia: str, local: MotorSTT, api: MotorSTT | None) -> None:
+    def __init__(
+        self,
+        preferencia: str,
+        local: MotorSTT,
+        api: MotorSTT | None,
+        paciencia_base_s: float = PACIENCIA_BASE_S,
+    ) -> None:
         if preferencia not in PREFERENCIAS:
             raise ValueError(f"preferencia de motor desconocida: {preferencia!r}")
         self._preferencia = preferencia
@@ -46,6 +61,7 @@ class Selector:
         self._api = api
         self._lock = threading.Lock()
         self._api_precalentada = False
+        self._paciencia_base_s = paciencia_base_s
 
     @property
     def preferencia(self) -> str:
@@ -87,6 +103,35 @@ class Selector:
         for h in hilos:
             h.join()
 
+    def _con_paciencia(self, audio: Audio, idioma: str) -> Transcripcion:
+        """La API en un hilo; si no contesta a tiempo, `MotorNoDisponible` y a local.
+
+        Si el local no está disponible no hay a dónde caer: se espera lo que
+        haga falta.
+        """
+        assert self._api is not None
+        if not self._local.disponible():
+            return self._api.transcribir(audio, idioma)
+        api = self._api
+        resultado: list[Transcripcion] = []
+        fallo: list[BaseException] = []
+
+        def pedir() -> None:
+            try:
+                resultado.append(api.transcribir(audio, idioma))
+            except BaseException as e:  # noqa: BLE001 — se relanza en el hilo que espera
+                fallo.append(e)
+
+        hilo = threading.Thread(target=pedir, name="voziris-api-peticion", daemon=True)
+        hilo.start()
+        paciencia = self._paciencia_base_s + PACIENCIA_POR_SEGUNDO * audio.duracion_s
+        hilo.join(timeout=paciencia)
+        if hilo.is_alive():
+            raise MotorNoDisponible(f"la API no contestó en {paciencia:.0f} s")
+        if fallo:
+            raise fallo[0]
+        return resultado[0]
+
     def _precalentar_api(self) -> None:
         if self._api is None:
             return
@@ -112,7 +157,7 @@ class Selector:
         aviso: str
         if self._api.disponible():
             try:
-                return self._api.transcribir(audio, idioma)
+                return self._con_paciencia(audio, idioma)
             except MotorNoDisponible as e:
                 log.warning("la API falló, se transcribe en local: %s", e)
                 aviso = f"La API falló ({e}): transcrito en local"
