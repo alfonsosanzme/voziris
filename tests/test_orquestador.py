@@ -266,7 +266,8 @@ def test_cancelar_procesando_no_entrega(banco: Banco) -> None:
     time.sleep(0.6)
     assert banco.destino.entregas == []
     assert banco.orq.estado is Estado.REPOSO
-    assert banco.historial.entradas == []
+    # Cancelar es «no lo pegues», no «tíralo»: el texto queda sin entregar (VOZ-74).
+    assert [(e.texto, e.entregado) for e in banco.historial.entradas] == [("Hola, mundo.", False)]
 
 
 def test_terminar_en_reposo_no_hace_nada(banco: Banco) -> None:

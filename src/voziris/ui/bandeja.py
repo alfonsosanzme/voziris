@@ -44,6 +44,8 @@ log = logging.getLogger(__name__)
 NOMBRE_ACCESO_DIRECTO = "Voziris.lnk"
 MOTORES = (("local", "Local (sin conexión)"), ("api", "API"), ("auto", "Automático"))
 ULTIMOS_EN_MENU = 10
+ESPERA_REENTREGA_S = 3
+ETIQUETA_REENTREGAR = f"Volver a entregar (en {ESPERA_REENTREGA_S} s, haz clic donde lo quieras)"
 LARGO_RESUMEN = 42
 
 
@@ -85,6 +87,12 @@ class AccionesBandeja:
     """Instala en el equipo (menú Inicio). Solo cuando se corre portable."""
     transcribir: Callable[[], None] | None = None
     """Transcribir una grabación a Markdown (VOZ-72). Si falta, la entrada no aparece."""
+    copiar: Callable[[int], None] | None = None
+    """Copia el texto de una entrada del historial al portapapeles (VOZ-74)."""
+    pendientes: Callable[[], list[Any]] | None = None
+    """Dictados cuyo audio está en disco sin transcribir (`Pendiente`). VOZ-74."""
+    recuperar: Callable[[Any], None] | None = None
+    borrar_pendiente: Callable[[Any], None] | None = None
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -147,6 +155,11 @@ class Bandeja:
             ),
             Item("Últimos dictados", pystray.Menu(self._items_ultimos)),
             Item(
+                lambda _item: f"Dictados sin transcribir ({len(self._pendientes())})",
+                pystray.Menu(self._items_pendientes),
+                visible=lambda _item: bool(self._pendientes()),
+            ),
+            Item(
                 "Motor",
                 pystray.Menu(
                     *(
@@ -201,15 +214,58 @@ class Bandeja:
         def borrar(indice: int) -> Callable[[], None]:
             return lambda: self._acciones.borrar_entrada(indice)
 
+        def copiar(indice: int) -> list[Any]:
+            if self._acciones.copiar is None:
+                return []
+            accion = self._acciones.copiar
+            return [Item("Copiar al portapapeles", lambda: accion(indice), default=True)]
+
         return [
             Item(
                 resumen(entrada),
                 pystray.Menu(
-                    Item("Volver a entregar", reintentar(entrada.indice)),
+                    *copiar(entrada.indice),
+                    Item(ETIQUETA_REENTREGAR, reintentar(entrada.indice)),
                     Item("Borrar del historial", borrar(entrada.indice)),
                 ),
             )
             for entrada in entradas
+        ]
+
+    def _pendientes(self) -> list[Any]:
+        if self._acciones.pendientes is None:
+            return []
+        try:
+            return self._acciones.pendientes()
+        except Exception:  # noqa: BLE001 — el menú no puede romperse por esto
+            log.exception("no se pudieron listar los dictados pendientes")
+            return []
+
+    def _items_pendientes(self) -> list[Any]:
+        import pystray
+
+        Item = pystray.MenuItem
+
+        def recuperar(pendiente: Any) -> Callable[[], None]:
+            return lambda: self._acciones.recuperar and self._acciones.recuperar(pendiente)
+
+        def borrar(pendiente: Any) -> Callable[[], None]:
+            return lambda: (
+                self._acciones.borrar_pendiente and self._acciones.borrar_pendiente(pendiente)
+            )
+
+        pendientes = self._pendientes()[:ULTIMOS_EN_MENU]
+        if not pendientes:
+            return [Item("(ninguno)", None, enabled=False)]
+        return [
+            Item(
+                pendiente.etiqueta(),
+                pystray.Menu(
+                    Item("Transcribir y copiar", recuperar(pendiente), default=True),
+                    Item("Borrar el audio", borrar(pendiente)),
+                ),
+            )
+            for pendiente in pendientes
         ]
 
     def _acerca_de(self) -> None:

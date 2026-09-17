@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -276,3 +277,29 @@ def test_microfono_real_graba_medio_segundo() -> None:
         c.cerrar()
     assert 0.9 <= audio.duracion_s <= 1.2
     assert c.nombre_dispositivo
+
+
+def test_el_dictado_va_a_disco_segun_se_graba(sd_falso: type[FlujoFalso], tmp_path: Path) -> None:
+    """VOZ-74: búfer previo + bloques en `pendientes/`, y descartado si se cancela."""
+    from voziris.pendientes import Pendientes
+
+    pendientes = Pendientes(tmp_path / "pendientes")
+    c = Captura(buffer_previo_ms=500)
+    c.pendientes = pendientes
+    c.abrir()
+    flujo = sd_falso.instancias[-1]
+    for _ in range(32):
+        flujo.alimentar(np.full(BLOQUE, 0.01, dtype=np.float32))
+    c.empezar_dictado()
+    for _ in range(40):
+        flujo.alimentar(np.full(BLOQUE, 0.2, dtype=np.float32))
+    audio = c.terminar_dictado()
+    assert c.ultimo_pendiente is not None and c.ultimo_pendiente.exists()
+    crudo = np.fromfile(c.ultimo_pendiente, dtype="<f4")
+    assert len(crudo) == len(audio.muestras)  # lo mismo que se devolvió, sin normalizar
+    assert crudo[-1] == pytest.approx(0.2) and crudo[0] == pytest.approx(0.01)
+
+    c.empezar_dictado()
+    flujo.alimentar(np.full(BLOQUE, 0.2, dtype=np.float32))
+    c.cancelar_dictado()
+    assert len(list((tmp_path / "pendientes").glob("*.f32"))) == 1  # el cancelado no queda

@@ -23,6 +23,7 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -107,6 +108,11 @@ class Captura:
         self._stream: Any = None
         self.nombre_dispositivo: str | None = None
         """Nombre del micrófono realmente abierto, para el HUD y los ajustes."""
+        self.pendientes: Any = None
+        """Un `voziris.pendientes.Pendientes`: si está, cada dictado va a disco según se graba."""
+        self._escritor: Any = None
+        self.ultimo_pendiente: Path | None = None
+        """El archivo del dictado que acaba de devolver `terminar_dictado()` (VOZ-74)."""
         self.oyente_bloques: Callable[[np.ndarray], None] | None = None
         """Recibe cada bloque mientras se graba. Lo usa el VAD (VOZ-20).
 
@@ -233,7 +239,10 @@ class Captura:
                 self._pos = fin % capacidad
                 self._escritas += n
                 if self._grabando:
-                    self._bloques.append(bloque.copy())
+                    copia = bloque.copy()
+                    self._bloques.append(copia)
+                    if self._escritor is not None:
+                        self._escritor.escribir(copia)  # solo encola
             self._nivel = float(np.sqrt(np.mean(np.square(bloque))))
             self._ultimo_bloque = time.monotonic()
             oyente = self.oyente_bloques
@@ -255,8 +264,13 @@ class Captura:
         Cuesta lo que cuesta copiar medio segundo de audio (32 KB): se puede
         llamar desde el hilo del hook de teclado.
         """
+        escritor = self.pendientes.abrir() if self.pendientes is not None else None
         with self._lock:
-            self._bloques = [self._previo()]
+            previo = self._previo()
+            self._bloques = [previo]
+            if escritor is not None:
+                escritor.escribir(previo)
+            self._escritor = escritor
             self._grabando = True
 
     def _previo(self) -> np.ndarray:
@@ -283,6 +297,8 @@ class Captura:
         with self._lock:
             self._grabando = False
             bloques, self._bloques = self._bloques, []
+            escritor, self._escritor = self._escritor, None
+        self.ultimo_pendiente = escritor.cerrar() if escritor is not None else None
         self.comprobar()
         muestras = np.concatenate(bloques) if bloques else np.zeros(0, dtype=np.float32)
         muestras = aplicar_ganancia(normalizar(muestras), self._ganancia_db)
@@ -293,6 +309,9 @@ class Captura:
         with self._lock:
             self._grabando = False
             self._bloques = []
+            escritor, self._escritor = self._escritor, None
+        if escritor is not None:
+            escritor.descartar()
 
     @property
     def grabando(self) -> bool:
