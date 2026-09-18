@@ -43,6 +43,11 @@ log = logging.getLogger(__name__)
 
 NOMBRE_ACCESO_DIRECTO = "Voziris.lnk"
 MOTORES = (("local", "Local (sin conexión)"), ("api", "API"), ("auto", "Automático"))
+AL_DICTAR = (
+    ("silenciar", "Silenciar lo que suene"),
+    ("atenuar", "Bajarle el volumen"),
+    ("nada", "No tocar nada"),
+)
 ULTIMOS_EN_MENU = 10
 ESPERA_REENTREGA_S = 3
 ETIQUETA_REENTREGAR = f"Volver a entregar (en {ESPERA_REENTREGA_S} s, haz clic donde lo quieras)"
@@ -87,6 +92,12 @@ class AccionesBandeja:
     """Instala en el equipo (menú Inicio). Solo cuando se corre portable."""
     transcribir: Callable[[], None] | None = None
     """Transcribir una grabación a Markdown (VOZ-72). Si falta, la entrada no aparece."""
+    cambiar_al_dictar: Callable[[str], None] | None = None
+    """Qué hacer con el audio de otras apps mientras se dicta (VOZ-75)."""
+    al_dictar_actual: Callable[[], str] = lambda: "silenciar"
+    devolver_sonido: Callable[[], None] | None = None
+    """Fuerza a devolver el audio que quedara bajado. Solo se ve si hay algo bajado."""
+    hay_sonido_bajado: Callable[[], bool] = lambda: False
     copiar: Callable[[int], None] | None = None
     """Copia el texto de una entrada del historial al portapapeles (VOZ-74)."""
     pendientes: Callable[[], list[Any]] | None = None
@@ -153,6 +164,7 @@ class Bandeja:
                 lambda: self._acciones.alternar_corte(),
                 checked=lambda _item: self._corte_activo(),
             ),
+            *self._item_al_dictar(),
             Item("Últimos dictados", pystray.Menu(self._items_ultimos)),
             Item(
                 lambda _item: f"Dictados sin transcribir ({len(self._pendientes())})",
@@ -182,6 +194,35 @@ class Bandeja:
             return []
         transcribir = self._acciones.transcribir
         return [pystray.MenuItem("Transcribir una grabación…", lambda: transcribir())]
+
+    def _item_al_dictar(self) -> list[Any]:
+        """Submenú «Mientras dicto»: qué pasa con la música. Solo si se cablea."""
+        import pystray
+
+        Item = pystray.MenuItem
+        if self._acciones.cambiar_al_dictar is None:
+            return []
+        cambiar = self._acciones.cambiar_al_dictar
+
+        def elegir(clave: str) -> Callable[[], None]:
+            return lambda: cambiar(clave)
+
+        def marcado(clave: str) -> Callable[[Any], bool]:
+            return lambda _item: self._acciones.al_dictar_actual() == clave
+
+        entradas = [Item("Mientras dicto", pystray.Menu(*(
+            Item(etiqueta, elegir(clave), checked=marcado(clave), radio=True)
+            for clave, etiqueta in AL_DICTAR
+        )))]
+        if self._acciones.devolver_sonido is not None:
+            devolver = self._acciones.devolver_sonido
+            # Salvavidas a la vista: si algo quedó callado, se deshace desde aquí.
+            entradas.append(Item(
+                "Devolver el sonido",
+                lambda: devolver(),
+                visible=lambda _item: self._acciones.hay_sonido_bajado(),
+            ))
+        return entradas
 
     def _items_opcionales(self) -> list[Any]:
         """Registro, diagnóstico e instalar: solo si la aplicación los cablea."""

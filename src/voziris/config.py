@@ -47,6 +47,8 @@ MOTORES = ("local", "api", "auto")
 CUANTIZACIONES = ("int8", "fp32")
 METODOS = ("portapapeles", "tecleo")
 NIVELES = tuple(n.value for n in Nivel)
+AL_DICTAR = ("nada", "atenuar", "silenciar")
+"""[audio].al_dictar — qué pasa con la música mientras se dicta. Ver audio/mezclador.py."""
 NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
 
@@ -122,6 +124,8 @@ class SeccionAudio:
     silencio_corte_ms: int = 2000
     corte_por_silencio: bool = True
     sonidos: bool = True
+    al_dictar: str = "silenciar"
+    """Qué hacer con el audio de otras aplicaciones mientras se dicta (VOZ-75)."""
 
 
 @dataclass
@@ -339,7 +343,7 @@ _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "atajos": NOMBRES_ATAJOS,
     "audio": (
         "dispositivo", "ganancia_db", "buffer_previo_ms", "silencio_corte_ms",
-        "corte_por_silencio", "sonidos",
+        "corte_por_silencio", "sonidos", "al_dictar",
     ),
     "motor": (),
     "motor.local": ("modelo", "carpeta", "hilos", "cuantizacion"),
@@ -434,6 +438,7 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
             au, "audio", "corte_por_silencio", bool, dau.corte_por_silencio, errores
         ),
         sonidos=_leer(au, "audio", "sonidos", bool, dau.sonidos, errores),
+        al_dictar=_elegir(au, "audio", "al_dictar", AL_DICTAR, dau.al_dictar, errores),
     )
 
     ml = _seccion(datos, "motor.local", errores)

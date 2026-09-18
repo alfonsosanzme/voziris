@@ -482,10 +482,16 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         destinos, contexto_de_reintento,
     )
 
+    from voziris.audio.mezclador import Mezclador, control_del_sistema
     from voziris.pendientes import Pendientes
 
     pendientes = Pendientes(configuracion.carpeta / "historial" / "pendientes")
     captura.pendientes = pendientes
+    mezclador = Mezclador(
+        configuracion.audio.al_dictar,
+        control_del_sistema(),
+        configuracion.carpeta / "historial" / "audio-rescate.json",
+    )
     sonidos = Sonidos(configuracion.audio.sonidos)
     vad = DetectorSilencio(configuracion.audio.silencio_corte_ms, configuracion.motor.local.carpeta)
     orq = Orquestador(
@@ -500,6 +506,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         hay_red=hay_red_si_hace_falta,
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
         pendientes=pendientes,
+        mezclador=mezclador,
     )
     orq.corte_por_silencio = configuracion.audio.corte_por_silencio
 
@@ -524,6 +531,17 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
                 bandeja.actualizar_menu()
 
         threading.Thread(target=trabajo, name="voziris-reintento", daemon=True).start()
+
+    def cambiar_al_dictar(modo: str) -> None:
+        """Desde la bandeja: vale para el dictado siguiente y se intenta guardar."""
+        mezclador.modo = modo
+        configuracion.audio.al_dictar = modo
+        try:
+            cfg.guardar(configuracion)
+        except ConfigInvalida as e:
+            avisar(f"Cambio aplicado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        if bandeja is not None:
+            bandeja.actualizar_menu()
 
     def copiar_entrada(indice: int) -> None:
         entrada = historial.buscar(indice)
@@ -613,6 +631,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         vad.silencio_corte_ms = nueva.audio.silencio_corte_ms
         orq.corte_por_silencio = nueva.audio.corte_por_silencio
         sonidos.activos = nueva.audio.sonidos
+        mezclador.modo = nueva.audio.al_dictar
         motor.preferencia = nueva.general.motor
         if vars(nueva.motor.local) != vars(vieja.motor.local):
             pendientes.append("motor local (modelo, carpeta, hilos o cuantización)")
@@ -670,6 +689,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         reintentar=reintentar,
         borrar_entrada=borrar_entrada,
         copiar=copiar_entrada,
+        cambiar_al_dictar=cambiar_al_dictar,
+        al_dictar_actual=lambda: mezclador.modo,
+        devolver_sonido=mezclador.devolver_el_sonido,
+        hay_sonido_bajado=mezclador.hay_sonido_bajado,
         pendientes=lambda: pendientes.listar(excepto=en_curso_ahora()),
         recuperar=recuperar_pendiente,
         borrar_pendiente=borrar_pendiente,
@@ -697,6 +720,8 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             aviso_mic = str(e)
         bandeja.mostrar_en_hilo()
         log.info("icono de bandeja visible")
+        # Antes que nada: si la vez anterior quedó audio bajado, se devuelve ya.
+        mezclador.arrancar()
         # El precalentado del modelo (~4 s de CPU) va DESPUÉS de que el icono
         # esté en pantalla: si arranca antes, compite con Tk y pystray y el
         # arranque visible pasa de 1,5 s a casi 4 (medido en VOZ-61).
@@ -740,6 +765,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     finally:
         log.info("cerrando")
         _forzar_salida_en(10)
+        mezclador.cerrar()  # lo primero: nadie se queda sin sonido
         orq.parar()
         atajos.liberar()
         captura.cerrar()

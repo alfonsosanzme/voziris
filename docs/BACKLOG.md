@@ -357,3 +357,23 @@ no se transcribe», y poder copiar desde «Últimos dictados».
 - [x] La API espera 3 s + 0,1 s por segundo de audio; pasado eso, local con aviso. La respuesta tardía se tira.
 - [x] Cancelar en «procesando» guarda el texto en el historial sin entregarlo.
 - [x] «Últimos dictados»: «Copiar al portapapeles» y reentrega a los 3 s para poder elegir la ventana.
+
+## H9 · Dictar sin ruido de fondo — 0,5 jornadas
+
+Pedido por el cliente: «que se baje el volumen a mute de todo lo que hay y que
+se proceda con el dictado».
+
+### VOZ-75 · Bajar el audio de las demás aplicaciones al dictar
+**Archivos:** `audio/mezclador.py`, `orquestador.py`, `config.py`, `ui/bandeja.py`, `ui/ajustes.py`
+
+**Criterios de aceptación**
+- [x] Tres modos en `[audio].al_dictar`: `nada`, `atenuar` (15 %) y `silenciar` (por defecto).
+- [x] Se actúa por aplicación (sesiones de audio de Windows), nunca sobre el volumen maestro, y nunca sobre la propia Voziris: sus tonos se siguen oyendo.
+- [x] Solo se toca lo que está sonando (sesiones activas), y nunca una aplicación que esté grabando por el micrófono: una llamada de Teams o Zoom se queda como está.
+- [x] Se baja al empezar a grabar y se sube al dejar de grabar, sin esperar a que se entregue el texto. Cubre también cancelar, la pulsación demasiado corta y el micrófono que desaparece.
+- [x] Un cuarto de segundo de margen antes de tocar nada: una pulsación descartada por corta no abre un agujero en la música.
+- [x] Mientras se graba se revisa cada 1,5 s: lo que empiece a sonar también se calla.
+- [x] Lo que ya estaba silenciado se queda como estaba; si el usuario mueve el volumen mientras está bajado, no se le pisa. En modo «atenuar» no se toca el mute de nadie.
+- [x] Archivo de rescate atómico y acumulativo: si el proceso muere con el audio bajado, al arrancar se devuelve. Si no se puede escribir, no se baja nada. Si queda algo sin devolver, el rescate se conserva y la bandeja ofrece «Devolver el sonido».
+- [x] Nada de esto corre en el hilo del atajo ni fuera del hilo del mezclador, que es el único que habla con COM: el tono de inicio no se retrasa y no se sueltan punteros desde otro hilo.
+- [x] Se cambia desde la bandeja («Mientras dicto») y desde Ajustes → Audio.

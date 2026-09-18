@@ -39,6 +39,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from voziris.audio.mezclador import Mezclador
 from voziris.destinos.base import Destino
 from voziris.errores import (
     EntregaFallida,
@@ -124,6 +125,7 @@ class Orquestador:
         hay_red: Callable[[], bool] = lambda: False,
         app_en_primer_plano: Callable[[], str | None] = lambda: None,
         pendientes: Pendientes | None = None,
+        mezclador: Mezclador | None = None,
     ) -> None:
         self._captura = captura
         self._motor = motor
@@ -139,6 +141,7 @@ class Orquestador:
         self._hay_red = hay_red
         self._app_en_primer_plano = app_en_primer_plano
         self._pendientes = pendientes
+        self._mezclador = mezclador
 
         self._lock = threading.Lock()
         self._estado = Estado.REPOSO
@@ -254,8 +257,22 @@ class Orquestador:
         return self._estado in (Estado.GRABANDO, Estado.PROCESANDO)
 
     def _cambiar(self, estado: Estado) -> None:
-        """Con el lock tomado."""
-        self._estado = estado
+        """Con el lock tomado.
+
+        Único sitio por el que pasan TODAS las transiciones, y por eso el sitio
+        donde se baja y se sube el audio de las demás aplicaciones (VOZ-75):
+        así también cubre los caminos raros — la pulsación demasiado corta, el
+        micrófono que desaparece, cancelar, un fallo a media entrega. El
+        mezclador solo encola: no se llama a COM con el lock tomado.
+        """
+        anterior, self._estado = self._estado, estado
+        if self._mezclador is not None:
+            if estado is Estado.GRABANDO:
+                self._mezclador.silenciar()
+            elif anterior is Estado.GRABANDO:
+                # Al dejar de grabar, aunque aún se esté procesando: quien dicta
+                # ya ha terminado de hablar y agradece que la música vuelva ya.
+                self._mezclador.restaurar()
         try:
             self._al_estado(estado.value)
         except Exception:  # noqa: BLE001 — la interfaz no puede tumbar el estado
