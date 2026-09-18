@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from voziris import archivos
+from voziris import archivos, winapi
 from voziris.audio.captura import normalizar
 from voziris.errores import TranscripcionFallida
 from voziris.hablantes import SeparadorHablantes
@@ -42,6 +42,17 @@ TROZO_MINIMO_S = 0.8
 """Una intervención más corta no da texto fiable (el motor se inventa un «Yeah»)."""
 PAUSA_DE_PARRAFO_S = 1.5
 """En una sola voz, un silencio así separa párrafos."""
+VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES = 11
+"""sherpa-onnx reserva unas once veces el tamaño del audio, y de golpe, al final.
+
+Medido con diálogos de dos voces: dos horas de audio (439 MB) llegan a un pico
+de 4,9 GB. No se puede evitar desde aquí — lo pide la biblioteca — así que lo
+que se hace es mirar antes si cabe.
+"""
+MEMORIA_BASE_HABLANTES_MB = 900.0
+"""Lo que ya ocupan el motor y los dos modelos de voces antes de empezar."""
+MARGEN_MEMORIA_MB = 500.0
+"""Lo que se deja libre para el resto del equipo: no se le llena la RAM al usuario."""
 LARGO_PARA_AVISAR_S = 20 * 60
 """A partir de aquí se dice cuánto va a tardar: una reunión larga son decenas de minutos."""
 VECES_MAS_RAPIDO_QUE_EL_AUDIO = 3.0
@@ -82,9 +93,7 @@ def trocear(
     if n <= maximo:
         return [(0, n)] if n else []
     marco = sr // 50  # 20 ms
-    energia = np.sqrt(
-        np.mean(np.square(muestras[: n - n % marco].reshape(-1, marco)), axis=1)
-    )
+    energia = _energia_por_marcos(muestras[: n - n % marco], marco)
     cortes: list[tuple[int, int]] = []
     inicio = 0
     margen = int(BUSQUEDA_DE_CORTE_S * sr)
@@ -135,6 +144,22 @@ def parece_relleno(texto: str, idioma: str) -> bool:
     return not any(p in PALABRAS_FRECUENTES_ES for p in palabras)
 
 
+def _energia_por_marcos(muestras: np.ndarray, marco: int) -> np.ndarray:
+    """Valor eficaz de cada marco de 20 ms, por bloques para no duplicar el audio.
+
+    Elevar al cuadrado el audio entero de una vez cuesta otro tanto de memoria,
+    y con un vídeo largo eso es casi un giga de más para nada.
+    """
+    marcos = len(muestras) // marco
+    energia = np.empty(marcos, dtype=np.float32)
+    por_bloque = max(1, (1 << 20) // marco)
+    for i in range(0, marcos, por_bloque):
+        cuantos = min(por_bloque, marcos - i)
+        vista = muestras[i * marco : (i + cuantos) * marco].reshape(cuantos, marco)
+        energia[i : i + cuantos] = np.sqrt(np.mean(np.square(vista, dtype=np.float32), axis=1))
+    return energia
+
+
 def _transcribir_trozo(
     motor: MotorSTT, muestras: np.ndarray, idioma: str
 ) -> tuple[str, int, str]:
@@ -182,8 +207,10 @@ def transcribir_varias_voces(
     al_progresar: Progreso | None = None,
 ) -> Resultado:
     # La separación sí va con el audio normalizado entero: las huellas de voz
-    # salen más estables (medido en VOZ-71) y así todas se calculan igual.
-    muestras = normalizar(audio.muestras)
+    # salen más estables (medido en VOZ-71) y así todas se calculan igual. Se
+    # normaliza sobre el mismo array: quien llama viene de `decodificar` y no
+    # lo vuelve a mirar, y con un vídeo largo la copia serían cientos de MB.
+    muestras = normalizar(audio.muestras, en_sitio=True)
     intervenciones = separador.separar(Audio(muestras=muestras, sr=audio.sr), hablantes)
     lineas: list[Linea] = []
     ms = 0
@@ -242,10 +269,18 @@ def transcribir_archivo(
     audio, avisos = archivos.decodificar(ruta, pista=pista, idioma=idioma)
     if al_progresar:
         al_progresar(_cuanto_queda(audio.duracion_s), None)
-    if hablantes == "1" or separador is None:
+    sin_memoria = ""
+    if hablantes != "1" and separador is not None:
+        libre = winapi.memoria_libre_mb()
+        if libre is not None and not caben_los_hablantes(audio, libre):
+            sin_memoria = _aviso_sin_memoria(audio, libre)
+            log.warning("sin memoria para separar hablantes: %s", sin_memoria)
+    if hablantes == "1" or separador is None or sin_memoria:
         resultado = transcribir_una_voz(audio, motor, idioma, al_progresar)
         if hablantes != "1" and separador is None:
             resultado.avisos.append("Sin separación de hablantes: los modelos no están disponibles")
+        if sin_memoria:
+            resultado.avisos.append(sin_memoria)
     else:
         cuantos = None if hablantes == "auto" else max(1, int(hablantes))
         resultado = transcribir_varias_voces(
@@ -255,6 +290,35 @@ def transcribir_archivo(
     # los primeros: son lo que más cambia cómo hay que leer el resultado.
     resultado.avisos[:0] = avisos
     return resultado
+
+
+def caben_los_hablantes(audio: Audio, libre_mb: float | None) -> bool:
+    """¿Hay memoria para separar hablantes en este audio, o va a morir a medias?
+
+    Vale más decirlo antes y transcribir sin separar que pelearse media hora
+    con un vídeo y acabar sin nada.
+    """
+    if libre_mb is None:
+        return True  # sin dato, se intenta: es lo que se hacía siempre
+    hacen_falta = (
+        audio.muestras.nbytes * VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES / 2**20
+        + MEMORIA_BASE_HABLANTES_MB
+    )
+    return hacen_falta + MARGEN_MEMORIA_MB <= libre_mb
+
+
+def _aviso_sin_memoria(audio: Audio, libre_mb: float) -> str:
+    hacen_falta = (
+        audio.muestras.nbytes * VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES / 2**20
+        + MEMORIA_BASE_HABLANTES_MB
+    )
+    minutos = int(audio.duracion_s // 60)
+    return (
+        f"Transcrito sin separar a los hablantes: son {minutos} minutos de audio y "
+        f"distinguir las voces pediría unos {hacen_falta / 1024:.1f} GB de memoria, "
+        f"con {libre_mb / 1024:.1f} GB libres. Cierra algún programa y repítelo si "
+        "los necesitas, o pártelo en trozos más cortos."
+    )
 
 
 def _cuanto_queda(duracion_s: float) -> str:

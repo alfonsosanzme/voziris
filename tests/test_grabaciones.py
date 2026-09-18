@@ -498,3 +498,42 @@ def test_lo_que_se_dice_al_empezar_segun_lo_que_dure() -> None:
     largo = _cuanto_queda(3.31 * 3600)
     assert largo.startswith("3:18:") and "tarda unos 66 minutos" in largo
     assert "Puedes seguir a lo tuyo" in largo
+
+
+def test_si_no_hay_memoria_no_se_separan_hablantes() -> None:
+    """Más vale decirlo antes que pelearse media hora con un vídeo y morir a medias."""
+    from voziris.grabaciones import caben_los_hablantes
+
+    media_hora = Audio(muestras=np.zeros(30 * 60 * SR, dtype=np.float32))
+    tres_horas = Audio(muestras=np.zeros(int(3.3 * 3600 * SR), dtype=np.float32))
+    assert caben_los_hablantes(media_hora, libre_mb=8000)
+    assert not caben_los_hablantes(tres_horas, libre_mb=8000)
+    assert caben_los_hablantes(tres_horas, libre_mb=14000)
+    assert caben_los_hablantes(tres_horas, libre_mb=None)  # sin dato, se intenta
+
+
+def test_un_video_largo_se_transcribe_sin_hablantes_en_vez_de_morir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import grabaciones, winapi
+
+    monkeypatch.setattr(winapi, "memoria_libre_mb", lambda: 300.0)  # equipo sin memoria
+    wav = tmp_path / "larga.wav"
+    _escribir_wav(wav, 3.0)
+
+    class SeparadorQueNoDeberiaUsarse(hablantes.SeparadorHablantes):
+        def __init__(self) -> None:
+            super().__init__(Path("no-importa"))
+
+        def disponible(self) -> bool:
+            return True
+
+        def separar(self, audio: Audio, hablantes_: int | None = None) -> list[Intervencion]:
+            raise AssertionError("no debería intentar separar sin memoria")
+
+    r = grabaciones.transcribir_archivo(
+        wav, MotorFalso(), "es", hablantes="auto", separador=SeparadorQueNoDeberiaUsarse()
+    )
+    assert r.hablantes == 1
+    assert any("sin separar a los hablantes" in a for a in r.avisos)
+    assert any("GB" in a for a in r.avisos)

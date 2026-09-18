@@ -394,4 +394,8 @@ vídeo. Vídeos en mp4».
 - [x] El Markdown avisa de cuántas pistas había y de cuál se usó, y dice cómo repetirlo con otra.
 - [x] `--pista auto|N|todas`. `todas` suma y avisa de que si las voces se solapan el texto saldrá entremezclado.
 - [x] Un vídeo sin sonido lo dice claro, no falla con un error técnico.
-- [ ] Aviso o límite para vídeos muy largos (pendiente de la medición de memoria).
+- [x] Vídeos largos, medido con el más largo del equipo del cliente (3 h 18 min):
+  - el audio se reserva de una vez (727 MB en vez de 1455);
+  - `normalizar` y el cálculo de energía trabajan por trozos, con salida idéntica bit a bit y el doble de rápidos (1,7 GB menos con 4 h);
+  - la separación de hablantes pide unas 11 veces el audio de golpe (medido: 4,9 GB con 2 h), así que se comprueba contra la memoria libre y, si no cabe, se transcribe sin separar en lugar de morir a media hora de trabajo;
+  - la ventana de progreso dice cuánto dura y cuánto va a tardar.

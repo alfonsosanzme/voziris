@@ -136,6 +136,23 @@ pistas distintas, la suma produce frases entreveradas que parecen correctas
 y no lo son. Una pista equivocada da un texto incompleto, pero verdadero, y
 el aviso dice cómo repetirlo.
 
+### Vídeos largos
+
+Una reunión de hora y media o una clase grabada entran igual, pero conviene
+saber qué esperar:
+
+- La ventana de progreso dice desde el principio cuánto dura el audio y, si
+  pasa de veinte minutos, cuánto va a tardar. Con el motor local, cuenta más
+  o menos un tercio de lo que dure la grabación.
+- Puedes seguir trabajando mientras: corre en un proceso aparte y Voziris
+  sigue dictando.
+- **Distinguir las voces es lo que más memoria pide**, y no depende de
+  Voziris sino de la biblioteca que lo hace: unas once veces el tamaño del
+  audio, de golpe. Antes de empezar se mira si cabe en la memoria libre del
+  equipo; si no cabe, se transcribe igual pero sin separar hablantes, y el
+  Markdown lo dice. Como referencia, tres horas de audio piden unos 8 GB
+  libres solo para eso.
+
 Una hora de audio o de vídeo tarda unos minutos con el motor local.
 
 ## Ajustes

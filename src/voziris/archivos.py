@@ -224,10 +224,16 @@ def decodificar(
             disponibles = _pistas_de(contenedor)
             elegidas, avisos = _que_pistas(disponibles, pista, idioma, es_video, ruta)
             segundos = _segundos_de(contenedor, av)
-            muestras = _mezclar([
-                _decodificar_pista(contenedor, contenedor.streams.audio[p.n], sr, av, segundos)
-                for p in elegidas
-            ])
+            muestras = np.zeros(0, dtype=np.float32)
+            for pista_elegida in elegidas:
+                trozo = _decodificar_pista(
+                    contenedor, contenedor.streams.audio[pista_elegida.n], sr, av, segundos
+                )
+                # Se suma según llega: con «todas» en un vídeo doblado de horas,
+                # guardarlas para sumarlas al final serían varios GB de más.
+                muestras = trozo if not len(muestras) else _sumar(muestras, trozo)
+            if len(elegidas) > 1:
+                _recortar_si_satura(muestras)
     except ArchivoNoLegible:
         raise
     except Exception as e:  # noqa: BLE001 — av.error.* son muchas clases distintas
@@ -311,21 +317,27 @@ def _segundos_de(contenedor: Any, av: Any) -> float | None:
     return segundos if 0 < segundos < 24 * 3600 else None
 
 
-def _mezclar(pistas_decodificadas: list[np.ndarray]) -> np.ndarray:
-    """Una sola pista se devuelve tal cual; varias se suman y se recortan si saturan."""
-    utiles = [p for p in pistas_decodificadas if len(p)]
-    if not utiles:
-        return np.zeros(0, dtype=np.float32)
-    if len(utiles) == 1:
-        return utiles[0]
-    largo = max(len(p) for p in utiles)
-    suma = np.zeros(largo, dtype=np.float32)
-    for parte in utiles:
-        suma[: len(parte)] += parte
-    pico = float(np.abs(suma).max())
+def _sumar(acumulado: np.ndarray, otra: np.ndarray) -> np.ndarray:
+    """Suma una pista más sobre lo que ya hay, alargando si esta es más larga."""
+    if not len(otra):
+        return acumulado
+    if len(otra) > len(acumulado):
+        mayor = np.zeros(len(otra), dtype=np.float32)
+        mayor[: len(acumulado)] = acumulado
+        acumulado = mayor
+    acumulado[: len(otra)] += otra
+    return acumulado
+
+
+def _recortar_si_satura(muestras: np.ndarray) -> None:
+    """Sumar pistas puede pasarse de 1: se baja todo por igual, sin copiar el array."""
+    if not len(muestras):
+        return
+    pico = 0.0
+    for i in range(0, len(muestras), 1 << 20):
+        pico = max(pico, float(np.abs(muestras[i : i + (1 << 20)]).max()))
     if pico > 1.0:
-        suma /= pico
-    return suma
+        muestras /= pico
 
 
 def duracion_s(ruta: Path) -> float | None:
