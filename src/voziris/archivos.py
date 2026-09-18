@@ -223,10 +223,11 @@ def decodificar(
             es_video = bool(contenedor.streams.video)
             disponibles = _pistas_de(contenedor)
             elegidas, avisos = _que_pistas(disponibles, pista, idioma, es_video, ruta)
-            muestras = _mezclar(
-                [_decodificar_pista(contenedor, contenedor.streams.audio[p.n], sr, av)
-                 for p in elegidas]
-            )
+            segundos = _segundos_de(contenedor, av)
+            muestras = _mezclar([
+                _decodificar_pista(contenedor, contenedor.streams.audio[p.n], sr, av, segundos)
+                for p in elegidas
+            ])
     except ArchivoNoLegible:
         raise
     except Exception as e:  # noqa: BLE001 — av.error.* son muchas clases distintas
@@ -266,18 +267,48 @@ def _que_pistas(
     return [elegida], [aviso] if aviso else []
 
 
-def _decodificar_pista(contenedor: Any, flujo: Any, sr: int, av: Any) -> np.ndarray:
+def _decodificar_pista(
+    contenedor: Any, flujo: Any, sr: int, av: Any, segundos: float | None = None
+) -> np.ndarray:
+    """El audio de una pista, en un solo array.
+
+    Se reserva sitio de una vez según la duración que dice la cabecera, en vez
+    de juntar mil trozos al final. No es una micro-optimización: juntarlos
+    obliga a tener a la vez los trozos y el resultado, o sea el doble de
+    memoria. Con las tres horas y media del vídeo más largo del cliente eso
+    son 1,4 GB en lugar de 725 MB, y en el mismo proceso vive el modelo, que
+    ocupa otros 640 MB.
+    """
     remuestreador = av.AudioResampler(format="flt", layout="mono", rate=sr)
-    trozos: list[np.ndarray] = []
+    capacidad = int((segundos or 0) * sr * 1.02) + sr if segundos else 0
+    salida = np.empty(capacidad, dtype=np.float32) if capacidad else np.empty(0, dtype=np.float32)
+    usado = 0
     contenedor.seek(0)
+
+    def guardar(bloque: np.ndarray) -> None:
+        nonlocal salida, usado
+        if usado + len(bloque) > len(salida):
+            # La cabecera mentía o no decía nada: se dobla y se sigue.
+            crecida = np.empty(max(len(salida) * 2, usado + len(bloque), sr * 60), np.float32)
+            crecida[:usado] = salida[:usado]
+            salida = crecida
+        salida[usado : usado + len(bloque)] = bloque
+        usado += len(bloque)
+
     for cuadro in contenedor.decode(flujo):
-        for salida in remuestreador.resample(cuadro):
-            trozos.append(salida.to_ndarray().reshape(-1))
-    for salida in remuestreador.resample(None):  # lo que quede en el remuestreador
-        trozos.append(salida.to_ndarray().reshape(-1))
-    if not trozos:
-        return np.zeros(0, dtype=np.float32)
-    return np.concatenate(trozos).astype(np.float32, copy=False)
+        for trozo in remuestreador.resample(cuadro):
+            guardar(trozo.to_ndarray().reshape(-1))
+    for trozo in remuestreador.resample(None):  # lo que quede en el remuestreador
+        guardar(trozo.to_ndarray().reshape(-1))
+    return salida[:usado]
+
+
+def _segundos_de(contenedor: Any, av: Any) -> float | None:
+    """Lo que dice la cabecera, para reservar sitio. None si no lo dice."""
+    if contenedor.duration is None:
+        return None
+    segundos = float(contenedor.duration) / av.time_base
+    return segundos if 0 < segundos < 24 * 3600 else None
 
 
 def _mezclar(pistas_decodificadas: list[np.ndarray]) -> np.ndarray:

@@ -42,6 +42,10 @@ TROZO_MINIMO_S = 0.8
 """Una intervención más corta no da texto fiable (el motor se inventa un «Yeah»)."""
 PAUSA_DE_PARRAFO_S = 1.5
 """En una sola voz, un silencio así separa párrafos."""
+LARGO_PARA_AVISAR_S = 20 * 60
+"""A partir de aquí se dice cuánto va a tardar: una reunión larga son decenas de minutos."""
+VECES_MAS_RAPIDO_QUE_EL_AUDIO = 3.0
+"""Estimación prudente del motor local en este tipo de equipo (medido: entre 2 y 4)."""
 
 Progreso = Callable[[str, float | None], None]
 
@@ -236,6 +240,8 @@ def transcribir_archivo(
     if al_progresar:
         al_progresar(f"Abriendo {ruta.name}…", None)
     audio, avisos = archivos.decodificar(ruta, pista=pista, idioma=idioma)
+    if al_progresar:
+        al_progresar(_cuanto_queda(audio.duracion_s), None)
     if hablantes == "1" or separador is None:
         resultado = transcribir_una_voz(audio, motor, idioma, al_progresar)
         if hablantes != "1" and separador is None:
@@ -249,6 +255,17 @@ def transcribir_archivo(
     # los primeros: son lo que más cambia cómo hay que leer el resultado.
     resultado.avisos[:0] = avisos
     return resultado
+
+
+def _cuanto_queda(duracion_s: float) -> str:
+    """Lo primero que se lee en la ventana de progreso: qué hay y cuánto va a costar."""
+    minutos, segundos = divmod(int(duracion_s), 60)
+    horas, minutos = divmod(minutos, 60)
+    largo = f"{horas}:{minutos:02d}:{segundos:02d}" if horas else f"{minutos}:{segundos:02d}"
+    if duracion_s < LARGO_PARA_AVISAR_S:
+        return f"{largo} de audio. Transcribiendo…"
+    espera = max(1, round(duracion_s / VECES_MAS_RAPIDO_QUE_EL_AUDIO / 60))
+    return f"{largo} de audio: esto tarda unos {espera} minutos. Puedes seguir a lo tuyo."
 
 
 def render_markdown(resultado: Resultado, titulo: str, momento: datetime) -> str:

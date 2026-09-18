@@ -489,3 +489,12 @@ def test_formatos_incluyen_los_videos_que_trae_la_gente() -> None:
         assert ext in archivos.FORMATOS_VIDEO, ext
     assert ".m4a" in archivos.FORMATOS_AUDIO
     assert set(archivos.FORMATOS) == set(archivos.FORMATOS_AUDIO) | set(archivos.FORMATOS_VIDEO)
+
+
+def test_lo_que_se_dice_al_empezar_segun_lo_que_dure() -> None:
+    from voziris.grabaciones import _cuanto_queda
+
+    assert _cuanto_queda(95.0) == "1:35 de audio. Transcribiendo…"
+    largo = _cuanto_queda(3.31 * 3600)
+    assert largo.startswith("3:18:") and "tarda unos 66 minutos" in largo
+    assert "Puedes seguir a lo tuyo" in largo
