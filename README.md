@@ -68,7 +68,7 @@ Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar, o
 `voziris.exe --desinstalar`. La carpeta de la instalación se borra entera,
 incluido el modelo.
 
-## Transcribir una grabación (m4a, mp3, wav…)
+## Transcribir una grabación o un vídeo
 
 Además de dictar, Voziris convierte una grabación entera en un archivo
 Markdown, con marcas de tiempo y, si hay varias personas, con quién habla en
@@ -78,7 +78,7 @@ cada momento. Tres formas de pedirlo:
   Voziris» → «Una sola voz» o «Varios hablantes». Aparece al instalar
   Voziris; en la copia portable se activa con `voziris.exe --menu-contextual`
   (y se quita con `--sin-menu-contextual`).
-- **Bandeja** → «Transcribir una grabación…»: elige el archivo y cuántas
+- **Bandeja** → «Transcribir grabación o vídeo…»: elige el archivo y cuántas
   personas hablan (una, varias sin saber cuántas, o el número exacto).
 - **Línea de comandos**:
   `voziris.exe --transcribir "reunion.m4a" --hablantes auto`
@@ -104,8 +104,39 @@ pequeños (44 MB) a `modelos/hablantes/`. Qué esperar de la separación:
 - Un «Hablante 3» con dos frases sueltas en una charla de dos suele ser
   ruido de la agrupación, no una tercera persona.
 
-Formatos: lo que abre ffmpeg (m4a, mp3, wav, flac, ogg, opus, aac, wma, mp4,
-webm, mkv…). Una hora de audio tarda unos minutos con el motor local.
+### Vídeos
+
+Un vídeo entra igual que una grabación: se le saca la pista de sonido y sigue
+el mismo camino. No hace falta convertirlo antes ni instalar nada; el
+ejecutable lleva ffmpeg dentro. Del vídeo solo se lee el audio, así que un
+archivo de 4K pesado no tarda más que uno pequeño.
+
+Formatos que se ofrecen en el botón derecho y en el diálogo:
+
+| | |
+|---|---|
+| **Audio** | m4a, mp3, wav, flac, ogg, oga, opus, aac, wma, aiff, aif, amr, caf, mka |
+| **Vídeo** | mp4, mkv, mov, avi, webm, m4v, wmv, mpg, mpeg, mts, m2ts, 3gp |
+
+Cubren lo que sale de Teams, Zoom, el iPhone, el Android, OBS, la grabación
+de pantalla de Windows y las videocámaras. Lo que no esté en la lista casi
+seguro también se abre: elígelo a mano con «Todos los archivos», porque
+ffmpeg reconoce el archivo por su contenido y no por la extensión.
+
+**Si el vídeo trae varias pistas de audio** (un doblaje, una grabación de OBS
+con el micrófono y el sonido del sistema por separado) se transcribe **una
+sola**, y el Markdown avisa de cuál y de qué otras había. Se elige así: se
+descartan los comentarios y la audiodescripción; si hay varios idiomas manda
+el que tengas configurado; si no, la pista marcada como principal; y si nada
+la distingue, la primera. Para usar otra, `--pista 2`; para sumarlas todas,
+`--pista todas`.
+
+No se suman por su cuenta a propósito: si dos personas hablan a la vez en
+pistas distintas, la suma produce frases entreveradas que parecen correctas
+y no lo son. Una pista equivocada da un texto incompleto, pero verdadero, y
+el aviso dice cómo repetirlo.
+
+Una hora de audio o de vídeo tarda unos minutos con el motor local.
 
 ## Ajustes
 

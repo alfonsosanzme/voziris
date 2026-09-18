@@ -30,7 +30,7 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 from typing import TypeVar
 
-from voziris.archivos import FORMATOS
+from voziris.archivos import FORMATOS, FORMATOS_AUDIO, FORMATOS_VIDEO
 from voziris.errores import VozirisError
 
 log = logging.getLogger(__name__)
@@ -57,12 +57,14 @@ def elegir_grabacion(
 ) -> tuple[Path, str] | None:
     """Selector de archivo y pregunta de hablantes. None si se cancela cualquiera de los dos."""
     tipos = [
-        ("Grabaciones", " ".join(f"*{ext}" for ext in FORMATOS)),
+        ("Grabaciones y vídeos", " ".join(f"*{ext}" for ext in FORMATOS)),
+        ("Grabaciones de audio", " ".join(f"*{ext}" for ext in FORMATOS_AUDIO)),
+        ("Vídeos", " ".join(f"*{ext}" for ext in FORMATOS_VIDEO)),
         ("Todos los archivos", "*.*"),
     ]
     elegido = filedialog.askopenfilename(
         parent=raiz,
-        title="Grabación que transcribir",
+        title="Grabación o vídeo que transcribir",
         filetypes=tipos,
         initialdir=str(carpeta_inicial) if carpeta_inicial else None,
     )

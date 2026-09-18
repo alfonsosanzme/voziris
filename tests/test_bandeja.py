@@ -124,8 +124,10 @@ def test_transcribir_grabacion_solo_si_la_aplicacion_lo_cablea() -> None:
     llamadas = Llamadas()
     bandeja = Bandeja(llamadas.acciones(con_transcribir=True))
     items = {_texto(i): i for i in _items(bandeja.construir_menu())}
-    assert list(items)[:3] == ["Dictar ahora", "Dictar al Markdown", "Transcribir una grabación…"]
-    items["Transcribir una grabación…"](None)
+    assert list(items)[:3] == [
+        "Dictar ahora", "Dictar al Markdown", "Transcribir grabación o vídeo…"
+    ]
+    items["Transcribir grabación o vídeo…"](None)
     assert llamadas.lista == [("transcribir", None)]
 
 

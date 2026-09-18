@@ -226,18 +226,29 @@ def transcribir_archivo(
     hablantes: str = "auto",
     separador: SeparadorHablantes | None = None,
     al_progresar: Progreso | None = None,
+    pista: int | str = "auto",
 ) -> Resultado:
-    """`hablantes`: "1" una voz, "auto" varias sin saber cuántas, o un número."""
+    """De una grabación o un vídeo al `Resultado` que se vuelca en Markdown.
+
+    `hablantes`: "1" una voz, "auto" varias sin saber cuántas, o un número.
+    `pista`: cuál de las de audio, si el archivo trae varias (ver `archivos`).
+    """
     if al_progresar:
         al_progresar(f"Abriendo {ruta.name}…", None)
-    audio = archivos.decodificar(ruta)
+    audio, avisos = archivos.decodificar(ruta, pista=pista, idioma=idioma)
     if hablantes == "1" or separador is None:
         resultado = transcribir_una_voz(audio, motor, idioma, al_progresar)
         if hablantes != "1" and separador is None:
             resultado.avisos.append("Sin separación de hablantes: los modelos no están disponibles")
-        return resultado
-    cuantos = None if hablantes == "auto" else max(1, int(hablantes))
-    return transcribir_varias_voces(audio, motor, separador, idioma, cuantos, al_progresar)
+    else:
+        cuantos = None if hablantes == "auto" else max(1, int(hablantes))
+        resultado = transcribir_varias_voces(
+            audio, motor, separador, idioma, cuantos, al_progresar
+        )
+    # Los avisos de la decodificación (varias pistas, pistas sumadas) van
+    # los primeros: son lo que más cambia cómo hay que leer el resultado.
+    resultado.avisos[:0] = avisos
+    return resultado
 
 
 def render_markdown(resultado: Resultado, titulo: str, momento: datetime) -> str:

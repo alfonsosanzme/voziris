@@ -193,7 +193,7 @@ class Bandeja:
         if self._acciones.transcribir is None:
             return []
         transcribir = self._acciones.transcribir
-        return [pystray.MenuItem("Transcribir una grabación…", lambda: transcribir())]
+        return [pystray.MenuItem("Transcribir grabación o vídeo…", lambda: transcribir())]
 
     def _item_al_dictar(self) -> list[Any]:
         """Submenú «Mientras dicto»: qué pasa con la música. Solo si se cablea."""

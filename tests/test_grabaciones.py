@@ -220,7 +220,7 @@ def _escribir_wav(ruta: Path, segundos: float, sr: int = 48000) -> None:
 def test_decodificar_remuestrea_y_mezcla(tmp_path: Path) -> None:
     wav = tmp_path / "estereo48.wav"
     _escribir_wav(wav, 2.0)
-    audio = archivos.decodificar(wav)
+    audio, _avisos = archivos.decodificar(wav)
     assert audio.sr == SR and audio.muestras.dtype == np.float32
     assert abs(audio.duracion_s - 2.0) < 0.05
     assert 0.1 < float(np.abs(audio.muestras).max()) < 0.5
@@ -242,8 +242,60 @@ def test_decodificar_m4a_generado_con_pyav(tmp_path: Path) -> None:
             contenedor.mux(paquete)
         for paquete in flujo.encode(None):
             contenedor.mux(paquete)
-    audio = archivos.decodificar(m4a)
+    audio, _avisos = archivos.decodificar(m4a)
     assert 1.8 < audio.duracion_s < 2.3
+
+
+def _escribir_video(
+    ruta: Path, segundos: float = 2.0, sr: int = 44100, pistas: int = 1, con_audio: bool = True
+) -> Path:
+    """Un vídeo de verdad, con imagen y `pistas` pistas de audio. Como el de un móvil."""
+    import av
+
+    t = np.arange(int(sr * segundos)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        video = contenedor.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        flujos = []
+        for _ in range(pistas if con_audio else 0):
+            a = contenedor.add_stream("aac", rate=sr)
+            a.layout = "mono"
+            flujos.append(a)
+        for n in range(int(segundos * 10)):
+            imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+            for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                contenedor.mux(paquete)
+        for paquete in video.encode(None):
+            contenedor.mux(paquete)
+        for i, a in enumerate(flujos):
+            datos = voz if i == 0 else np.zeros_like(voz)
+            for inicio in range(0, len(datos), 1024):
+                bloque = datos[inicio : inicio + 1024].reshape(1, -1)
+                if not bloque.shape[1]:
+                    continue
+                cuadro = av.AudioFrame.from_ndarray(bloque, format="flt", layout="mono")
+                cuadro.sample_rate = sr
+                for paquete in a.encode(cuadro):
+                    contenedor.mux(paquete)
+            for paquete in a.encode(None):
+                contenedor.mux(paquete)
+    return ruta
+
+
+def test_decodificar_un_video_saca_su_audio(tmp_path: Path) -> None:
+    """Lo que pidió el cliente: un vídeo entra igual que una grabación (VOZ-77)."""
+    mp4 = _escribir_video(tmp_path / "reunion.mp4", segundos=2.0)
+    audio, _avisos = archivos.decodificar(mp4)
+    assert audio.sr == SR and audio.muestras.dtype == np.float32
+    assert 1.8 < audio.duracion_s < 2.3
+    assert float(np.abs(audio.muestras).max()) > 0.05  # trae sonido, no silencio
+
+
+def test_un_video_sin_sonido_lo_dice_claro(tmp_path: Path) -> None:
+    mudo = _escribir_video(tmp_path / "mudo.mp4", segundos=1.0, con_audio=False)
+    with pytest.raises(archivos.ArchivoNoLegible, match="sonido|audio"):
+        archivos.decodificar(mudo)
 
 
 def test_decodificar_errores(tmp_path: Path) -> None:
@@ -345,3 +397,95 @@ def test_preguntar_hablantes_se_ve_con_la_raiz_retirada() -> None:
     raiz.destroy()
     assert visto == [True]
     assert eleccion == "auto"
+
+
+# --- vídeos con varias pistas de audio (VOZ-77) ---------------------------------------
+
+
+def _pista(n: int, titulo=None, idioma=None, canales=1, default=False, secundaria=False):
+    from voziris.archivos import Pista
+
+    return Pista(n=n, titulo=titulo, idioma=idioma, canales=canales,
+                 predeterminada=default, secundaria=secundaria)
+
+
+def test_elegir_pista_cuando_hay_doblaje() -> None:
+    """Varios idiomas: manda el idioma que se va a transcribir, no el orden ni la marca."""
+    from voziris.archivos import elegir_pista
+
+    pistas = [
+        _pista(0, "English", "eng", 2, default=True),
+        _pista(1, "Español", "spa", 2),
+        _pista(2, "Français", "fra", 2),
+    ]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 1 and "spa" in motivo
+    # Sin idioma que case, se cae a la marcada como predeterminada.
+    elegida, motivo = elegir_pista(pistas, "pl")
+    assert elegida.n == 0 and "predeterminada" in motivo
+
+
+def test_elegir_pista_descarta_comentarios_y_audiodescripcion() -> None:
+    from voziris.archivos import elegir_pista
+
+    pistas = [
+        _pista(0, "Película", "spa", 2),
+        _pista(1, "Comentario del director", "spa", 2, secundaria=True),
+    ]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 0 and motivo == "única"
+
+
+def test_elegir_pista_sin_nada_que_la_distinga() -> None:
+    from voziris.archivos import elegir_pista
+
+    # OBS: micrófono y sonido del escritorio, sin marcas ni idiomas.
+    pistas = [_pista(0, "Mic/Aux", canales=1), _pista(1, "Desktop Audio", canales=2)]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 0 and motivo == "es la primera"
+    # Una pista sin canales no cuenta.
+    elegida, _ = elegir_pista([_pista(0, canales=0), _pista(1, "buena", canales=2)], "es")
+    assert elegida.n == 1
+
+
+def test_aviso_de_pistas_dice_cual_y_como_cambiarla() -> None:
+    from voziris.archivos import aviso_de_pistas
+
+    pistas = [_pista(0, "Español", "spa"), _pista(1, "English", "eng")]
+    aviso = aviso_de_pistas(pistas, pistas[0], es_video=True)
+    assert aviso is not None
+    assert "2 pistas" in aviso and "pista 1" in aviso
+    assert "**1: Español · spa**" in aviso and "2: English · eng" in aviso
+    assert "--pista" in aviso
+    assert aviso_de_pistas(pistas[:1], pistas[0], es_video=True) is None
+
+
+def test_video_con_dos_pistas_avisa_y_se_puede_elegir(tmp_path: Path) -> None:
+    """De punta a punta con un vídeo de dos pistas hecho aquí mismo."""
+    mp4 = _escribir_video(tmp_path / "dos.mp4", segundos=1.5, pistas=2)
+    disponibles = archivos.pistas(mp4)
+    assert len(disponibles) == 2
+
+    audio, avisos = archivos.decodificar(mp4, idioma="es")
+    assert audio.duracion_s > 1.0
+    assert len(avisos) == 1 and "2 pistas" in avisos[0]
+
+    # La segunda pista de _escribir_video está en silencio: se nota al pedirla.
+    silencio, _ = archivos.decodificar(mp4, pista=2)
+    assert float(np.abs(silencio.muestras).max()) < 0.01
+    voz, _ = archivos.decodificar(mp4, pista=1)
+    assert float(np.abs(voz.muestras).max()) > 0.05
+
+    # Sumarlas avisa de que puede salir entremezclado.
+    _todas, avisos_todas = archivos.decodificar(mp4, pista="todas")
+    assert any("sumado" in a for a in avisos_todas)
+
+    with pytest.raises(archivos.ArchivoNoLegible, match="no tiene la pista 7"):
+        archivos.decodificar(mp4, pista=7)
+
+
+def test_formatos_incluyen_los_videos_que_trae_la_gente() -> None:
+    for ext in (".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".mts"):
+        assert ext in archivos.FORMATOS_VIDEO, ext
+    assert ".m4a" in archivos.FORMATOS_AUDIO
+    assert set(archivos.FORMATOS) == set(archivos.FORMATOS_AUDIO) | set(archivos.FORMATOS_VIDEO)
