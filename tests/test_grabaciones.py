@@ -537,3 +537,35 @@ def test_un_video_largo_se_transcribe_sin_hablantes_en_vez_de_morir(
     assert r.hablantes == 1
     assert any("sin separar a los hablantes" in a for a in r.avisos)
     assert any("GB" in a for a in r.avisos)
+
+
+class MotorMudo(MotorFalso):
+    """Como Parakeet cuando no oye palabras: no devuelve texto, lanza."""
+
+    def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
+        raise TranscripcionFallida("no se oyó nada")
+
+
+def test_un_archivo_mudo_dice_por_que_no_hay_texto(tmp_path: Path) -> None:
+    """Lo peor que puede pasar es un Markdown vacío sin explicación (VOZ-77)."""
+    import soundfile as sf
+
+    from voziris import grabaciones
+
+    mudo = tmp_path / "callado.wav"
+    sf.write(str(mudo), np.zeros(SR * 3, dtype=np.float32), SR)
+    r = grabaciones.transcribir_archivo(mudo, MotorMudo(), "es", hablantes="1")
+    assert not r.lineas
+    assert any("silencio" in a for a in r.avisos), r.avisos
+    md = r.markdown("callado", datetime(2026, 9, 19, 10, 0))
+    assert "silencio" in md
+
+
+def test_con_sonido_pero_sin_palabras_tambien_lo_dice(tmp_path: Path) -> None:
+    from voziris import grabaciones
+
+    wav = tmp_path / "musica.wav"
+    _escribir_wav(wav, 3.0)  # un tono: hay sonido de sobra
+    r = grabaciones.transcribir_archivo(wav, MotorMudo(), "es", hablantes="1")
+    assert not r.lineas
+    assert any("aunque sí hay sonido" in a for a in r.avisos), r.avisos

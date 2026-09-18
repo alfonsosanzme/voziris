@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from voziris import archivos, winapi
-from voziris.audio.captura import normalizar
+from voziris.audio.captura import _rms, normalizar
 from voziris.errores import TranscripcionFallida
 from voziris.hablantes import SeparadorHablantes
 from voziris.motores.base import MotorSTT
@@ -51,6 +51,10 @@ que se hace es mirar antes si cabe.
 """
 MEMORIA_BASE_HABLANTES_MB = 900.0
 """Lo que ya ocupan el motor y los dos modelos de voces antes de empezar."""
+RMS_DE_SILENCIO = 0.005
+"""Por debajo de esto no hay voz que valga: es silencio o poco más que ruido de fondo."""
+DURACION_RIDICULA_S = 0.5
+"""Un archivo más corto que esto no es una grabación: algo salió mal al abrirlo."""
 MARGEN_MEMORIA_MB = 500.0
 """Lo que se deja libre para el resto del equipo: no se le llena la RAM al usuario."""
 LARGO_PARA_AVISAR_S = 20 * 60
@@ -289,7 +293,35 @@ def transcribir_archivo(
     # Los avisos de la decodificación (varias pistas, pistas sumadas) van
     # los primeros: son lo que más cambia cómo hay que leer el resultado.
     resultado.avisos[:0] = avisos
+    if not resultado.lineas:
+        resultado.avisos.append(_por_que_no_hay_texto(audio, ruta, avisos))
     return resultado
+
+
+def _por_que_no_hay_texto(audio: Audio, ruta: Path, avisos: list[str]) -> str:
+    """Un Markdown vacío sin explicación es lo peor que puede pasar: aquí se explica.
+
+    Pasa de verdad — una pista muda elegida por defecto, un vídeo con el audio
+    en silencio, un archivo que se abrió pero no traía casi nada — y sin esto
+    el usuario solo ve un archivo con el título y nada debajo.
+    """
+    if audio.duracion_s < DURACION_RIDICULA_S:
+        return (
+            f"No se ha sacado nada: de {ruta.name} solo se pudieron leer "
+            f"{audio.duracion_s:.2f} segundos de sonido. Puede que el archivo esté a medias."
+        )
+    if _rms(audio.muestras) < RMS_DE_SILENCIO:
+        callada = " La pista que se ha usado está muda; prueba con otra (--pista N)." if any(
+            "pistas de audio" in a for a in avisos
+        ) else ""
+        return (
+            "No se ha reconocido ninguna palabra: el audio está en silencio o casi."
+            + callada
+        )
+    return (
+        "No se ha reconocido ninguna palabra, aunque sí hay sonido. Puede ser música, "
+        "ruido, o voz en otro idioma del configurado."
+    )
 
 
 def caben_los_hablantes(audio: Audio, libre_mb: float | None) -> bool:
