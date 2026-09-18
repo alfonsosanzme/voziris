@@ -243,6 +243,44 @@ Está verificado con un test (`tests/test_offline.py`) que bloquea toda
 conexión saliente del proceso y transcribe diez dictados en modo local
 literal: ningún intento de conexión.
 
+## La música se calla mientras dictas
+
+Dictar con música o un vídeo de fondo sale mal por dos motivos: el micrófono
+se come lo que suena por los altavoces, y uno se oye mal a sí mismo. Desde la
+bandeja → **«Mientras dicto»** se elige qué pasa con el audio de las demás
+aplicaciones:
+
+| Opción | Qué hace |
+|---|---|
+| **Silenciar lo que suene** (por defecto) | calla todo lo demás mientras grabas |
+| Bajarle el volumen | lo deja al 15 %: se sigue oyendo de fondo |
+| No tocar nada | como antes |
+
+El sonido vuelve en cuanto dejas de hablar, sin esperar a que el texto se
+pegue. Lo que se calla y lo que no:
+
+- Solo **lo que está sonando de verdad**. Una pestaña de Chrome abierta pero
+  callada no se toca.
+- Nunca **una llamada**: si una aplicación está usando el micrófono (Teams,
+  Zoom, Meet, Discord), se queda como está. Callarle el audio a una reunión
+  sería justo lo contrario de lo que quieres.
+- Nunca el **volumen general** del sistema, ni el de Voziris: sus tonos de
+  inicio y fin se siguen oyendo.
+- Lo que **ya tenías silenciado** se queda silenciado. Y si mueves el volumen
+  de una aplicación mientras está bajada, mandas tú: no se te pisa.
+- Si algo **empieza a sonar a media frase**, también se calla.
+- Un **roce del atajo** no abre un agujero en la música: hay un cuarto de
+  segundo de margen antes de tocar nada, y las pulsaciones que se descartan
+  por cortas caducan antes de llegar.
+
+Y si algo fuera mal, hay dos salvavidas. Antes de tocar nada se anota en
+disco qué había: si Voziris se cerrara de golpe con la música callada, al
+volver a abrirla te devuelve el sonido. Y mientras haya algo bajado, la
+bandeja muestra **«Devolver el sonido»** para deshacerlo a mano.
+
+También se cambia en Ajustes → Audio → «Mientras dicto», o en `config.toml`
+con `al_dictar = "nada" | "atenuar" | "silenciar"`.
+
 ## Lo dicho no se pierde
 
 Tres redes, de la más fina a la más gruesa:

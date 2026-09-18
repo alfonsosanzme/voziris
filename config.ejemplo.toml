@@ -29,6 +29,7 @@ buffer_previo_ms = 500           # A3: audio conservado ANTES de pulsar el atajo
 silencio_corte_ms = 2000         # A2: silencio que cierra el dictado en modo «clavar». 1,2 s se sentía corto
 corte_por_silencio = true        # false: clavado hasta volver a pulsar, aunque te calles
 sonidos = true                   # A6
+al_dictar = "silenciar"          # qué pasa con la música mientras dictas: nada | atenuar | silenciar
 
 [motor.local]
 modelo = "nemo-parakeet-tdt-0.6b-v3"

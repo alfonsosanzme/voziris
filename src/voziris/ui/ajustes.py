@@ -375,6 +375,18 @@ class Ajustes:
             c.corte_por_silencio,
         )
         self._casilla(m, 6, "Sonidos de inicio, fin y error", "audio.sonidos", c.sonidos)
+        self._fila(m, 7, "Mientras dicto")
+        marco = ttk.Frame(m)
+        marco.grid(row=7, column=1, sticky="w")
+        var = self._var("audio.al_dictar", c.al_dictar)
+        for texto, valor in (
+            ("Silenciar lo demás", "silenciar"),
+            ("Bajarle el volumen", "atenuar"),
+            ("Nada", "nada"),
+        ):
+            ttk.Radiobutton(marco, text=texto, value=valor, variable=var).pack(
+                side="left", padx=(0, 10)
+            )
 
     def _pestana_motor(self, m: ttk.Frame) -> None:
         c = self._config
@@ -627,6 +639,7 @@ class Ajustes:
             nueva.audio.silencio_corte_ms = int(g("audio.silencio_corte_ms"))
             nueva.audio.corte_por_silencio = bool(g("audio.corte_por_silencio"))
             nueva.audio.sonidos = bool(g("audio.sonidos"))
+            nueva.audio.al_dictar = str(g("audio.al_dictar"))
             nueva.motor.local.modelo = str(g("motor.local.modelo")).strip()
             nueva.motor.local.carpeta = Path(str(g("motor.local.carpeta")).strip())
             nueva.motor.local.hilos = int(g("motor.local.hilos"))

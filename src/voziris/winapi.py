@@ -253,6 +253,24 @@ def ejecutable_en_primer_plano() -> str | None:
         _kernel32.CloseHandle(proceso)
 
 
+def nombre_de_proceso(pid: int) -> str | None:
+    """«chrome.exe» a partir de un PID, o None si el proceso no se deja mirar."""
+    _solo_windows()
+    if pid <= 0:
+        return None
+    proceso = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not proceso:
+        return None
+    try:
+        tamano = wintypes.DWORD(1024)
+        ruta = ctypes.create_unicode_buffer(tamano.value)
+        if not _kernel32.QueryFullProcessImageNameW(proceso, 0, ruta, ctypes.byref(tamano)):
+            return None
+        return ruta.value.replace("/", "\\").rsplit("\\", 1)[-1].lower() or None
+    finally:
+        _kernel32.CloseHandle(proceso)
+
+
 # --- ventanas sin foco (HUD) ----------------------------------------------------
 
 GWL_EXSTYLE = -20
