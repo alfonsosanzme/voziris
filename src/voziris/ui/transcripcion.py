@@ -225,9 +225,37 @@ def ejecutar_con_progreso(titulo: str, detalle: str, trabajo: Callable[[Progreso
     hilo.start()
     raiz.mainloop()
     hilo.join(timeout=2)
-    raiz.destroy()
-    if fallo:
-        raise fallo[0]
-    if not resultado:
-        raise TranscripcionCancelada("cancelado por el usuario")
-    return resultado[0]
+    try:
+        if fallo:
+            # El traceback del hilo retiene su marco, y el marco retiene la
+            # ventana: se corta aquí para que la raíz no quede en un ciclo.
+            raise fallo[0].with_traceback(fallo[0].__traceback__)
+        if not resultado:
+            raise TranscripcionCancelada("cancelado por el usuario")
+        return resultado[0]
+    finally:
+        _cerrar_raiz(raiz, ventana, fallo, resultado)
+
+
+def _cerrar_raiz(raiz: tk.Tk, *retenedores: object) -> None:
+    """Destruye la raíz y se asegura de que nadie la deje viva en un ciclo.
+
+    Tkinter tiene una trampa conocida: si un objeto `Tk` queda atrapado en un
+    ciclo de referencias, solo lo libera el recolector de basura, y si el
+    recolector salta en un hilo que no es el dueño del intérprete, Tcl entra
+    en pánico («async handler deleted by the wrong thread») y MATA el proceso
+    con un 0x80000003. Voziris tiene hilos de fondo permanentes, así que la
+    única forma segura es no dejar nunca basura de Tk: se sueltan las
+    referencias y se recoge aquí mismo, en el hilo dueño.
+
+    Ver bugs.python.org/issue39093 y python/cpython#113770.
+    """
+    import gc
+
+    with contextlib.suppress(tk.TclError):
+        raiz.destroy()
+    for retenedor in retenedores:
+        if isinstance(retenedor, list):
+            retenedor.clear()
+    del raiz, retenedores
+    gc.collect()
