@@ -59,8 +59,10 @@ EQUIVALENTES = {
     "ca": {"ca", "cat"}, "gl": {"gl", "glg"}, "eu": {"eu", "eus", "baq"},
 }
 """ffmpeg escribe ISO 639-2 («spa») y la configuración usa ISO 639-1 («es»)."""
-TITULOS_GENERICOS = frozenset({"soundhandler", "stereo", "mono", "core media audio", "audio"})
+TITULOS_GENERICOS = frozenset({"stereo", "mono", "core media audio", "audio"})
 """Nombres que ponen las cámaras y los móviles y que no dicen nada: se ignoran."""
+PREFIJOS_GENERICOS = ("soundhandle",)
+"""Igual, pero por el principio: Android escribe «SoundHandle» y ffmpeg «SoundHandler»."""
 
 
 class ArchivoNoLegible(VozirisError):
@@ -104,7 +106,19 @@ def pistas(ruta: Path) -> list[Pista]:
     except ArchivoNoLegible:
         raise
     except Exception as e:  # noqa: BLE001 — av.error.* son muchas clases distintas
-        raise ArchivoNoLegible(f"No se pudo abrir {ruta.name}: {e}") from e
+        raise ArchivoNoLegible(_por_que_no_se_abre(ruta, e)) from e
+
+
+def _por_que_no_se_abre(ruta: Path, error: Exception) -> str:
+    """El error de ffmpeg no se le enseña a nadie: dice «[Errno 1094995529]»."""
+    import av
+
+    if isinstance(error, av.error.InvalidDataError):
+        return (
+            f"{ruta.name} parece estar incompleto o dañado. "
+            "¿Se interrumpió la grabación o la descarga?"
+        )
+    return f"No se pudo abrir {ruta.name}: {error}"
 
 
 def _pistas_de(contenedor: Any) -> list[Pista]:
@@ -132,7 +146,10 @@ def _pistas_de(contenedor: Any) -> list[Pista]:
 def _titulo_de(flujo: Any) -> str | None:
     for clave in ("title", "TITLE", "name", "handler_name", "HANDLER_NAME"):
         valor = str(flujo.metadata.get(clave) or "").strip()
-        if valor and valor.lower() not in TITULOS_GENERICOS:
+        if not valor:
+            continue
+        minusculas = valor.lower()
+        if minusculas not in TITULOS_GENERICOS and not minusculas.startswith(PREFIJOS_GENERICOS):
             return valor
     return None
 
@@ -179,8 +196,7 @@ def aviso_de_pistas(disponibles: list[Pista], elegida: Pista, es_video: bool) ->
     cual = "El vídeo" if es_video else "El archivo"
     return (
         f"{cual} trae {len(disponibles)} pistas de audio y se ha transcrito solo la "
-        f"pista {elegida.n + 1}. Pistas: {lista}. Para usar otra, repítelo con "
-        f"--pista N; para sumarlas todas, con --pista todas."
+        f"pista {elegida.n + 1}. Pistas: {lista}. Para usar otra, repítelo con --pista N."
     )
 
 
@@ -225,9 +241,10 @@ def decodificar(
             elegidas, avisos = _que_pistas(disponibles, pista, idioma, es_video, ruta)
             segundos = _segundos_de(contenedor, av)
             muestras = np.zeros(0, dtype=np.float32)
-            for pista_elegida in elegidas:
+            for orden, pista_elegida in enumerate(elegidas):
                 trozo = _decodificar_pista(
-                    contenedor, contenedor.streams.audio[pista_elegida.n], sr, av, segundos
+                    contenedor, contenedor.streams.audio[pista_elegida.n], sr, av, segundos,
+                    rebobinar=orden > 0,
                 )
                 # Se suma según llega: con «todas» en un vídeo doblado de horas,
                 # guardarlas para sumarlas al final serían varios GB de más.
@@ -237,14 +254,29 @@ def decodificar(
     except ArchivoNoLegible:
         raise
     except Exception as e:  # noqa: BLE001 — av.error.* son muchas clases distintas
-        raise ArchivoNoLegible(f"No se pudo decodificar {ruta.name}: {e}") from e
+        raise ArchivoNoLegible(_por_que_no_se_abre(ruta, e)) from e
     if not len(muestras):
         raise ArchivoNoLegible(f"{ruta.name} está vacío")
+    leidos = len(muestras) / sr
+    if segundos and leidos < segundos * 0.9:
+        # Media transcripción que parece entera es peor que ninguna: se dice.
+        avisos.append(
+            f"{ruta.name} parece estar incompleto: dice durar {_reloj(segundos)} y solo se han "
+            f"podido leer {_reloj(leidos)}. ¿Se cortó la grabación o la descarga?"
+        )
+        log.warning("%s: leídos %.0f s de los %.0f que dice la cabecera", ruta.name, leidos,
+                    segundos)
     log.info(
         "decodificado %s: %.1f s (%d pista(s) de %d)",
-        ruta.name, len(muestras) / sr, len(elegidas), len(disponibles),
+        ruta.name, leidos, len(elegidas), len(disponibles),
     )
     return Audio(muestras=muestras, sr=sr), avisos
+
+
+def _reloj(segundos: float) -> str:
+    minutos, seg = divmod(int(segundos), 60)
+    horas, minutos = divmod(minutos, 60)
+    return f"{horas}:{minutos:02d}:{seg:02d}" if horas else f"{minutos}:{seg:02d}"
 
 
 def _que_pistas(
@@ -264,7 +296,9 @@ def _que_pistas(
         if elegida is None:
             cuales = "; ".join(p.etiqueta for p in disponibles)
             raise ArchivoNoLegible(
-                f"{ruta.name} no tiene la pista {numero}. Tiene {len(disponibles)}: {cuales}"
+                f"{ruta.name} no tiene la pista {numero}. "
+                f"Tiene {len(disponibles)} "
+                f"{'pista' if len(disponibles) == 1 else 'pistas'} — {cuales}"
             )
         return [elegida], []
     elegida, motivo = elegir_pista(disponibles, idioma)
@@ -274,7 +308,8 @@ def _que_pistas(
 
 
 def _decodificar_pista(
-    contenedor: Any, flujo: Any, sr: int, av: Any, segundos: float | None = None
+    contenedor: Any, flujo: Any, sr: int, av: Any, segundos: float | None = None,
+    rebobinar: bool = False,
 ) -> np.ndarray:
     """El audio de una pista, en un solo array.
 
@@ -289,7 +324,11 @@ def _decodificar_pista(
     capacidad = int((segundos or 0) * sr * 1.02) + sr if segundos else 0
     salida = np.empty(capacidad, dtype=np.float32) if capacidad else np.empty(0, dtype=np.float32)
     usado = 0
-    contenedor.seek(0)
+    if rebobinar:
+        # Solo al pasar de una pista a la siguiente, que es cosa de «--pista
+        # todas». Rebobinar antes de la PRIMERA pierde audio en Matroska
+        # cuando el contenedor no arranca en cero.
+        contenedor.seek(0)
 
     def guardar(bloque: np.ndarray) -> None:
         nonlocal salida, usado

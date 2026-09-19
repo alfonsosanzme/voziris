@@ -496,7 +496,8 @@ def test_lo_que_se_dice_al_empezar_segun_lo_que_dure() -> None:
 
     assert _cuanto_queda(95.0) == "1:35 de audio. Transcribiendo…"
     largo = _cuanto_queda(3.31 * 3600)
-    assert largo.startswith("3:18:") and "tarda unos 66 minutos" in largo
+    # 6 veces más rápido que el audio: 3h18 -> 33 min (medido: 9,25x, se promete de más).
+    assert largo.startswith("3:18:") and "tarda unos 33 minutos" in largo
     assert "Puedes seguir a lo tuyo" in largo
 
 
@@ -569,3 +570,94 @@ def test_con_sonido_pero_sin_palabras_tambien_lo_dice(tmp_path: Path) -> None:
     r = grabaciones.transcribir_archivo(wav, MotorMudo(), "es", hablantes="1")
     assert not r.lineas
     assert any("aunque sí hay sonido" in a for a in r.avisos), r.avisos
+
+
+def _escribir_audio_largo(ruta: Path, segundos: float, sr: int = 44100) -> bytes:
+    """Un contenedor con `segundos` de tono. Devuelve los bytes, para poder cortarlos."""
+    import av
+
+    t = np.arange(int(sr * segundos)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        flujo = contenedor.add_stream("aac", rate=sr)
+        flujo.layout = "mono"
+        marco = av.AudioFrame.from_ndarray(voz.reshape(1, -1), format="fltp", layout="mono")
+        marco.sample_rate = sr
+        for paquete in flujo.encode(marco):
+            contenedor.mux(paquete)
+        for paquete in flujo.encode(None):
+            contenedor.mux(paquete)
+    return ruta.read_bytes()
+
+
+def test_un_archivo_cortado_a_medias_lo_dice(tmp_path: Path) -> None:
+    """Media transcripción que parece entera es peor que ninguna: tiene que avisar."""
+    entero = _escribir_audio_largo(tmp_path / "entero.mka", 20.0)
+    cortado = tmp_path / "cortado.mka"
+    cortado.write_bytes(entero[: len(entero) // 2])
+
+    audio, avisos = archivos.decodificar(cortado)
+    assert 8.0 < audio.duracion_s < 12.0  # se aprovecha lo que hay
+    assert any("incompleto" in a and "0:20" in a for a in avisos), avisos
+
+
+def test_un_archivo_roto_se_explica_con_palabras(tmp_path: Path) -> None:
+    """Sin esto sale «[Errno 1094995529] Invalid data found», que no dice nada."""
+    entero = _escribir_audio_largo(tmp_path / "entero.mp4", 5.0)
+    roto = tmp_path / "roto.mp4"
+    roto.write_bytes(entero[: len(entero) // 2])  # sin el índice del final
+
+    with pytest.raises(archivos.ArchivoNoLegible, match="incompleto o dañado"):
+        archivos.decodificar(roto)
+
+
+def test_el_nombre_que_pone_el_movil_no_cuenta_como_titulo() -> None:
+    """Android escribe «SoundHandle» y ffmpeg «SoundHandler»: ninguno dice nada."""
+
+    class FlujoFalso:
+        def __init__(self, nombre: str) -> None:
+            self.metadata = {"handler_name": nombre}
+
+    for generico in ("SoundHandle", "SoundHandler", "Stereo", "Core Media Audio"):
+        assert archivos._titulo_de(FlujoFalso(generico)) is None, generico
+    assert archivos._titulo_de(FlujoFalso("Micrófono de Alfonso")) == "Micrófono de Alfonso"
+
+
+def test_una_pista_que_no_existe_no_se_numera_dos_veces(tmp_path: Path) -> None:
+    mp4 = _escribir_video(tmp_path / "charla.mp4", segundos=1.0)
+    with pytest.raises(archivos.ArchivoNoLegible) as fallo:
+        archivos.decodificar(mp4, pista=9)
+    mensaje = str(fallo.value)
+    assert "no tiene la pista 9" in mensaje
+    assert "Tiene 1 pista" in mensaje and "Tiene 1: 1:" not in mensaje
+
+
+def test_un_trozo_sin_voz_no_cuenta_como_cero_milisegundos() -> None:
+    """El motor ya ha pasado el audio por el modelo: ese tiempo es real y sale en el .md."""
+    import time as reloj
+
+    from voziris.grabaciones import _transcribir_trozo
+
+    class MotorLento:
+        nombre = "lento"
+
+        def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
+            reloj.sleep(0.05)
+            raise TranscripcionFallida("no se oyó nada")
+
+    _texto, ms, _motor = _transcribir_trozo(MotorLento(), np.zeros(SR, dtype=np.float32), "es")
+    assert ms >= 40, ms
+
+
+def test_si_nadie_responde_no_se_dice_un_nombre_interno() -> None:
+    from voziris.grabaciones import _nombre_motor
+
+    class Selector:
+        nombre = "selector"
+
+    class Local:
+        nombre = "local"
+
+    assert _nombre_motor(set(), Selector()) == "sin respuesta"
+    assert _nombre_motor(set(), Local()) == "local"  # ese sí dice algo
+    assert _nombre_motor({"local"}, Selector()) == "local"

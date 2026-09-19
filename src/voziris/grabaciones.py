@@ -49,8 +49,12 @@ Medido con diálogos de dos voces: dos horas de audio (439 MB) llegan a un pico
 de 4,9 GB. No se puede evitar desde aquí — lo pide la biblioteca — así que lo
 que se hace es mirar antes si cabe.
 """
-MEMORIA_BASE_HABLANTES_MB = 900.0
-"""Lo que ya ocupan el motor y los dos modelos de voces antes de empezar."""
+MEMORIA_BASE_HABLANTES_MB = 1100.0
+"""Lo que ya ocupan el motor y los dos modelos de voces antes de empezar.
+
+Medido sobre vídeos reales: el pico del proceso fue 1226 MB con un audio de
+15 MB, o sea unos 1100 de base. Antes ponía 900 y se quedaba corto.
+"""
 RMS_DE_SILENCIO = 0.005
 """Por debajo de esto no hay voz que valga: es silencio o poco más que ruido de fondo."""
 DURACION_RIDICULA_S = 0.5
@@ -59,8 +63,13 @@ MARGEN_MEMORIA_MB = 500.0
 """Lo que se deja libre para el resto del equipo: no se le llena la RAM al usuario."""
 LARGO_PARA_AVISAR_S = 20 * 60
 """A partir de aquí se dice cuánto va a tardar: una reunión larga son decenas de minutos."""
-VECES_MAS_RAPIDO_QUE_EL_AUDIO = 3.0
-"""Estimación prudente del motor local en este tipo de equipo (medido: entre 2 y 4)."""
+VECES_MAS_RAPIDO_QUE_EL_AUDIO = 6.0
+"""Cuántas veces más rápido que el audio va el motor local, para decir la espera.
+
+Medido en el portátil del cliente (8 núcleos): 9,25 veces. Se usa 6 para no
+quedarse corto en un equipo más flojo o con el ventilador bajado: vale más
+prometer de más y terminar antes.
+"""
 
 Progreso = Callable[[str, float | None], None]
 
@@ -170,10 +179,15 @@ def _transcribir_trozo(
     """(texto, ms, motor que respondió). Cada trozo se normaliza por su cuenta: en
     una llamada, la voz de enfrente llega mucho más baja que la propia y con la
     normalización global se pierde."""
+    t0 = time.perf_counter()
     try:
         t = motor.transcribir(Audio(muestras=normalizar(np.ascontiguousarray(muestras))), idioma)
     except TranscripcionFallida:
-        return "", 0, ""
+        # El motor ya ha pasado el audio por el modelo y no ha sacado texto: ese
+        # tiempo es real y se cuenta, o la cifra del .md miente. Medido con un
+        # vídeo de 31 min: 43 de 68 trozos salieron sin texto y costaron 106 s
+        # que se daban por cero, sobre 170 s reales.
+        return "", int((time.perf_counter() - t0) * 1000), ""
     return t.texto.strip(), t.ms_proceso, t.motor
 
 
@@ -245,10 +259,19 @@ def transcribir_varias_voces(
     return Resultado(lineas, audio.duracion_s, cuantos, _nombre_motor(motores, motor), ms)
 
 
+NOMBRE_INTERNO_DEL_SELECTOR = "selector"
+
+
 def _nombre_motor(vistos: set[str], motor: MotorSTT) -> str:
     """«local», «api:groq» o «api:groq+local» si el selector cayó al respaldo a medias."""
     nombres = sorted(n for n in vistos if n)
-    return "+".join(nombres) if nombres else motor.nombre
+    if nombres:
+        return "+".join(nombres)
+    if motor.nombre == NOMBRE_INTERNO_DEL_SELECTOR:
+        # Ningún trozo dio texto, así que nadie dijo su nombre. Antes salía
+        # «motor selector» en la cabecera del .md, que no quiere decir nada.
+        return "sin respuesta"
+    return motor.nombre
 
 
 # --- de archivo a Markdown -------------------------------------------------------------------
