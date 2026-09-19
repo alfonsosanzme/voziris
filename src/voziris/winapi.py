@@ -153,6 +153,8 @@ if ES_WINDOWS:
         wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
     )
     _kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    _kernel32.GlobalMemoryStatusEx.argtypes = (ctypes.c_void_p,)
+    _kernel32.GlobalMemoryStatusEx.restype = wintypes.BOOL
     _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     _kernel32.CloseHandle.restype = wintypes.BOOL
 
@@ -269,6 +271,35 @@ def nombre_de_proceso(pid: int) -> str | None:
         return ruta.value.replace("/", "\\").rsplit("\\", 1)[-1].lower() or None
     finally:
         _kernel32.CloseHandle(proceso)
+
+
+class _EstadoMemoria(ctypes.Structure):
+    _fields_ = (
+        ("dwLength", wintypes.DWORD),
+        ("dwMemoryLoad", wintypes.DWORD),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    )
+
+
+def memoria_libre_mb() -> float | None:
+    """RAM física libre ahora mismo, en MB. None si no se puede saber.
+
+    Sirve para decidir antes de empezar, no para afinar: lo que se evita es
+    arrancar un trabajo de media hora que va a morir por falta de memoria.
+    """
+    if not ES_WINDOWS:
+        return None
+    estado = _EstadoMemoria()
+    estado.dwLength = ctypes.sizeof(estado)
+    if not _kernel32.GlobalMemoryStatusEx(ctypes.byref(estado)):
+        return None
+    return float(estado.ullAvailPhys) / 2**20
 
 
 # --- ventanas sin foco (HUD) ----------------------------------------------------

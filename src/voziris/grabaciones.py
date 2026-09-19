@@ -25,8 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
-from voziris import archivos
-from voziris.audio.captura import normalizar
+from voziris import archivos, winapi
+from voziris.audio.captura import _rms, normalizar
 from voziris.errores import TranscripcionFallida
 from voziris.hablantes import SeparadorHablantes
 from voziris.motores.base import MotorSTT
@@ -42,6 +42,42 @@ TROZO_MINIMO_S = 0.8
 """Una intervención más corta no da texto fiable (el motor se inventa un «Yeah»)."""
 PAUSA_DE_PARRAFO_S = 1.5
 """En una sola voz, un silencio así separa párrafos."""
+VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES = 11
+"""sherpa-onnx reserva unas once veces el tamaño del audio, y de golpe, al final.
+
+Medido con diálogos de dos voces: dos horas de audio (439 MB) llegan a un pico
+de 4,9 GB. No se puede evitar desde aquí — lo pide la biblioteca — así que lo
+que se hace es mirar antes si cabe.
+"""
+MEMORIA_BASE_HABLANTES_MB = 1100.0
+"""Lo que ya ocupan el motor y los dos modelos de voces antes de empezar.
+
+Medido sobre vídeos reales: el pico del proceso fue 1226 MB con un audio de
+15 MB, o sea unos 1100 de base. Antes ponía 900 y se quedaba corto.
+"""
+RMS_DE_SILENCIO = 0.005
+"""Por debajo de esto no hay voz que valga: es silencio o poco más que ruido de fondo."""
+DURACION_RIDICULA_S = 0.5
+"""Un archivo más corto que esto no es una grabación: algo salió mal al abrirlo."""
+MARGEN_MEMORIA_MB = 500.0
+"""Lo que se deja libre para el resto del equipo: no se le llena la RAM al usuario."""
+LARGO_PARA_AVISAR_S = 20 * 60
+"""A partir de aquí se dice cuánto va a tardar: una reunión larga son decenas de minutos."""
+VECES_MAS_RAPIDO_SEPARANDO = 2.0
+"""Igual, pero cuando además hay que distinguir voces, que es lo caro.
+
+Medido de punta a punta: la ruta con hablantes va 2,75 veces más rápido que
+el audio, frente a las 9,25 de la ruta simple. Es la ruta por defecto de la
+bandeja y del botón derecho, así que con el número de abajo el aviso se
+quedaba corto justo donde más se espera.
+"""
+VECES_MAS_RAPIDO_QUE_EL_AUDIO = 6.0
+"""Cuántas veces más rápido que el audio va el motor local, para decir la espera.
+
+Medido en el portátil del cliente (8 núcleos): 9,25 veces. Se usa 6 para no
+quedarse corto en un equipo más flojo o con el ventilador bajado: vale más
+prometer de más y terminar antes.
+"""
 
 Progreso = Callable[[str, float | None], None]
 
@@ -78,9 +114,7 @@ def trocear(
     if n <= maximo:
         return [(0, n)] if n else []
     marco = sr // 50  # 20 ms
-    energia = np.sqrt(
-        np.mean(np.square(muestras[: n - n % marco].reshape(-1, marco)), axis=1)
-    )
+    energia = _energia_por_marcos(muestras[: n - n % marco], marco)
     cortes: list[tuple[int, int]] = []
     inicio = 0
     margen = int(BUSQUEDA_DE_CORTE_S * sr)
@@ -131,16 +165,37 @@ def parece_relleno(texto: str, idioma: str) -> bool:
     return not any(p in PALABRAS_FRECUENTES_ES for p in palabras)
 
 
+def _energia_por_marcos(muestras: np.ndarray, marco: int) -> np.ndarray:
+    """Valor eficaz de cada marco de 20 ms, por bloques para no duplicar el audio.
+
+    Elevar al cuadrado el audio entero de una vez cuesta otro tanto de memoria,
+    y con un vídeo largo eso es casi un giga de más para nada.
+    """
+    marcos = len(muestras) // marco
+    energia = np.empty(marcos, dtype=np.float32)
+    por_bloque = max(1, (1 << 20) // marco)
+    for i in range(0, marcos, por_bloque):
+        cuantos = min(por_bloque, marcos - i)
+        vista = muestras[i * marco : (i + cuantos) * marco].reshape(cuantos, marco)
+        energia[i : i + cuantos] = np.sqrt(np.mean(np.square(vista, dtype=np.float32), axis=1))
+    return energia
+
+
 def _transcribir_trozo(
     motor: MotorSTT, muestras: np.ndarray, idioma: str
 ) -> tuple[str, int, str]:
     """(texto, ms, motor que respondió). Cada trozo se normaliza por su cuenta: en
     una llamada, la voz de enfrente llega mucho más baja que la propia y con la
     normalización global se pierde."""
+    t0 = time.perf_counter()
     try:
         t = motor.transcribir(Audio(muestras=normalizar(np.ascontiguousarray(muestras))), idioma)
     except TranscripcionFallida:
-        return "", 0, ""
+        # El motor ya ha pasado el audio por el modelo y no ha sacado texto: ese
+        # tiempo es real y se cuenta, o la cifra del .md miente. Medido con un
+        # vídeo de 31 min: 43 de 68 trozos salieron sin texto y costaron 106 s
+        # que se daban por cero, sobre 170 s reales.
+        return "", int((time.perf_counter() - t0) * 1000), ""
     return t.texto.strip(), t.ms_proceso, t.motor
 
 
@@ -178,8 +233,10 @@ def transcribir_varias_voces(
     al_progresar: Progreso | None = None,
 ) -> Resultado:
     # La separación sí va con el audio normalizado entero: las huellas de voz
-    # salen más estables (medido en VOZ-71) y así todas se calculan igual.
-    muestras = normalizar(audio.muestras)
+    # salen más estables (medido en VOZ-71) y así todas se calculan igual. Se
+    # normaliza sobre el mismo array: quien llama viene de `decodificar` y no
+    # lo vuelve a mirar, y con un vídeo largo la copia serían cientos de MB.
+    muestras = normalizar(audio.muestras, en_sitio=True)
     intervenciones = separador.separar(Audio(muestras=muestras, sr=audio.sr), hablantes)
     lineas: list[Linea] = []
     ms = 0
@@ -210,10 +267,20 @@ def transcribir_varias_voces(
     return Resultado(lineas, audio.duracion_s, cuantos, _nombre_motor(motores, motor), ms)
 
 
+NOMBRE_INTERNO_DEL_SELECTOR = "selector"
+
+
 def _nombre_motor(vistos: set[str], motor: MotorSTT) -> str:
     """«local», «api:groq» o «api:groq+local» si el selector cayó al respaldo a medias."""
     nombres = sorted(n for n in vistos if n)
-    return "+".join(nombres) if nombres else motor.nombre
+    if nombres:
+        return "+".join(nombres)
+    if motor.nombre == NOMBRE_INTERNO_DEL_SELECTOR:
+        # Ningún trozo dio texto, así que ninguno dijo su nombre, y el del
+        # selector es interno: antes que nombrar a quien no sabemos, no se
+        # nombra a nadie. Quien escribe la cabecera se salta el hueco.
+        return ""
+    return motor.nombre
 
 
 # --- de archivo a Markdown -------------------------------------------------------------------
@@ -226,30 +293,121 @@ def transcribir_archivo(
     hablantes: str = "auto",
     separador: SeparadorHablantes | None = None,
     al_progresar: Progreso | None = None,
+    pista: int | str = "auto",
 ) -> Resultado:
-    """`hablantes`: "1" una voz, "auto" varias sin saber cuántas, o un número."""
+    """De una grabación o un vídeo al `Resultado` que se vuelca en Markdown.
+
+    `hablantes`: "1" una voz, "auto" varias sin saber cuántas, o un número.
+    `pista`: cuál de las de audio, si el archivo trae varias (ver `archivos`).
+    """
     if al_progresar:
         al_progresar(f"Abriendo {ruta.name}…", None)
-    audio = archivos.decodificar(ruta)
-    if hablantes == "1" or separador is None:
+    audio, avisos = archivos.decodificar(ruta, pista=pista, idioma=idioma)
+    sin_memoria = ""
+    if hablantes != "1" and separador is not None:
+        libre = winapi.memoria_libre_mb()
+        if libre is not None and not caben_los_hablantes(audio, libre):
+            sin_memoria = _aviso_sin_memoria(audio, libre)
+            log.warning("sin memoria para separar hablantes: %s", sin_memoria)
+    una_voz = hablantes == "1" or separador is None or bool(sin_memoria)
+    if al_progresar:
+        # Se mira primero si se van a separar voces: la espera es muy distinta.
+        al_progresar(_cuanto_queda(audio.duracion_s, separando=not una_voz), None)
+    if una_voz or separador is None:  # lo segundo ya va en una_voz: es para el comprobador
         resultado = transcribir_una_voz(audio, motor, idioma, al_progresar)
         if hablantes != "1" and separador is None:
             resultado.avisos.append("Sin separación de hablantes: los modelos no están disponibles")
-        return resultado
-    cuantos = None if hablantes == "auto" else max(1, int(hablantes))
-    return transcribir_varias_voces(audio, motor, separador, idioma, cuantos, al_progresar)
+        if sin_memoria:
+            resultado.avisos.append(sin_memoria)
+    else:
+        cuantos = None if hablantes == "auto" else max(1, int(hablantes))
+        resultado = transcribir_varias_voces(
+            audio, motor, separador, idioma, cuantos, al_progresar
+        )
+    # Los avisos de la decodificación (varias pistas, pistas sumadas) van
+    # los primeros: son lo que más cambia cómo hay que leer el resultado.
+    resultado.avisos[:0] = avisos
+    if not resultado.lineas:
+        resultado.avisos.append(_por_que_no_hay_texto(audio, ruta, avisos))
+    return resultado
+
+
+def _por_que_no_hay_texto(audio: Audio, ruta: Path, avisos: list[str]) -> str:
+    """Un Markdown vacío sin explicación es lo peor que puede pasar: aquí se explica.
+
+    Pasa de verdad — una pista muda elegida por defecto, un vídeo con el audio
+    en silencio, un archivo que se abrió pero no traía casi nada — y sin esto
+    el usuario solo ve un archivo con el título y nada debajo.
+    """
+    if audio.duracion_s < DURACION_RIDICULA_S:
+        return (
+            f"No se ha sacado nada: de {ruta.name} solo se pudieron leer "
+            f"{audio.duracion_s:.2f} segundos de sonido. Puede que el archivo esté a medias."
+        )
+    if _rms(audio.muestras) < RMS_DE_SILENCIO:
+        callada = " La pista que se ha usado está muda; prueba con otra (--pista N)." if any(
+            "pistas de audio" in a for a in avisos
+        ) else ""
+        return (
+            "No se ha reconocido ninguna palabra: el audio está en silencio o casi."
+            + callada
+        )
+    return (
+        "No se ha reconocido ninguna palabra, aunque sí hay sonido. Puede ser música, "
+        "ruido, o voz en otro idioma del configurado."
+    )
+
+
+def caben_los_hablantes(audio: Audio, libre_mb: float | None) -> bool:
+    """¿Hay memoria para separar hablantes en este audio, o va a morir a medias?
+
+    Vale más decirlo antes y transcribir sin separar que pelearse media hora
+    con un vídeo y acabar sin nada.
+    """
+    if libre_mb is None:
+        return True  # sin dato, se intenta: es lo que se hacía siempre
+    hacen_falta = (
+        audio.muestras.nbytes * VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES / 2**20
+        + MEMORIA_BASE_HABLANTES_MB
+    )
+    return hacen_falta + MARGEN_MEMORIA_MB <= libre_mb
+
+
+def _aviso_sin_memoria(audio: Audio, libre_mb: float) -> str:
+    hacen_falta = (
+        audio.muestras.nbytes * VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES / 2**20
+        + MEMORIA_BASE_HABLANTES_MB
+    )
+    minutos = int(audio.duracion_s // 60)
+    return (
+        f"Transcrito sin separar a los hablantes: son {minutos} minutos de audio y "
+        f"distinguir las voces pediría unos {hacen_falta / 1024:.1f} GB de memoria, "
+        f"con {libre_mb / 1024:.1f} GB libres. Cierra algún programa y repítelo si "
+        "los necesitas, o pártelo en trozos más cortos."
+    )
+
+
+def _cuanto_queda(duracion_s: float, separando: bool = False) -> str:
+    """Lo primero que se lee en la ventana de progreso: qué hay y cuánto va a costar."""
+    minutos, segundos = divmod(int(duracion_s), 60)
+    horas, minutos = divmod(minutos, 60)
+    largo = f"{horas}:{minutos:02d}:{segundos:02d}" if horas else f"{minutos}:{segundos:02d}"
+    if duracion_s < LARGO_PARA_AVISAR_S:
+        return f"{largo} de audio. Transcribiendo…"
+    veces = VECES_MAS_RAPIDO_SEPARANDO if separando else VECES_MAS_RAPIDO_QUE_EL_AUDIO
+    espera = max(1, round(duracion_s / veces / 60))
+    return f"{largo} de audio: esto tarda unos {espera} minutos. Puedes seguir a lo tuyo."
 
 
 def render_markdown(resultado: Resultado, titulo: str, momento: datetime) -> str:
     minutos = int(resultado.duracion_s) // 60
     segundos = int(resultado.duracion_s) % 60
-    cabecera = [
-        f"# {titulo}",
-        "",
-        f"Transcrito el {momento:%Y-%m-%d %H:%M} · duración {minutos}:{segundos:02d} · "
-        + (f"{resultado.hablantes} hablantes · " if resultado.hablantes > 1 else "")
-        + f"motor {resultado.motor}",
-    ]
+    partes = [f"Transcrito el {momento:%Y-%m-%d %H:%M}", f"duración {minutos}:{segundos:02d}"]
+    if resultado.hablantes > 1:
+        partes.append(f"{resultado.hablantes} hablantes")
+    if resultado.motor:
+        partes.append(f"motor {resultado.motor}")
+    cabecera = [f"# {titulo}", "", " · ".join(partes)]
     for aviso in resultado.avisos:
         cabecera.append(f"> {aviso}")
     cabecera.append("")

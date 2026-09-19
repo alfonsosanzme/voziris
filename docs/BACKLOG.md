@@ -377,3 +377,25 @@ se proceda con el dictado».
 - [x] Archivo de rescate atómico y acumulativo: si el proceso muere con el audio bajado, al arrancar se devuelve. Si no se puede escribir, no se baja nada. Si queda algo sin devolver, el rescate se conserva y la bandeja ofrece «Devolver el sonido».
 - [x] Nada de esto corre en el hilo del atajo ni fuera del hilo del mezclador, que es el único que habla con COM: el tono de inicio no se retrasa y no se sueltan punteros desde otro hilo.
 - [x] Se cambia desde la bandeja («Mientras dicto») y desde Ajustes → Audio.
+
+## H10 · Vídeos — 0,5 jornadas
+
+Pedido por el cliente: «añadir transcripción como en las grabaciones pero con
+vídeo. Vídeos en mp4».
+
+### VOZ-77 · Transcribir vídeos, y elegir bien la pista de audio
+**Archivos:** `archivos.py`, `grabaciones.py`, `__main__.py`, `ui/transcripcion.py`, `ui/bandeja.py`
+
+**Criterios de aceptación**
+- [x] Un vídeo entra igual que una grabación: se le saca la pista de sonido y sigue el mismo camino. El .mp4 ya funcionaba; lo que faltaba era la lista y las pistas.
+- [x] Formatos de vídeo ofrecidos: mp4, mkv, mov, avi, webm, m4v, wmv, mpg, mpeg, mts, m2ts, 3gp. Comprobado que la rueda de PyAV del proyecto los abre todos.
+- [x] Fuera a propósito: las imágenes (ffmpeg las abre como vídeo de un fotograma y meterían Voziris en el botón derecho de todas las fotos) y .ts, que para quien programa es TypeScript.
+- [x] Con varias pistas se transcribe UNA, nunca la suma: se descartan comentario y audiodescripción, manda el idioma configurado si hay doblaje, luego la marcada como principal, luego la primera.
+- [x] El Markdown avisa de cuántas pistas había y de cuál se usó, y dice cómo repetirlo con otra.
+- [x] `--pista auto|N|todas`. `todas` suma y avisa de que si las voces se solapan el texto saldrá entremezclado.
+- [x] Un vídeo sin sonido lo dice claro, no falla con un error técnico.
+- [x] Vídeos largos, medido con el más largo del equipo del cliente (3 h 18 min):
+  - el audio se reserva de una vez (727 MB en vez de 1455);
+  - `normalizar` y el cálculo de energía trabajan por trozos, con salida idéntica bit a bit y el doble de rápidos (1,7 GB menos con 4 h);
+  - la separación de hablantes pide unas 11 veces el audio de golpe (medido: 4,9 GB con 2 h), así que se comprueba contra la memoria libre y, si no cabe, se transcribe sin separar en lugar de morir a media hora de trabajo;
+  - la ventana de progreso dice cuánto dura y cuánto va a tardar.

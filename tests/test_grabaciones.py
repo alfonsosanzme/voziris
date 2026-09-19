@@ -220,7 +220,7 @@ def _escribir_wav(ruta: Path, segundos: float, sr: int = 48000) -> None:
 def test_decodificar_remuestrea_y_mezcla(tmp_path: Path) -> None:
     wav = tmp_path / "estereo48.wav"
     _escribir_wav(wav, 2.0)
-    audio = archivos.decodificar(wav)
+    audio, _avisos = archivos.decodificar(wav)
     assert audio.sr == SR and audio.muestras.dtype == np.float32
     assert abs(audio.duracion_s - 2.0) < 0.05
     assert 0.1 < float(np.abs(audio.muestras).max()) < 0.5
@@ -242,8 +242,60 @@ def test_decodificar_m4a_generado_con_pyav(tmp_path: Path) -> None:
             contenedor.mux(paquete)
         for paquete in flujo.encode(None):
             contenedor.mux(paquete)
-    audio = archivos.decodificar(m4a)
+    audio, _avisos = archivos.decodificar(m4a)
     assert 1.8 < audio.duracion_s < 2.3
+
+
+def _escribir_video(
+    ruta: Path, segundos: float = 2.0, sr: int = 44100, pistas: int = 1, con_audio: bool = True
+) -> Path:
+    """Un vídeo de verdad, con imagen y `pistas` pistas de audio. Como el de un móvil."""
+    import av
+
+    t = np.arange(int(sr * segundos)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        video = contenedor.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        flujos = []
+        for _ in range(pistas if con_audio else 0):
+            a = contenedor.add_stream("aac", rate=sr)
+            a.layout = "mono"
+            flujos.append(a)
+        for n in range(int(segundos * 10)):
+            imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+            for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                contenedor.mux(paquete)
+        for paquete in video.encode(None):
+            contenedor.mux(paquete)
+        for i, a in enumerate(flujos):
+            datos = voz if i == 0 else np.zeros_like(voz)
+            for inicio in range(0, len(datos), 1024):
+                bloque = datos[inicio : inicio + 1024].reshape(1, -1)
+                if not bloque.shape[1]:
+                    continue
+                cuadro = av.AudioFrame.from_ndarray(bloque, format="flt", layout="mono")
+                cuadro.sample_rate = sr
+                for paquete in a.encode(cuadro):
+                    contenedor.mux(paquete)
+            for paquete in a.encode(None):
+                contenedor.mux(paquete)
+    return ruta
+
+
+def test_decodificar_un_video_saca_su_audio(tmp_path: Path) -> None:
+    """Lo que pidió el cliente: un vídeo entra igual que una grabación (VOZ-77)."""
+    mp4 = _escribir_video(tmp_path / "reunion.mp4", segundos=2.0)
+    audio, _avisos = archivos.decodificar(mp4)
+    assert audio.sr == SR and audio.muestras.dtype == np.float32
+    assert 1.8 < audio.duracion_s < 2.3
+    assert float(np.abs(audio.muestras).max()) > 0.05  # trae sonido, no silencio
+
+
+def test_un_video_sin_sonido_lo_dice_claro(tmp_path: Path) -> None:
+    mudo = _escribir_video(tmp_path / "mudo.mp4", segundos=1.0, con_audio=False)
+    with pytest.raises(archivos.ArchivoNoLegible, match="sonido|audio"):
+        archivos.decodificar(mudo)
 
 
 def test_decodificar_errores(tmp_path: Path) -> None:
@@ -345,3 +397,437 @@ def test_preguntar_hablantes_se_ve_con_la_raiz_retirada() -> None:
     raiz.destroy()
     assert visto == [True]
     assert eleccion == "auto"
+
+
+# --- vídeos con varias pistas de audio (VOZ-77) ---------------------------------------
+
+
+def _pista(n: int, titulo=None, idioma=None, canales=1, default=False, secundaria=False):
+    from voziris.archivos import Pista
+
+    return Pista(n=n, titulo=titulo, idioma=idioma, canales=canales,
+                 predeterminada=default, secundaria=secundaria)
+
+
+def test_elegir_pista_cuando_hay_doblaje() -> None:
+    """Varios idiomas: manda el idioma que se va a transcribir, no el orden ni la marca."""
+    from voziris.archivos import elegir_pista
+
+    pistas = [
+        _pista(0, "English", "eng", 2, default=True),
+        _pista(1, "Español", "spa", 2),
+        _pista(2, "Français", "fra", 2),
+    ]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 1 and "spa" in motivo
+    # Sin idioma que case, se cae a la marcada como predeterminada.
+    elegida, motivo = elegir_pista(pistas, "pl")
+    assert elegida.n == 0 and "predeterminada" in motivo
+
+
+def test_elegir_pista_descarta_comentarios_y_audiodescripcion() -> None:
+    from voziris.archivos import elegir_pista
+
+    pistas = [
+        _pista(0, "Película", "spa", 2),
+        _pista(1, "Comentario del director", "spa", 2, secundaria=True),
+    ]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 0 and motivo == "única"
+
+
+def test_elegir_pista_sin_nada_que_la_distinga() -> None:
+    from voziris.archivos import elegir_pista
+
+    # OBS: micrófono y sonido del escritorio, sin marcas ni idiomas.
+    pistas = [_pista(0, "Mic/Aux", canales=1), _pista(1, "Desktop Audio", canales=2)]
+    elegida, motivo = elegir_pista(pistas, "es")
+    assert elegida.n == 0 and motivo == "es la primera"
+    # Una pista sin canales no cuenta.
+    elegida, _ = elegir_pista([_pista(0, canales=0), _pista(1, "buena", canales=2)], "es")
+    assert elegida.n == 1
+
+
+def test_aviso_de_pistas_dice_cual_y_como_cambiarla() -> None:
+    from voziris.archivos import aviso_de_pistas
+
+    pistas = [_pista(0, "Español", "spa"), _pista(1, "English", "eng")]
+    aviso = aviso_de_pistas(pistas, pistas[0], es_video=True)
+    assert aviso is not None
+    assert "2 pistas" in aviso and "pista 1" in aviso
+    assert "**1: Español · spa**" in aviso and "2: English · eng" in aviso
+    assert "--pista" in aviso
+    assert aviso_de_pistas(pistas[:1], pistas[0], es_video=True) is None
+
+
+def test_video_con_dos_pistas_avisa_y_se_puede_elegir(tmp_path: Path) -> None:
+    """De punta a punta con un vídeo de dos pistas hecho aquí mismo."""
+    mp4 = _escribir_video(tmp_path / "dos.mp4", segundos=1.5, pistas=2)
+    disponibles = archivos.pistas(mp4)
+    assert len(disponibles) == 2
+
+    audio, avisos = archivos.decodificar(mp4, idioma="es")
+    assert audio.duracion_s > 1.0
+    assert len(avisos) == 1 and "2 pistas" in avisos[0]
+
+    # La segunda pista de _escribir_video está en silencio: se nota al pedirla.
+    silencio, _ = archivos.decodificar(mp4, pista=2)
+    assert float(np.abs(silencio.muestras).max()) < 0.01
+    voz, _ = archivos.decodificar(mp4, pista=1)
+    assert float(np.abs(voz.muestras).max()) > 0.05
+
+    # Sumarlas avisa de que puede salir entremezclado.
+    _todas, avisos_todas = archivos.decodificar(mp4, pista="todas")
+    assert any("sumado" in a for a in avisos_todas)
+
+    with pytest.raises(archivos.ArchivoNoLegible, match="no tiene la pista 7"):
+        archivos.decodificar(mp4, pista=7)
+
+
+def test_formatos_incluyen_los_videos_que_trae_la_gente() -> None:
+    for ext in (".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".mts"):
+        assert ext in archivos.FORMATOS_VIDEO, ext
+    assert ".m4a" in archivos.FORMATOS_AUDIO
+    assert set(archivos.FORMATOS) == set(archivos.FORMATOS_AUDIO) | set(archivos.FORMATOS_VIDEO)
+
+
+def test_lo_que_se_dice_al_empezar_segun_lo_que_dure() -> None:
+    from voziris.grabaciones import _cuanto_queda
+
+    assert _cuanto_queda(95.0) == "1:35 de audio. Transcribiendo…"
+    largo = _cuanto_queda(3.31 * 3600)
+    # 6 veces más rápido que el audio: 3h18 -> 33 min (medido: 9,25x, se promete de más).
+    assert largo.startswith("3:18:") and "tarda unos 33 minutos" in largo
+    assert "Puedes seguir a lo tuyo" in largo
+
+
+def test_si_no_hay_memoria_no_se_separan_hablantes() -> None:
+    """Más vale decirlo antes que pelearse media hora con un vídeo y morir a medias."""
+    from voziris.grabaciones import caben_los_hablantes
+
+    media_hora = Audio(muestras=np.zeros(30 * 60 * SR, dtype=np.float32))
+    tres_horas = Audio(muestras=np.zeros(int(3.3 * 3600 * SR), dtype=np.float32))
+    assert caben_los_hablantes(media_hora, libre_mb=8000)
+    assert not caben_los_hablantes(tres_horas, libre_mb=8000)
+    assert caben_los_hablantes(tres_horas, libre_mb=14000)
+    assert caben_los_hablantes(tres_horas, libre_mb=None)  # sin dato, se intenta
+
+
+def test_un_video_largo_se_transcribe_sin_hablantes_en_vez_de_morir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import grabaciones, winapi
+
+    monkeypatch.setattr(winapi, "memoria_libre_mb", lambda: 300.0)  # equipo sin memoria
+    wav = tmp_path / "larga.wav"
+    _escribir_wav(wav, 3.0)
+
+    class SeparadorQueNoDeberiaUsarse(hablantes.SeparadorHablantes):
+        def __init__(self) -> None:
+            super().__init__(Path("no-importa"))
+
+        def disponible(self) -> bool:
+            return True
+
+        def separar(self, audio: Audio, hablantes_: int | None = None) -> list[Intervencion]:
+            raise AssertionError("no debería intentar separar sin memoria")
+
+    r = grabaciones.transcribir_archivo(
+        wav, MotorFalso(), "es", hablantes="auto", separador=SeparadorQueNoDeberiaUsarse()
+    )
+    assert r.hablantes == 1
+    assert any("sin separar a los hablantes" in a for a in r.avisos)
+    assert any("GB" in a for a in r.avisos)
+
+
+class MotorMudo(MotorFalso):
+    """Como Parakeet cuando no oye palabras: no devuelve texto, lanza."""
+
+    def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
+        raise TranscripcionFallida("no se oyó nada")
+
+
+def test_un_archivo_mudo_dice_por_que_no_hay_texto(tmp_path: Path) -> None:
+    """Lo peor que puede pasar es un Markdown vacío sin explicación (VOZ-77)."""
+    import soundfile as sf
+
+    from voziris import grabaciones
+
+    mudo = tmp_path / "callado.wav"
+    sf.write(str(mudo), np.zeros(SR * 3, dtype=np.float32), SR)
+    r = grabaciones.transcribir_archivo(mudo, MotorMudo(), "es", hablantes="1")
+    assert not r.lineas
+    assert any("silencio" in a for a in r.avisos), r.avisos
+    md = r.markdown("callado", datetime(2026, 9, 19, 10, 0))
+    assert "silencio" in md
+
+
+def test_con_sonido_pero_sin_palabras_tambien_lo_dice(tmp_path: Path) -> None:
+    from voziris import grabaciones
+
+    wav = tmp_path / "musica.wav"
+    _escribir_wav(wav, 3.0)  # un tono: hay sonido de sobra
+    r = grabaciones.transcribir_archivo(wav, MotorMudo(), "es", hablantes="1")
+    assert not r.lineas
+    assert any("aunque sí hay sonido" in a for a in r.avisos), r.avisos
+
+
+def _escribir_audio_largo(ruta: Path, segundos: float, sr: int = 44100) -> bytes:
+    """Un contenedor con `segundos` de tono. Devuelve los bytes, para poder cortarlos."""
+    import av
+
+    t = np.arange(int(sr * segundos)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        flujo = contenedor.add_stream("aac", rate=sr)
+        flujo.layout = "mono"
+        marco = av.AudioFrame.from_ndarray(voz.reshape(1, -1), format="fltp", layout="mono")
+        marco.sample_rate = sr
+        for paquete in flujo.encode(marco):
+            contenedor.mux(paquete)
+        for paquete in flujo.encode(None):
+            contenedor.mux(paquete)
+    return ruta.read_bytes()
+
+
+def test_un_archivo_cortado_a_medias_lo_dice(tmp_path: Path) -> None:
+    """Media transcripción que parece entera es peor que ninguna: tiene que avisar."""
+    entero = _escribir_audio_largo(tmp_path / "entero.mka", 20.0)
+    cortado = tmp_path / "cortado.mka"
+    cortado.write_bytes(entero[: len(entero) // 2])
+
+    audio, avisos = archivos.decodificar(cortado)
+    assert 8.0 < audio.duracion_s < 12.0  # se aprovecha lo que hay
+    assert any("incompleto" in a and "0:20" in a for a in avisos), avisos
+
+
+def test_un_archivo_roto_se_explica_con_palabras(tmp_path: Path) -> None:
+    """Sin esto sale «[Errno 1094995529] Invalid data found», que no dice nada."""
+    entero = _escribir_audio_largo(tmp_path / "entero.mp4", 5.0)
+    roto = tmp_path / "roto.mp4"
+    roto.write_bytes(entero[: len(entero) // 2])  # sin el índice del final
+
+    with pytest.raises(archivos.ArchivoNoLegible, match="incompleto o dañado"):
+        archivos.decodificar(roto)
+
+
+def test_el_nombre_que_pone_el_movil_no_cuenta_como_titulo() -> None:
+    """Android escribe «SoundHandle» y ffmpeg «SoundHandler»: ninguno dice nada."""
+
+    class FlujoFalso:
+        def __init__(self, nombre: str) -> None:
+            self.metadata = {"handler_name": nombre}
+
+    for generico in ("SoundHandle", "SoundHandler", "Stereo", "Core Media Audio"):
+        assert archivos._titulo_de(FlujoFalso(generico)) is None, generico
+    assert archivos._titulo_de(FlujoFalso("Micrófono de Alfonso")) == "Micrófono de Alfonso"
+
+
+def test_una_pista_que_no_existe_no_se_numera_dos_veces(tmp_path: Path) -> None:
+    mp4 = _escribir_video(tmp_path / "charla.mp4", segundos=1.0)
+    with pytest.raises(archivos.ArchivoNoLegible) as fallo:
+        archivos.decodificar(mp4, pista=9)
+    mensaje = str(fallo.value)
+    assert "no tiene la pista 9" in mensaje
+    assert "Tiene 1 pista" in mensaje and "Tiene 1: 1:" not in mensaje
+
+
+def test_un_trozo_sin_voz_no_cuenta_como_cero_milisegundos() -> None:
+    """El motor ya ha pasado el audio por el modelo: ese tiempo es real y sale en el .md."""
+    import time as reloj
+
+    from voziris.grabaciones import _transcribir_trozo
+
+    class MotorLento:
+        nombre = "lento"
+
+        def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
+            reloj.sleep(0.05)
+            raise TranscripcionFallida("no se oyó nada")
+
+    _texto, ms, _motor = _transcribir_trozo(MotorLento(), np.zeros(SR, dtype=np.float32), "es")
+    assert ms >= 40, ms
+
+
+def test_si_nadie_responde_no_se_dice_un_nombre_interno() -> None:
+    """Y el hueco no deja un separador suelto ni una contradicción en la cabecera."""
+    from voziris.grabaciones import _nombre_motor
+
+    class Selector:
+        nombre = "selector"
+
+    class Local:
+        nombre = "local"
+
+    assert _nombre_motor(set(), Selector()) == ""  # no se nombra a quien no se sabe
+    assert _nombre_motor(set(), Local()) == "local"  # ese sí dice algo
+    assert _nombre_motor({"local"}, Selector()) == "local"
+
+    mudo = Resultado([], 30.0, 1, "", 5191)
+    cabecera = render_markdown(mudo, "callado", datetime(2026, 9, 19, 10, 0)).splitlines()[2]
+    assert cabecera == "Transcrito el 2026-09-19 10:00 · duración 0:30"
+    assert "motor" not in cabecera and "· ·" not in cabecera
+
+
+def _escribir_desfasado(
+    ruta: Path, video_s: float, audio_s: float, desfase_s: float = 0.0, sr: int = 48000
+) -> Path:
+    """Un archivo SANO donde el sonido no ocupa todo el archivo.
+
+    Es lo que sale de OBS o de Teams cuando el micrófono entra tarde o se para
+    antes de cortar la grabación: la imagen dura más que la voz, y no falta
+    nada.
+    """
+    import fractions
+
+    import av
+
+    t = np.arange(int(sr * audio_s)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        video = None
+        if video_s:
+            video = contenedor.add_stream("libx264", rate=10)
+            video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        audio = contenedor.add_stream("aac", rate=sr)
+        audio.layout = "mono"
+        if video is not None:
+            for n in range(int(video_s * 10)):
+                imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+                for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                    contenedor.mux(paquete)
+            for paquete in video.encode(None):
+                contenedor.mux(paquete)
+        marco = av.AudioFrame.from_ndarray(voz.reshape(1, -1), format="fltp", layout="mono")
+        marco.sample_rate = sr
+        marco.pts = int(desfase_s * sr)
+        marco.time_base = fractions.Fraction(1, sr)
+        for paquete in audio.encode(marco):
+            contenedor.mux(paquete)
+        for paquete in audio.encode(None):
+            contenedor.mux(paquete)
+    return ruta
+
+
+@pytest.mark.parametrize("ext", [".mp4", ".mkv", ".mov"])
+def test_un_video_sano_con_el_micro_corto_no_se_llama_incompleto(tmp_path: Path, ext: str) -> None:
+    """El caso de OBS y Teams: la imagen dura más que la voz y no falta nada.
+
+    Acusar en falso a una grabación buena es peor que no avisar: el usuario no
+    tiene forma de comprobarlo y deja de fiarse de los avisos de verdad.
+    """
+    sano = _escribir_desfasado(tmp_path / f"clase{ext}", video_s=20.0, audio_s=10.0)
+    audio, avisos = archivos.decodificar(sano)
+    assert 9.0 < audio.duracion_s < 11.0
+    assert not [a for a in avisos if "incompleto" in a], avisos
+
+
+class _ContenedorEspia:
+    """Un contenedor de PyAV que apunta cada rebobinado. Delega todo lo demás."""
+
+    def __init__(self, real: object, seeks: list[object]) -> None:
+        self._real = real
+        self._seeks = seeks
+
+    def seek(self, donde: object, *resto: object, **opciones: object) -> object:
+        self._seeks.append(donde)
+        return self._real.seek(donde, *resto, **opciones)  # type: ignore[attr-defined]
+
+    def __getattr__(self, nombre: str) -> object:
+        return getattr(self._real, nombre)
+
+    def __enter__(self) -> _ContenedorEspia:
+        self._real.__enter__()  # type: ignore[attr-defined]
+        return self
+
+    def __exit__(self, *fallo: object) -> object:
+        return self._real.__exit__(*fallo)  # type: ignore[attr-defined]
+
+
+def _contar_rebobinados(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    import av
+
+    abrir = av.open
+    seeks: list[object] = []
+    monkeypatch.setattr(av, "open", lambda *a, **k: _ContenedorEspia(abrir(*a, **k), seeks))
+    return seeks
+
+
+def test_no_se_rebobina_antes_de_leer_la_primera_pista(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un contenedor recién abierto ya está al principio: rebobinarlo solo puede estropearlo.
+
+    Es el fallo que se coló una vez. Medido, un seek(0) de más se come los
+    primeros 30 ms en Matroska; en formatos con el índice al final puede
+    costar más. Como no hace falta para nada, no se hace.
+    """
+    seeks = _contar_rebobinados(monkeypatch)
+    mp4 = _escribir_video(tmp_path / "charla.mp4", segundos=1.5)
+    archivos.decodificar(mp4)
+    assert seeks == [], f"se rebobinó {len(seeks)} vez/veces sin necesidad"
+
+
+def _escribir_dos_voces(ruta: Path, hz_uno: int = 300, hz_dos: int = 1200) -> Path:
+    """Un vídeo con dos pistas de audio que suenan distinto, para poder distinguirlas."""
+    import av
+
+    sr, segundos = 44100, 1.5
+    t = np.arange(int(sr * segundos)) / sr
+    with av.open(str(ruta), "w") as contenedor:
+        video = contenedor.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        flujos = [contenedor.add_stream("aac", rate=sr) for _ in range(2)]
+        for flujo in flujos:
+            flujo.layout = "mono"
+        for n in range(int(segundos * 10)):
+            imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+            for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                contenedor.mux(paquete)
+        for paquete in video.encode(None):
+            contenedor.mux(paquete)
+        for flujo, hz in zip(flujos, (hz_uno, hz_dos), strict=True):
+            onda = (0.3 * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+            marco = av.AudioFrame.from_ndarray(onda.reshape(1, -1), format="fltp", layout="mono")
+            marco.sample_rate = sr
+            for paquete in flujo.encode(marco):
+                contenedor.mux(paquete)
+            for paquete in flujo.encode(None):
+                contenedor.mux(paquete)
+    return ruta
+
+
+def test_entre_una_pista_y_la_siguiente_si_se_rebobina(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La otra mitad del mismo arreglo: sin volver al principio, la segunda saldría vacía."""
+    seeks = _contar_rebobinados(monkeypatch)
+    mp4 = _escribir_dos_voces(tmp_path / "doblado.mp4")
+    una, _ = archivos.decodificar(mp4, pista=1)
+    assert seeks == [], "con una sola pista no hay nada que rebobinar"
+    todas, avisos = archivos.decodificar(mp4, pista="todas")
+    assert len(seeks) == 1, f"se esperaba un rebobinado entre las dos pistas, hubo {len(seeks)}"
+    # Cada pista lleva un tono distinto: si la segunda no hubiera entrado, el
+    # resultado sería exactamente el de la primera.
+    assert not np.array_equal(todas.muestras, una.muestras), "la segunda pista no entró"
+    assert abs(todas.duracion_s - una.duracion_s) < 0.3  # se suman, no se encadenan
+    assert any("sumado" in a for a in avisos), avisos
+
+
+def test_la_espera_que_se_anuncia_cuenta_con_separar_voces() -> None:
+    """Separar voces es la etapa cara: prometer lo mismo dejaría corto el aviso."""
+    from voziris.grabaciones import _cuanto_queda
+
+    hora = 3600.0
+    simple = _cuanto_queda(hora)
+    con_voces = _cuanto_queda(hora, separando=True)
+    assert "tarda unos 10 minutos" in simple, simple
+    assert "tarda unos 30 minutos" in con_voces, con_voces
+
+
+def test_un_archivo_de_menos_de_un_segundo_no_dice_cero(tmp_path: Path) -> None:
+    """«solo se han podido leer 0:00» se contradice con el texto que sale debajo."""
+    assert archivos._reloj(0.73) == "menos de un segundo"
+    assert archivos._reloj(0) == "0:00"
+    assert archivos._reloj(95) == "1:35"
+    assert archivos._reloj(3700) == "1:01:40"

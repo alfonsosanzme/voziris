@@ -30,6 +30,9 @@ mutex, en un proceso aparte de la Voziris que esté dictando:
 
     voziris.exe --transcribir reunion.m4a --hablantes auto [--salida x.md] [--ventana]
 
+Vale igual para un vídeo: se le saca la pista de sonido y sigue el mismo
+camino. Si el vídeo trae varias pistas, `--pista auto|N|todas` elige cuál.
+
 `--ventana` muestra el progreso en una ventana en vez de en la consola; es lo
 que usan el menú contextual del Explorador y la entrada de la bandeja.
 
@@ -309,6 +312,7 @@ def _transcribir_grabacion(
     hablantes: str,
     salida: Path | None,
     con_ventana: bool,
+    pista: int | str = "auto",
 ) -> int:
     """VOZ-72: de un archivo de audio a un .md al lado, con ventana de progreso o consola."""
     from voziris import grabaciones
@@ -330,7 +334,7 @@ def _transcribir_grabacion(
                 log.warning("sin separador de hablantes: %s", separador.error)
                 separador = None
         resultado = grabaciones.transcribir_archivo(
-            ruta, motor, configuracion.general.idioma, hablantes, separador, progreso
+            ruta, motor, configuracion.general.idioma, hablantes, separador, progreso, pista
         )
         return resultado, grabaciones.guardar(resultado, ruta, salida)
 
@@ -354,14 +358,17 @@ def _transcribir_grabacion(
     log.info(
         "transcripción: %s → %s · %.0f s de audio · %d líneas · %d hablantes · motor %s · %d ms",
         ruta.name, destino, resultado.duracion_s, len(resultado.lineas), resultado.hablantes,
-        resultado.motor, resultado.ms_proceso,
+        resultado.motor or "ninguno", resultado.ms_proceso,
     )
     if con_ventana:
         _abrir_con_windows(destino)
     else:
         print(f"\n{destino}")
-        print(f"{len(resultado.lineas)} líneas · {resultado.hablantes} hablante(s) · "
-              f"motor {resultado.motor} · {resultado.ms_proceso} ms de motor")
+        partes = [f"{len(resultado.lineas)} líneas", f"{resultado.hablantes} hablante(s)"]
+        if resultado.motor:
+            partes.append(f"motor {resultado.motor}")
+        partes.append(f"{resultado.ms_proceso} ms de motor")
+        print(" · ".join(partes))
         for aviso in resultado.avisos:
             print(f"aviso: {aviso}")
     return 0
@@ -982,6 +989,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--salida", type=Path, help="con --transcribir: el .md de destino")
     parser.add_argument(
+        "--pista", default="auto", metavar="auto|N|todas",
+        help="con --transcribir: qué pista de audio usar si el vídeo trae varias",
+    )
+    parser.add_argument(
         "--ventana", action="store_true",
         help="con --transcribir: progreso en una ventana (lo usan la bandeja y el Explorador)",
     )
@@ -1007,6 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
     transcribir = args.transcribir is not None
     if transcribir and not _hablantes_validos(args.hablantes):
         parser.error("--hablantes tiene que ser auto, 1 o un número de 2 a 50")
+    if transcribir and not _pista_valida(args.pista):
+        parser.error("--pista tiene que ser auto, todas, o el número de una pista")
     con_ventana = transcribir and (args.ventana or bool(getattr(sys, "frozen", False)))
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
     configurar_log(
@@ -1037,7 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if transcribir:
         return _transcribir_grabacion(
-            configuracion, args.transcribir, args.hablantes, args.salida, con_ventana
+            configuracion, args.transcribir, args.hablantes, args.salida, con_ventana, args.pista
         )
     if consola:
         nivel = Nivel(args.nivel) if args.nivel else configuracion.proceso.nivel
@@ -1047,6 +1060,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _hablantes_validos(valor: str) -> bool:
     return valor in ("auto", "1") or (valor.isdigit() and 2 <= int(valor) <= 50)
+
+
+def _pista_valida(valor: str) -> bool:
+    return valor in ("auto", "todas") or (valor.isdigit() and 1 <= int(valor) <= 64)
 
 
 if __name__ == "__main__":

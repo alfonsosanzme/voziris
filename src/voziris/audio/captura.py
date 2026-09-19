@@ -56,12 +56,47 @@ _SUELO_DB = -60.0
 """Nivel que el indicador muestra como 0. Por debajo es silencio de sala."""
 
 
-def normalizar(muestras: np.ndarray, rms_objetivo: float = RMS_OBJETIVO) -> np.ndarray:
-    """Escala a `rms_objetivo` y recorta a [-1, 1]. Ver `RMS_OBJETIVO`."""
-    rms = float(np.sqrt(np.mean(np.square(muestras, dtype=np.float64)))) if len(muestras) else 0.0
+TROZO_NORMALIZAR = 1 << 20
+"""Muestras que se tratan de una vez (4 MB). Ver `normalizar`."""
+
+
+def _rms(muestras: np.ndarray) -> float:
+    """Valor eficaz, sumando en doble precisión pero sin duplicar el audio en memoria.
+
+    `np.square(muestras, dtype=np.float64)` de golpe crea un array del doble de
+    tamaño que el original: con las tres horas de un vídeo largo son 1,4 GB de
+    más. Por trozos sale el mismo número y el pico no se mueve.
+    """
+    if not len(muestras):
+        return 0.0
+    suma = 0.0
+    for i in range(0, len(muestras), TROZO_NORMALIZAR):
+        bloque = muestras[i : i + TROZO_NORMALIZAR]
+        suma += float(np.square(bloque, dtype=np.float64).sum())
+    return float(np.sqrt(suma / len(muestras)))
+
+
+def normalizar(
+    muestras: np.ndarray, rms_objetivo: float = RMS_OBJETIVO, en_sitio: bool = False
+) -> np.ndarray:
+    """Escala a `rms_objetivo` y recorta a [-1, 1]. Ver `RMS_OBJETIVO`.
+
+    `en_sitio` reescribe el array recibido en vez de crear otro. Solo vale
+    cuando quien llama es dueño del audio y no lo va a volver a mirar, como al
+    transcribir un archivo; ahí ahorra una copia entera, que con tres horas de
+    vídeo son 727 MB.
+    """
+    rms = _rms(muestras)
     if rms < 1e-6:
-        return muestras.astype(np.float32)
-    return np.clip(muestras * (rms_objetivo / rms), -1.0, 1.0).astype(np.float32)
+        return muestras if en_sitio else muestras.astype(np.float32)
+    factor = rms_objetivo / rms
+    salida = muestras if en_sitio and muestras.dtype == np.float32 else np.empty(
+        len(muestras), dtype=np.float32
+    )
+    for i in range(0, len(muestras), TROZO_NORMALIZAR):
+        trozo = slice(i, i + TROZO_NORMALIZAR)
+        np.clip(muestras[trozo] * factor, -1.0, 1.0, out=salida[trozo])
+    return salida
 
 
 def aplicar_ganancia(muestras: np.ndarray, ganancia_db: float) -> np.ndarray:
