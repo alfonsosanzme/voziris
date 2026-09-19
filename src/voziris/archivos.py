@@ -109,7 +109,7 @@ def pistas(ruta: Path) -> list[Pista]:
         raise ArchivoNoLegible(_por_que_no_se_abre(ruta, e)) from e
 
 
-def _por_que_no_se_abre(ruta: Path, error: Exception) -> str:
+def _por_que_no_se_abre(ruta: Path, error: Exception, accion: str = "abrir") -> str:
     """El error de ffmpeg no se le enseña a nadie: dice «[Errno 1094995529]»."""
     import av
 
@@ -118,7 +118,45 @@ def _por_que_no_se_abre(ruta: Path, error: Exception) -> str:
             f"{ruta.name} parece estar incompleto o dañado. "
             "¿Se interrumpió la grabación o la descarga?"
         )
-    return f"No se pudo abrir {ruta.name}: {error}"
+    return f"No se pudo {accion} {ruta.name}: {error}"
+
+
+def _segundos_de_pista(flujo: Any) -> float | None:
+    """Lo que dice durar una pista concreta. None si no lo dice."""
+    if flujo.duration is None or flujo.time_base is None:
+        return None
+    segundos = float(flujo.duration * flujo.time_base)
+    return segundos if 0 < segundos < 24 * 3600 else None
+
+
+PARECIDAS_S = 0.5
+"""Dos duraciones que no se diferencian en esto son, a efectos prácticos, la misma."""
+
+
+def _cuanto_deberia_durar(contenedor: Any, flujo: Any, av: Any) -> float | None:
+    """Cuánto sonido debería haber en esta pista, o None si no hay forma de saberlo.
+
+    Es la cifra contra la que se decide si un archivo está a medias, y por eso
+    prefiere callar a inventarse un número: un aviso falso sobre una grabación
+    buena asusta y no se puede comprobar, mientras que no avisar deja al
+    usuario donde estaba.
+
+    Sin imagen, la duración del contenedor es la del sonido y vale. Con
+    imagen no vale, porque la manda la pista más larga, que casi siempre es el
+    vídeo: un micrófono que entra tarde o se para antes daría un archivo
+    «incompleto» estando sano. Ahí solo sirve lo que declare la propia pista,
+    y ni eso cuando Matroska ha copiado la del contenedor, que es lo que hace
+    porque el formato no guarda duraciones por pista.
+    """
+    del_contenedor = _segundos_de(contenedor, av)
+    if not contenedor.streams.video:
+        return del_contenedor
+    de_pista = _segundos_de_pista(flujo)
+    if de_pista is None:
+        return None
+    if del_contenedor is not None and abs(de_pista - del_contenedor) < PARECIDAS_S:
+        return None  # copiada del contenedor: no dice nada de esta pista
+    return de_pista
 
 
 def _pistas_de(contenedor: Any) -> list[Pista]:
@@ -240,6 +278,14 @@ def decodificar(
             disponibles = _pistas_de(contenedor)
             elegidas, avisos = _que_pistas(disponibles, pista, idioma, es_video, ruta)
             segundos = _segundos_de(contenedor, av)
+            # Lo que dice durar la pista que se va a leer. NO vale la duración
+            # del contenedor: esa la manda la pista más larga (la imagen) e
+            # incluye el desfase de arranque, así que un vídeo sano cuyo micro
+            # entre tarde o se pare antes se tomaría por un archivo a medias.
+            esperados = max(
+                (_cuanto_deberia_durar(contenedor, contenedor.streams.audio[p.n], av) or 0.0)
+                for p in elegidas
+            )
             muestras = np.zeros(0, dtype=np.float32)
             for orden, pista_elegida in enumerate(elegidas):
                 trozo = _decodificar_pista(
@@ -254,18 +300,19 @@ def decodificar(
     except ArchivoNoLegible:
         raise
     except Exception as e:  # noqa: BLE001 — av.error.* son muchas clases distintas
-        raise ArchivoNoLegible(_por_que_no_se_abre(ruta, e)) from e
+        raise ArchivoNoLegible(_por_que_no_se_abre(ruta, e, "leer")) from e
     if not len(muestras):
         raise ArchivoNoLegible(f"{ruta.name} está vacío")
     leidos = len(muestras) / sr
-    if segundos and leidos < segundos * 0.9:
+    if esperados and leidos < esperados * 0.9:
         # Media transcripción que parece entera es peor que ninguna: se dice.
         avisos.append(
-            f"{ruta.name} parece estar incompleto: dice durar {_reloj(segundos)} y solo se han "
-            f"podido leer {_reloj(leidos)}. ¿Se cortó la grabación o la descarga?"
+            f"{ruta.name} parece estar incompleto: la pista de sonido dice durar "
+            f"{_reloj(esperados)} y solo se han podido leer {_reloj(leidos)}. "
+            "¿Se cortó la grabación o la descarga?"
         )
-        log.warning("%s: leídos %.0f s de los %.0f que dice la cabecera", ruta.name, leidos,
-                    segundos)
+        log.warning("%s: leídos %.0f s de los %.0f que dice la pista", ruta.name, leidos,
+                    esperados)
     log.info(
         "decodificado %s: %.1f s (%d pista(s) de %d)",
         ruta.name, leidos, len(elegidas), len(disponibles),
@@ -274,6 +321,8 @@ def decodificar(
 
 
 def _reloj(segundos: float) -> str:
+    if 0 < segundos < 1:
+        return "menos de un segundo"
     minutos, seg = divmod(int(segundos), 60)
     horas, minutos = divmod(minutos, 60)
     return f"{horas}:{minutos:02d}:{seg:02d}" if horas else f"{minutos}:{seg:02d}"
@@ -349,10 +398,17 @@ def _decodificar_pista(
 
 
 def _segundos_de(contenedor: Any, av: Any) -> float | None:
-    """Lo que dice la cabecera, para reservar sitio. None si no lo dice."""
+    """Lo que dice la cabecera, para reservar sitio. None si no lo dice.
+
+    Se le resta el arranque: en Matroska la duración es la del último
+    timestamp, así que un archivo que empieza en el minuto 3 dice durar tres
+    minutos de más, que no son contenido de nadie.
+    """
     if contenedor.duration is None:
         return None
     segundos = float(contenedor.duration) / av.time_base
+    if contenedor.start_time is not None:
+        segundos -= float(contenedor.start_time) / av.time_base
     return segundos if 0 < segundos < 24 * 3600 else None
 
 

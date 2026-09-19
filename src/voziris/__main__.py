@@ -358,14 +358,17 @@ def _transcribir_grabacion(
     log.info(
         "transcripción: %s → %s · %.0f s de audio · %d líneas · %d hablantes · motor %s · %d ms",
         ruta.name, destino, resultado.duracion_s, len(resultado.lineas), resultado.hablantes,
-        resultado.motor, resultado.ms_proceso,
+        resultado.motor or "ninguno", resultado.ms_proceso,
     )
     if con_ventana:
         _abrir_con_windows(destino)
     else:
         print(f"\n{destino}")
-        print(f"{len(resultado.lineas)} líneas · {resultado.hablantes} hablante(s) · "
-              f"motor {resultado.motor} · {resultado.ms_proceso} ms de motor")
+        partes = [f"{len(resultado.lineas)} líneas", f"{resultado.hablantes} hablante(s)"]
+        if resultado.motor:
+            partes.append(f"motor {resultado.motor}")
+        partes.append(f"{resultado.ms_proceso} ms de motor")
+        print(" · ".join(partes))
         for aviso in resultado.avisos:
             print(f"aviso: {aviso}")
     return 0

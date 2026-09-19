@@ -63,6 +63,14 @@ MARGEN_MEMORIA_MB = 500.0
 """Lo que se deja libre para el resto del equipo: no se le llena la RAM al usuario."""
 LARGO_PARA_AVISAR_S = 20 * 60
 """A partir de aquí se dice cuánto va a tardar: una reunión larga son decenas de minutos."""
+VECES_MAS_RAPIDO_SEPARANDO = 2.0
+"""Igual, pero cuando además hay que distinguir voces, que es lo caro.
+
+Medido de punta a punta: la ruta con hablantes va 2,75 veces más rápido que
+el audio, frente a las 9,25 de la ruta simple. Es la ruta por defecto de la
+bandeja y del botón derecho, así que con el número de abajo el aviso se
+quedaba corto justo donde más se espera.
+"""
 VECES_MAS_RAPIDO_QUE_EL_AUDIO = 6.0
 """Cuántas veces más rápido que el audio va el motor local, para decir la espera.
 
@@ -268,9 +276,10 @@ def _nombre_motor(vistos: set[str], motor: MotorSTT) -> str:
     if nombres:
         return "+".join(nombres)
     if motor.nombre == NOMBRE_INTERNO_DEL_SELECTOR:
-        # Ningún trozo dio texto, así que nadie dijo su nombre. Antes salía
-        # «motor selector» en la cabecera del .md, que no quiere decir nada.
-        return "sin respuesta"
+        # Ningún trozo dio texto, así que ninguno dijo su nombre, y el del
+        # selector es interno: antes que nombrar a quien no sabemos, no se
+        # nombra a nadie. Quien escribe la cabecera se salta el hueco.
+        return ""
     return motor.nombre
 
 
@@ -294,15 +303,17 @@ def transcribir_archivo(
     if al_progresar:
         al_progresar(f"Abriendo {ruta.name}…", None)
     audio, avisos = archivos.decodificar(ruta, pista=pista, idioma=idioma)
-    if al_progresar:
-        al_progresar(_cuanto_queda(audio.duracion_s), None)
     sin_memoria = ""
     if hablantes != "1" and separador is not None:
         libre = winapi.memoria_libre_mb()
         if libre is not None and not caben_los_hablantes(audio, libre):
             sin_memoria = _aviso_sin_memoria(audio, libre)
             log.warning("sin memoria para separar hablantes: %s", sin_memoria)
-    if hablantes == "1" or separador is None or sin_memoria:
+    una_voz = hablantes == "1" or separador is None or bool(sin_memoria)
+    if al_progresar:
+        # Se mira primero si se van a separar voces: la espera es muy distinta.
+        al_progresar(_cuanto_queda(audio.duracion_s, separando=not una_voz), None)
+    if una_voz or separador is None:  # lo segundo ya va en una_voz: es para el comprobador
         resultado = transcribir_una_voz(audio, motor, idioma, al_progresar)
         if hablantes != "1" and separador is None:
             resultado.avisos.append("Sin separación de hablantes: los modelos no están disponibles")
@@ -376,27 +387,27 @@ def _aviso_sin_memoria(audio: Audio, libre_mb: float) -> str:
     )
 
 
-def _cuanto_queda(duracion_s: float) -> str:
+def _cuanto_queda(duracion_s: float, separando: bool = False) -> str:
     """Lo primero que se lee en la ventana de progreso: qué hay y cuánto va a costar."""
     minutos, segundos = divmod(int(duracion_s), 60)
     horas, minutos = divmod(minutos, 60)
     largo = f"{horas}:{minutos:02d}:{segundos:02d}" if horas else f"{minutos}:{segundos:02d}"
     if duracion_s < LARGO_PARA_AVISAR_S:
         return f"{largo} de audio. Transcribiendo…"
-    espera = max(1, round(duracion_s / VECES_MAS_RAPIDO_QUE_EL_AUDIO / 60))
+    veces = VECES_MAS_RAPIDO_SEPARANDO if separando else VECES_MAS_RAPIDO_QUE_EL_AUDIO
+    espera = max(1, round(duracion_s / veces / 60))
     return f"{largo} de audio: esto tarda unos {espera} minutos. Puedes seguir a lo tuyo."
 
 
 def render_markdown(resultado: Resultado, titulo: str, momento: datetime) -> str:
     minutos = int(resultado.duracion_s) // 60
     segundos = int(resultado.duracion_s) % 60
-    cabecera = [
-        f"# {titulo}",
-        "",
-        f"Transcrito el {momento:%Y-%m-%d %H:%M} · duración {minutos}:{segundos:02d} · "
-        + (f"{resultado.hablantes} hablantes · " if resultado.hablantes > 1 else "")
-        + f"motor {resultado.motor}",
-    ]
+    partes = [f"Transcrito el {momento:%Y-%m-%d %H:%M}", f"duración {minutos}:{segundos:02d}"]
+    if resultado.hablantes > 1:
+        partes.append(f"{resultado.hablantes} hablantes")
+    if resultado.motor:
+        partes.append(f"motor {resultado.motor}")
+    cabecera = [f"# {titulo}", "", " · ".join(partes)]
     for aviso in resultado.avisos:
         cabecera.append(f"> {aviso}")
     cabecera.append("")

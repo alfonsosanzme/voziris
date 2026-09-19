@@ -650,6 +650,7 @@ def test_un_trozo_sin_voz_no_cuenta_como_cero_milisegundos() -> None:
 
 
 def test_si_nadie_responde_no_se_dice_un_nombre_interno() -> None:
+    """Y el hueco no deja un separador suelto ni una contradicción en la cabecera."""
     from voziris.grabaciones import _nombre_motor
 
     class Selector:
@@ -658,6 +659,175 @@ def test_si_nadie_responde_no_se_dice_un_nombre_interno() -> None:
     class Local:
         nombre = "local"
 
-    assert _nombre_motor(set(), Selector()) == "sin respuesta"
+    assert _nombre_motor(set(), Selector()) == ""  # no se nombra a quien no se sabe
     assert _nombre_motor(set(), Local()) == "local"  # ese sí dice algo
     assert _nombre_motor({"local"}, Selector()) == "local"
+
+    mudo = Resultado([], 30.0, 1, "", 5191)
+    cabecera = render_markdown(mudo, "callado", datetime(2026, 9, 19, 10, 0)).splitlines()[2]
+    assert cabecera == "Transcrito el 2026-09-19 10:00 · duración 0:30"
+    assert "motor" not in cabecera and "· ·" not in cabecera
+
+
+def _escribir_desfasado(
+    ruta: Path, video_s: float, audio_s: float, desfase_s: float = 0.0, sr: int = 48000
+) -> Path:
+    """Un archivo SANO donde el sonido no ocupa todo el archivo.
+
+    Es lo que sale de OBS o de Teams cuando el micrófono entra tarde o se para
+    antes de cortar la grabación: la imagen dura más que la voz, y no falta
+    nada.
+    """
+    import fractions
+
+    import av
+
+    t = np.arange(int(sr * audio_s)) / sr
+    voz = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    with av.open(str(ruta), "w") as contenedor:
+        video = None
+        if video_s:
+            video = contenedor.add_stream("libx264", rate=10)
+            video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        audio = contenedor.add_stream("aac", rate=sr)
+        audio.layout = "mono"
+        if video is not None:
+            for n in range(int(video_s * 10)):
+                imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+                for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                    contenedor.mux(paquete)
+            for paquete in video.encode(None):
+                contenedor.mux(paquete)
+        marco = av.AudioFrame.from_ndarray(voz.reshape(1, -1), format="fltp", layout="mono")
+        marco.sample_rate = sr
+        marco.pts = int(desfase_s * sr)
+        marco.time_base = fractions.Fraction(1, sr)
+        for paquete in audio.encode(marco):
+            contenedor.mux(paquete)
+        for paquete in audio.encode(None):
+            contenedor.mux(paquete)
+    return ruta
+
+
+@pytest.mark.parametrize("ext", [".mp4", ".mkv", ".mov"])
+def test_un_video_sano_con_el_micro_corto_no_se_llama_incompleto(tmp_path: Path, ext: str) -> None:
+    """El caso de OBS y Teams: la imagen dura más que la voz y no falta nada.
+
+    Acusar en falso a una grabación buena es peor que no avisar: el usuario no
+    tiene forma de comprobarlo y deja de fiarse de los avisos de verdad.
+    """
+    sano = _escribir_desfasado(tmp_path / f"clase{ext}", video_s=20.0, audio_s=10.0)
+    audio, avisos = archivos.decodificar(sano)
+    assert 9.0 < audio.duracion_s < 11.0
+    assert not [a for a in avisos if "incompleto" in a], avisos
+
+
+class _ContenedorEspia:
+    """Un contenedor de PyAV que apunta cada rebobinado. Delega todo lo demás."""
+
+    def __init__(self, real: object, seeks: list[object]) -> None:
+        self._real = real
+        self._seeks = seeks
+
+    def seek(self, donde: object, *resto: object, **opciones: object) -> object:
+        self._seeks.append(donde)
+        return self._real.seek(donde, *resto, **opciones)  # type: ignore[attr-defined]
+
+    def __getattr__(self, nombre: str) -> object:
+        return getattr(self._real, nombre)
+
+    def __enter__(self) -> _ContenedorEspia:
+        self._real.__enter__()  # type: ignore[attr-defined]
+        return self
+
+    def __exit__(self, *fallo: object) -> object:
+        return self._real.__exit__(*fallo)  # type: ignore[attr-defined]
+
+
+def _contar_rebobinados(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    import av
+
+    abrir = av.open
+    seeks: list[object] = []
+    monkeypatch.setattr(av, "open", lambda *a, **k: _ContenedorEspia(abrir(*a, **k), seeks))
+    return seeks
+
+
+def test_no_se_rebobina_antes_de_leer_la_primera_pista(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un contenedor recién abierto ya está al principio: rebobinarlo solo puede estropearlo.
+
+    Es el fallo que se coló una vez. Medido, un seek(0) de más se come los
+    primeros 30 ms en Matroska; en formatos con el índice al final puede
+    costar más. Como no hace falta para nada, no se hace.
+    """
+    seeks = _contar_rebobinados(monkeypatch)
+    mp4 = _escribir_video(tmp_path / "charla.mp4", segundos=1.5)
+    archivos.decodificar(mp4)
+    assert seeks == [], f"se rebobinó {len(seeks)} vez/veces sin necesidad"
+
+
+def _escribir_dos_voces(ruta: Path, hz_uno: int = 300, hz_dos: int = 1200) -> Path:
+    """Un vídeo con dos pistas de audio que suenan distinto, para poder distinguirlas."""
+    import av
+
+    sr, segundos = 44100, 1.5
+    t = np.arange(int(sr * segundos)) / sr
+    with av.open(str(ruta), "w") as contenedor:
+        video = contenedor.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 120, "yuv420p"
+        flujos = [contenedor.add_stream("aac", rate=sr) for _ in range(2)]
+        for flujo in flujos:
+            flujo.layout = "mono"
+        for n in range(int(segundos * 10)):
+            imagen = np.full((120, 160, 3), (n * 5) % 255, dtype=np.uint8)
+            for paquete in video.encode(av.VideoFrame.from_ndarray(imagen, format="rgb24")):
+                contenedor.mux(paquete)
+        for paquete in video.encode(None):
+            contenedor.mux(paquete)
+        for flujo, hz in zip(flujos, (hz_uno, hz_dos), strict=True):
+            onda = (0.3 * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+            marco = av.AudioFrame.from_ndarray(onda.reshape(1, -1), format="fltp", layout="mono")
+            marco.sample_rate = sr
+            for paquete in flujo.encode(marco):
+                contenedor.mux(paquete)
+            for paquete in flujo.encode(None):
+                contenedor.mux(paquete)
+    return ruta
+
+
+def test_entre_una_pista_y_la_siguiente_si_se_rebobina(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La otra mitad del mismo arreglo: sin volver al principio, la segunda saldría vacía."""
+    seeks = _contar_rebobinados(monkeypatch)
+    mp4 = _escribir_dos_voces(tmp_path / "doblado.mp4")
+    una, _ = archivos.decodificar(mp4, pista=1)
+    assert seeks == [], "con una sola pista no hay nada que rebobinar"
+    todas, avisos = archivos.decodificar(mp4, pista="todas")
+    assert len(seeks) == 1, f"se esperaba un rebobinado entre las dos pistas, hubo {len(seeks)}"
+    # Cada pista lleva un tono distinto: si la segunda no hubiera entrado, el
+    # resultado sería exactamente el de la primera.
+    assert not np.array_equal(todas.muestras, una.muestras), "la segunda pista no entró"
+    assert abs(todas.duracion_s - una.duracion_s) < 0.3  # se suman, no se encadenan
+    assert any("sumado" in a for a in avisos), avisos
+
+
+def test_la_espera_que_se_anuncia_cuenta_con_separar_voces() -> None:
+    """Separar voces es la etapa cara: prometer lo mismo dejaría corto el aviso."""
+    from voziris.grabaciones import _cuanto_queda
+
+    hora = 3600.0
+    simple = _cuanto_queda(hora)
+    con_voces = _cuanto_queda(hora, separando=True)
+    assert "tarda unos 10 minutos" in simple, simple
+    assert "tarda unos 30 minutos" in con_voces, con_voces
+
+
+def test_un_archivo_de_menos_de_un_segundo_no_dice_cero(tmp_path: Path) -> None:
+    """«solo se han podido leer 0:00» se contradice con el texto que sale debajo."""
+    assert archivos._reloj(0.73) == "menos de un segundo"
+    assert archivos._reloj(0) == "0:00"
+    assert archivos._reloj(95) == "1:35"
+    assert archivos._reloj(3700) == "1:01:40"
