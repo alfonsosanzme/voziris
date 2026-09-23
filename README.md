@@ -284,7 +284,7 @@ de `config.toml`, `general.motor` y `proceso.nivel`:
 | `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
 | `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
 | Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
-| Siempre, mientras dictas | nada sale, pero el **audio del dictado se escribe en tu disco** (`historial/pendientes/`) hasta que el texto está a salvo; después se borra |
+| Siempre, mientras dictas | nada sale, pero el **audio del dictado se escribe en tu disco** (`historial/pendientes/`) mientras hablas. Cuando el texto está a salvo, la grabación pasa a `historial/audio/` para poder volver a transcribirla: la de los últimos 20 dictados, 7 días como mucho y nunca más de 1 GB. Con `[historial] conservar_audio = false` no se guarda y se borra la que hubiera |
 | Transcribir una grabación | el audio, troceado, va al mismo sitio que un dictado según `general.motor`; la primera vez con varios hablantes, dos modelos se descargan de **GitHub** (releases de sherpa-onnx) a `modelos/hablantes/` |
 
 Está verificado con un test (`tests/test_offline.py`) que bloquea toda
@@ -331,16 +331,27 @@ con `al_dictar = "nada" | "atenuar" | "silenciar"`.
 
 ## Lo dicho no se pierde
 
-Tres redes, de la más fina a la más gruesa:
+Cuatro redes, de la más fina a la más gruesa:
 
 - **El audio va a disco mientras hablas.** Cada dictado se escribe en
-  `historial/pendientes/` bloque a bloque (32 ms), y el archivo solo se borra
-  cuando el texto está a salvo: entregado, o guardado en el historial. Si el
-  motor falla, si cancelas porque tarda, o si el programa se cierra de golpe
-  a media frase, el audio sigue ahí. Aparece en la bandeja como **«Dictados
-  sin transcribir (N)»** → «Transcribir y copiar»: lo pasa a texto, lo copia
-  al portapapeles y lo deja en «Últimos dictados». Se limpian solos a los
-  siete días (veinte como mucho).
+  `historial/pendientes/` bloque a bloque (32 ms). Si el motor falla, si no
+  sale texto de un dictado de cinco segundos o más, si pulsas Esc tras hablar
+  un buen rato, o si el programa se cierra de golpe a media frase, el audio
+  sigue ahí. Aparece en la bandeja como **«Dictados sin transcribir (N)»** →
+  «Transcribir y copiar»: lo pasa a texto, lo copia al portapapeles y lo deja
+  en «Últimos dictados». Si vuelve a fallar, la grabación no se borra. Se
+  limpian solos a los siete días (veinte como mucho).
+- **El texto se guarda antes de pegarlo.** Si el pegado se cuelga o el
+  programa se cierra justo ahí, el dictado ya está en «Últimos dictados»,
+  marcado con ⚠ hasta que se entrega. **«Copiar el último dictado»**, arriba
+  del todo en el menú, lo copia a un clic (la etiqueta dice la hora y cómo
+  empieza, para no pegar uno equivocado): para cuando dictaste sin el cursor
+  en un campo de texto.
+- **La grabación de los últimos dictados se queda.** Cada uno de «Últimos
+  dictados» tiene **«Volver a transcribir la grabación»** mientras la
+  conserve (los últimos 20, 7 días). El texto nuevo sustituye al viejo y se
+  copia; el de antes sigue a mano en «Copiar el texto de antes de volver a
+  transcribir», por si el nuevo salió peor.
 - **La API tiene la paciencia contada.** Groq contesta en medio segundo. Si a
   los 3 s (más una décima por segundo de audio) no ha dicho nada, el dictado
   se transcribe en local y sigue su camino, en vez de quedarse 15 s en

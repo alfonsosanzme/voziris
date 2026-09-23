@@ -128,14 +128,28 @@ def activar_faulthandler(carpeta: Path) -> None:
 
     try:
         _archivo_fallos = open(carpeta / "voziris-fallos.log", "a", encoding="utf-8")  # noqa: SIM115
-        # Los volcados de faulthandler no llevan fecha: sin esta línea no hay
-        # forma de saber a qué arranque pertenece cada uno (VOZ-80).
-        _archivo_fallos.write(f"\n=== {_ahora()} · arranque de Voziris {__version__} "
-                              f"(pid {os.getpid()}) ===\n")
-        _archivo_fallos.flush()
         faulthandler.enable(_archivo_fallos, all_threads=True)
     except OSError as e:
         log.warning("sin voziris-fallos.log: %s", e)
+
+
+def anotar_arranque_en_fallos() -> None:
+    """Una línea con la fecha en `voziris-fallos.log` al arrancar la app de bandeja.
+
+    Los volcados de faulthandler no llevan fecha: sin esta línea no hay forma
+    de saber a qué arranque pertenece cada uno (VOZ-80). Solo la app de
+    bandeja: la consola, «Transcribir» del Explorador o el diagnóstico
+    llenarían el archivo de cabeceras y echarían de la vista los volcados de
+    verdad.
+    """
+    if _archivo_fallos is None:
+        return
+    try:
+        _archivo_fallos.write(f"\n=== {_ahora()} · arranque de Voziris {__version__} "
+                              f"(pid {os.getpid()}) ===\n")
+        _archivo_fallos.flush()
+    except (OSError, ValueError) as e:
+        log.warning("no se pudo anotar el arranque en voziris-fallos.log: %s", e)
 
 
 def _ahora() -> str:
@@ -426,6 +440,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     from voziris.orquestador import Orquestador
     from voziris.ui.bandeja import AccionesBandeja, Bandeja, texto_acerca_de
 
+    anotar_arranque_en_fallos()
     raiz = tk.Tk()
     raiz.withdraw()
     cola_ui: queue.Queue[Callable[[], object]] = queue.Queue()
@@ -516,7 +531,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     h = configuracion.historial
     historial = Historial(
         configuracion.carpeta / "historial" / "dictados.jsonl", h.entradas,
-        conservar_audio=h.conservar_audio or h.guardar_audio,
+        conservar_audio=h.conservar_audio,
         audio_maximo=h.audio_dictados, audio_dias=h.audio_dias,
         destinos=destinos, contexto=contexto_de_reintento,
     )
@@ -546,7 +561,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
         pendientes=pendientes,
         mezclador=mezclador,
-        al_atasco=lambda fase: al_atasco(fase),
+        al_atasco=lambda fase, hay_copia: al_atasco(fase, hay_copia),
     )
     orq.corte_por_silencio = configuracion.audio.corte_por_silencio
 
@@ -588,30 +603,61 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         if entrada is None:
             return
         try:
-            winapi.escribir_portapapeles(entrada.texto)
-            hud.aviso("Copiado: pégalo con Ctrl+V")
+            winapi.copiar(entrada.texto)
+            # Con la hora: «Copiar el último» tras un fallo copia el anterior, y
+            # tiene que verse cuál es antes de pegarlo en ningún sitio.
+            hud.aviso(f"Copiado el de las {entrada.momento:%H:%M}: pégalo con Ctrl+V")
         except OSError as e:
             avisar(f"No se pudo copiar: {e}")
 
-    def en_curso_ahora() -> Path | None:
-        return getattr(captura, "_escritor", None) and captura._escritor.ruta
+    def copiar_anterior(indice: int) -> None:
+        """El texto que había antes de volver a transcribir, por si el nuevo salió peor."""
+        entrada = historial.buscar(indice)
+        if entrada is None or not entrada.texto_anterior:
+            return
+        try:
+            winapi.copiar(entrada.texto_anterior)
+            hud.aviso("Copiado el texto de antes: pégalo con Ctrl+V")
+        except OSError as e:
+            avisar(f"No se pudo copiar: {e}")
 
-    def al_atasco(fase: str) -> None:
+    def en_curso_ahora() -> list[Path]:
+        """Los archivos que no son «sin transcribir» aunque estén en pendientes/: el que
+        se está grabando y el que se está transcribiendo. Si no, el menú los ofrecería
+        y recuperarlos los transcribiría dos veces."""
+        escritor = getattr(captura, "_escritor", None)
+        en_uso = [escritor.ruta] if escritor is not None else []
+        if orq.pendiente_en_proceso is not None:
+            en_uso.append(orq.pendiente_en_proceso)
+        return en_uso
+
+    def al_atasco(fase: str, hay_copia: bool) -> None:
         """Un dictado lleva demasiado procesándose: rastro para diagnosticar y aviso."""
         volcar_hilos(f"dictado atascado ({fase})")
-        avisar(
-            f"Voziris se ha atascado {fase}. Lo dicho está guardado: si no se "
-            "desatasca, sal desde la bandeja y vuelve a abrirlo"
-        )
+        if hay_copia:
+            avisar(
+                f"Voziris se ha atascado {fase}. Lo dicho está guardado: si no se "
+                "desatasca, sal desde la bandeja y vuelve a abrirlo"
+            )
+        else:
+            # Sin copia en disco (no se pudo abrir el archivo del dictado), salir
+            # lo perdería: mejor esperar.
+            avisar(f"Voziris lleva mucho {fase}. Espera un poco antes de salir: "
+                   "este dictado no tiene copia en disco")
 
     def retranscribir_entrada(indice: int) -> None:
         """Desde «Últimos dictados»: vuelve a transcribir la grabación y deja el texto copiado."""
         import threading
 
+        from voziris.errores import TranscripcionFallida
+
         def trabajo() -> None:
             hud.aviso("Transcribiendo otra vez la grabación…")
             try:
-                texto = orq.retranscribir(indice)
+                transcripcion = orq.retranscribir(indice)
+            except TranscripcionFallida as e:
+                avisar(f"No salió texto al volver a transcribir ({e}); el de antes se queda")
+                return
             except VozirisError as e:
                 avisar(f"No se pudo volver a transcribir: {e}")
                 return
@@ -619,16 +665,17 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
                 log.exception("fallo volviendo a transcribir el dictado %d", indice)
                 avisar(f"No se pudo volver a transcribir: {e}")
                 return
-            if texto is None:
-                avisar("Ese dictado ya no tiene la grabación guardada")
-            elif not texto:
-                avisar("En esa grabación no había nada que transcribir")
-            else:
-                try:
-                    winapi.escribir_portapapeles(texto)
-                    avisar("Vuelto a transcribir: está copiado (Ctrl+V) y en Últimos dictados")
-                except OSError:
-                    avisar("Vuelto a transcribir: está en Últimos dictados")
+            if transcripcion is None:
+                avisar("Ese dictado ya no está o ya no tiene la grabación guardada")
+                return
+            for aviso in transcripcion.avisos:  # p. ej., que cayó al motor local
+                avisar(aviso)
+            try:
+                winapi.copiar(transcripcion.texto)
+                avisar("Vuelto a transcribir: está copiado (Ctrl+V). "
+                       "El texto de antes sigue en su menú")
+            except OSError:
+                avisar("Vuelto a transcribir: está en Últimos dictados")
             if bandeja is not None:
                 bandeja.actualizar_menu()
 
@@ -638,10 +685,16 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         """Transcribe un audio que se quedó sin texto, lo copia y lo deja en el historial."""
         import threading
 
+        from voziris.errores import TranscripcionFallida
+
         def trabajo() -> None:
             hud.aviso("Transcribiendo el audio guardado…")
             try:
                 texto = orq.recuperar(pendiente.ruta)
+            except TranscripcionFallida as e:
+                avisar(f"Tampoco ahora salió texto ({e}). La grabación sigue guardada: "
+                       "prueba con otro motor desde el menú")
+                return
             except VozirisError as e:
                 avisar(f"No se pudo transcribir el audio guardado: {e}")
                 return
@@ -651,7 +704,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
                 return
             if texto:
                 try:
-                    winapi.escribir_portapapeles(texto)
+                    winapi.copiar(texto)
                     avisar("Dictado recuperado: está copiado (Ctrl+V) y en Últimos dictados")
                 except OSError:
                     avisar("Dictado recuperado: está en Últimos dictados")
@@ -775,6 +828,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         recuperar=recuperar_pendiente,
         borrar_pendiente=borrar_pendiente,
         retranscribir=retranscribir_entrada,
+        copiar_anterior=copiar_anterior,
         salir=lambda: en_hilo_tk(raiz.quit),
         ver_registro=lambda: _abrir_con_windows(configuracion.carpeta / NOMBRE_LOG),
         diagnostico=lambda: _abrir_con_windows(_generar_diagnostico(configuracion.carpeta)),
@@ -819,8 +873,11 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             avisar(f"{e}. Puedes dictar desde el menú de la bandeja")
             bandeja.estado("error")
         _ajustar_arranque_con_windows(configuracion, avisar)
-        pendientes.limpiar()
-        historial.limpiar_audio()
+        for limpiar in (pendientes.limpiar, historial.limpiar_audio):
+            try:
+                limpiar()
+            except Exception:  # noqa: BLE001 — mantenimiento: la app tiene que arrancar igual
+                log.warning("limpieza al arrancar fallida", exc_info=True)
         sin_texto = pendientes.listar()
         if sin_texto:
             avisar(

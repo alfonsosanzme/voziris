@@ -297,3 +297,11 @@ def test_dictados_sin_transcribir_en_el_menu(tmp_path: Path) -> None:
     transcribir(None)
     borrar(None)
     assert [ll[0] for ll in llamadas] == ["recuperar", "borrar_pendiente"]
+
+
+def test_listar_puede_dejar_fuera_varios(tmp_path: Path) -> None:
+    """El que se graba y el que se transcribe no son «sin transcribir»."""
+    pendientes = Pendientes(tmp_path / "p")
+    uno, dos, tres = (_grabar(pendientes, 1.2) for _ in range(3))
+    assert {p.ruta for p in pendientes.listar(excepto=[uno, dos])} == {tres}
+    assert {p.ruta for p in pendientes.listar(excepto=uno)} == {dos, tres}

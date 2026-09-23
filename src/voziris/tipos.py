@@ -105,3 +105,5 @@ class EntradaHistorial:
     """Lo asigna el historial al registrar: es lo que identifica la entrada en el menú."""
     audio: str | None = None
     """La grabación en `historial/audio/`, si se conserva. None cuando ya se ha podado."""
+    texto_anterior: str | None = None
+    """El texto que había antes de volver a transcribir, por si el nuevo salió peor."""

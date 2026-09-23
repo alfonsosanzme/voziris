@@ -677,6 +677,25 @@ def _mismo_valor(base: Path, actual: object, nuevo: object) -> bool:
     return bool(actual == nuevo)
 
 
+_COMENTARIOS_NUEVAS = {
+    ("historial", "conservar_audio"): "grabación de los últimos dictados, para volver a "
+                                      "transcribirlos; false para no guardarla",
+}
+"""Opciones que un config.toml de antes no trae: al añadirlas, que se entienda qué son."""
+
+
+def _jubilar_guardar_audio(documento: Any) -> None:
+    """Quita `guardar_audio = false` de un config.toml de antes de VOZ-80.
+
+    La plantilla la escribía así en todas las instalaciones, y junto a
+    `conservar_audio = true` parecía decir lo contrario de lo que pasa. A
+    false no significa nada; a true la deja, porque alguien la puso a mano.
+    """
+    tabla = documento.get("historial")
+    if tabla is not None and tabla.get("guardar_audio") is False:
+        del tabla["guardar_audio"]
+
+
 def guardar(config: Config, ruta: Path | None = None) -> None:
     """Reescribe el TOML conservando comentarios y orden. Lo usa VOZ-60.
 
@@ -709,7 +728,13 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
         for opcion, valor in opciones.items():
             if opcion in tabla and _mismo_valor(base, _plano(tabla[opcion]), valor):
                 continue
-            tabla[opcion] = valor
+            if opcion not in tabla and (seccion, opcion) in _COMENTARIOS_NUEVAS:
+                elemento = tomlkit.item(valor)
+                elemento.comment(_COMENTARIOS_NUEVAS[(seccion, opcion)])
+                tabla[opcion] = elemento
+            else:
+                tabla[opcion] = valor
+    _jubilar_guardar_audio(documento)
 
     texto = tomlkit.dumps(documento)
     if origen.exists() and b"\r\n" in origen.read_bytes():

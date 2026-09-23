@@ -264,7 +264,7 @@ de mensajes.
 - [ ] Un archivo corrupto o a medio escribir no impide arrancar: se ignoran las líneas ilegibles.
 - [ ] Los últimos 10 dictados aparecen en el menú de bandeja, con las primeras palabras de cada uno.
 - [ ] Reintentar reentrega **el texto ya procesado**, sin volver a transcribir ni a llamar al LLM.
-- [ ] Con `guardar_audio = true`, el WAV queda al lado. Por defecto, no se guarda nada de audio.
+- [ ] Con `guardar_audio = true`, el WAV queda al lado. Por defecto, no se guarda nada de audio. *(Superado por VOZ-80: `conservar_audio`, activado, guarda la grabación de los últimos dictados para volver a transcribirlos.)*
 - [ ] Los dictados con información sensible se pueden borrar desde el menú.
 
 ---
@@ -416,3 +416,16 @@ Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dicta
 - [x] Vigía: si un dictado pasa de 60 s más su duración procesándose, se vuelca dónde está cada hilo en `voziris-fallos.log` y se avisa. No corta nada.
 - [x] Cada arranque deja su fecha en `voziris-fallos.log`: los volcados de faulthandler no la llevan.
 - [x] Historial con cerrojo: el hilo de trabajo escribe mientras la bandeja lee y el usuario borra o copia.
+
+**Tras la revisión adversarial** (cuatro lentes, un escéptico por hallazgo que debía reproducirlo):
+- [x] «Recuperar» ya no borra un dictado largo si el motor vuelve a no sacar texto: el archivo se queda y se dice.
+- [x] Si la línea del historial no se puede escribir, la grabación vuelve a «Dictados sin transcribir» en vez de quedarse huérfana (regresión de la primera versión).
+- [x] Una línea cortada a medias (corte de luz) no se come el dictado siguiente; las ilegibles se apartan a `dictados.ilegibles.jsonl` al reescribir, en vez de perderse.
+- [x] Volver a transcribir conserva el texto de antes y dice sus avisos; no escribe encima de otro dictado que haya heredado el número.
+- [x] El menú se construye antes de destruir el viejo, y un segundo clic derecho con el menú abierto no lo destruye. Lee el historial una vez por apertura.
+- [x] El dictado que se está transcribiendo no sale como «sin transcribir».
+- [x] Pegar y copiar comparten un cerrojo del portapapeles.
+- [x] Un dictado largo sin texto pone el icono en error y avisa en la bandeja; Esc en una grabación larga la guarda.
+- [x] Poda después de pegar; con `conservar_audio = false` se borra lo ya guardado.
+- [x] Al guardar ajustes, un `guardar_audio = false` de la plantilla vieja se quita, y `conservar_audio` entra con su comentario.
+- [x] pystray fijada a 0.19.x: el enganche toca sus internos.

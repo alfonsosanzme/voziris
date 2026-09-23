@@ -26,11 +26,13 @@ Issue: VOZ-03.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import math
 import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -106,6 +108,8 @@ class AccionesBandeja:
     borrar_pendiente: Callable[[Any], None] | None = None
     retranscribir: Callable[[int], None] | None = None
     """Vuelve a transcribir la grabación guardada de una entrada del historial (VOZ-80)."""
+    copiar_anterior: Callable[[int], None] | None = None
+    """Copia el texto que había antes de volver a transcribir (VOZ-80)."""
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -117,7 +121,9 @@ def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
     return f"{entrada.momento:%H:%M} · {texto}{marca}"
 
 
-def rehacer_menu_al_abrir(icono: Any) -> bool:
+def rehacer_menu_al_abrir(
+    icono: Any, alrededor: Callable[[], contextlib.AbstractContextManager[Any]] | None = None
+) -> bool:
     """Que el menú se construya al abrirlo, no una vez al arrancar. True si se pudo.
 
     pystray en Windows construye el menú nativo en `update_menu()` y, con el
@@ -132,32 +138,65 @@ def rehacer_menu_al_abrir(icono: Any) -> bool:
     de la bandeja y justo antes de enseñarlo. De paso ya no hace falta
     destruir el menú desde otro hilo, que podía pillarlo abierto.
 
+    Dos cuidados que `_update_menu` de pystray no tiene. Construye el nuevo
+    ANTES de destruir el viejo: si algo revienta al construirlo, se enseña el
+    de antes en vez de un menú ya destruido, que es no enseñar nada. Y si
+    llega otro clic derecho con el menú abierto (el bucle modal del menú lo
+    atiende), no lo rehace: destruiría el que está en pantalla.
+
+    `alrededor`: un contexto que envuelve cada reconstrucción; la bandeja lo
+    usa para leer el historial una vez por apertura y no seis.
+
     Toca internos de pystray (`_message_handlers`, `_on_notify`,
-    `_update_menu`, probados con la 0.19.5). Si faltan, devuelve False y la
-    bandeja sigue con el refresco a mano de siempre.
+    `_create_menu`, `_menu_handle`), probados con la 0.19.5 y fijada en
+    pyproject. Si faltan, devuelve False y la bandeja sigue con el refresco a
+    mano de siempre.
     """
     if sys.platform != "win32":
         return False
     manejadores = getattr(icono, "_message_handlers", None)
     original = getattr(icono, "_on_notify", None)
-    rehacer = getattr(icono, "_update_menu", None)
+    crear = getattr(icono, "_create_menu", None)
     try:
         from pystray._util import win32
     except ImportError:
         win32_ok = False
     else:
-        win32_ok = hasattr(win32, "WM_NOTIFY") and hasattr(win32, "WM_RBUTTONUP")
-    if not win32_ok or not isinstance(manejadores, dict) or original is None or rehacer is None:
+        win32_ok = all(hasattr(win32, n) for n in ("WM_NOTIFY", "WM_RBUTTONUP", "DestroyMenu"))
+    if (
+        not win32_ok
+        or not isinstance(manejadores, dict)
+        or original is None
+        or crear is None
+    ):
         log.warning("esta versión de pystray no deja rehacer el menú al abrirlo")
         return False
+    abierto = [False]
+
+    def rehacer() -> None:
+        callbacks: list[Any] = []
+        with alrededor() if alrededor is not None else contextlib.nullcontext():
+            nuevo = crear(icono.menu, callbacks)  # si revienta, el viejo sigue entero
+        viejo = getattr(icono, "_menu_handle", None)  # pystray lo crea al primer menú
+        icono._menu_handle = (nuevo, callbacks) if nuevo else None
+        if viejo:
+            with contextlib.suppress(Exception):
+                win32.DestroyMenu(viejo[0])
 
     def al_notificar(wparam: Any, lparam: Any) -> Any:
-        if lparam == win32.WM_RBUTTONUP:
-            try:
-                rehacer()
-            except Exception:  # noqa: BLE001 — con el menú de antes es mejor que sin menú
-                log.exception("no se pudo rehacer el menú al abrirlo")
-        return original(wparam, lparam)
+        if lparam != win32.WM_RBUTTONUP:
+            return original(wparam, lparam)
+        if abierto[0]:
+            return 0  # ya hay uno en pantalla: ni se rehace ni se abre otro encima
+        try:
+            rehacer()
+        except Exception:  # noqa: BLE001 — con el menú de antes es mejor que sin menú
+            log.exception("no se pudo rehacer el menú al abrirlo")
+        abierto[0] = True
+        try:
+            return original(wparam, lparam)
+        finally:
+            abierto[0] = False
 
     manejadores[win32.WM_NOTIFY] = al_notificar
     return True
@@ -180,6 +219,10 @@ class Bandeja:
         self._estado = "reposo"
         self._icono: Any = None
         self._rehace_al_abrir = False
+        self._foto: dict[str, Any] | None = None
+        """Mientras se construye el menú, lo ya leído: pystray evalúa cada parte
+        dinámica varias veces por construcción, y sin esto se leía el historial
+        seis veces y la carpeta de pendientes ocho en cada clic derecho."""
         self._hilo: threading.Thread | None = None
         # pystray no es seguro entre hilos: cambiar el icono desde el hilo de
         # trabajo mientras el suyo atiende un WM_DISPLAYCHANGE (que también
@@ -294,17 +337,24 @@ class Bandeja:
 
     def _ultimas_seguro(self) -> list[EntradaHistorial]:
         """El historial para el menú. Si no se puede leer, vacío: el menú no se rompe."""
-        try:
-            return self._ultimas()
-        except Exception:  # noqa: BLE001
-            log.exception("no se pudo leer el historial para el menú")
-            return []
+
+        def leer() -> list[EntradaHistorial]:
+            try:
+                return self._ultimas()
+            except Exception:  # noqa: BLE001
+                log.exception("no se pudo leer el historial para el menú")
+                return []
+
+        return self._leido("ultimas", leer)  # type: ignore[no-any-return]
 
     def _item_copiar_ultimo(self) -> list[Any]:
-        """«Copiar el último dictado»: para cuando se pegó donde no era (VOZ-80).
+        """«Copiar el último dictado (19:42 · Llamar a…)»: para cuando se pegó donde no era.
 
         A un clic, sin bajar al submenú: el caso típico es haber dictado con
         el foco fuera del campo de texto, y lo que se quiere es el texto ya.
+        La etiqueta dice cuál es: si el último dictado no llegó a texto, el
+        último del historial es uno anterior, y pegarlo sin saberlo en un chat
+        es peor que no tener el botón (VOZ-80).
         """
         if self._acciones.copiar is None:
             return []
@@ -313,14 +363,19 @@ class Bandeja:
         accion = self._acciones.copiar
 
         def copiar() -> None:
-            ultimas = self._ultimas_seguro()
+            ultimas = self._ultimas_seguro()  # al pulsar, lo de ahora, no lo de al abrir
             if ultimas:
                 accion(ultimas[0].indice)
 
+        def etiqueta(_item: Any) -> str:
+            ultimas = self._ultimas_seguro()
+            if not ultimas:
+                return "Copiar el último dictado"
+            return f"Copiar el último dictado ({resumen(ultimas[0], 28)})"
+
         return [
             pystray.MenuItem(
-                "Copiar el último dictado", copiar,
-                enabled=lambda _item: bool(self._ultimas_seguro()),
+                etiqueta, copiar, enabled=lambda _item: bool(self._ultimas_seguro()),
             )
         ]
 
@@ -347,13 +402,21 @@ class Bandeja:
             if self._acciones.retranscribir is None or not entrada.audio:
                 return []
             accion, indice = self._acciones.retranscribir, entrada.indice
-            minutos, segundos = divmod(round(entrada.duracion_audio_s), 60)
+            duracion = entrada.duracion_audio_s
+            minutos, segundos = divmod(round(duracion) if math.isfinite(duracion) else 0, 60)
             return [
                 Item(
                     f"Volver a transcribir la grabación ({minutos}:{segundos:02d})",
                     lambda: accion(indice),
                 )
             ]
+
+        def copiar_anterior(entrada: EntradaHistorial) -> list[Any]:
+            if self._acciones.copiar_anterior is None or not entrada.texto_anterior:
+                return []
+            accion, indice = self._acciones.copiar_anterior, entrada.indice
+            return [Item("Copiar el texto de antes de volver a transcribir",
+                         lambda: accion(indice))]
 
         return [
             Item(
@@ -362,6 +425,7 @@ class Bandeja:
                     *copiar(entrada.indice),
                     Item(ETIQUETA_REENTREGAR, reintentar(entrada.indice)),
                     *retranscribir(entrada),
+                    *copiar_anterior(entrada),
                     Item("Borrar del historial", borrar(entrada.indice)),
                 ),
             )
@@ -371,11 +435,16 @@ class Bandeja:
     def _pendientes(self) -> list[Any]:
         if self._acciones.pendientes is None:
             return []
-        try:
-            return self._acciones.pendientes()
-        except Exception:  # noqa: BLE001 — el menú no puede romperse por esto
-            log.exception("no se pudieron listar los dictados pendientes")
-            return []
+        acciones_pendientes = self._acciones.pendientes
+
+        def leer() -> list[Any]:
+            try:
+                return acciones_pendientes()
+            except Exception:  # noqa: BLE001 — el menú no puede romperse por esto
+                log.exception("no se pudieron listar los dictados pendientes")
+                return []
+
+        return self._leido("pendientes", leer)  # type: ignore[no-any-return]
 
     def _items_pendientes(self) -> list[Any]:
         import pystray
@@ -421,8 +490,24 @@ class Bandeja:
             title=self._titulo(),
             menu=self.construir_menu(),
         )
-        self._rehace_al_abrir = rehacer_menu_al_abrir(self._icono)
+        self._rehace_al_abrir = rehacer_menu_al_abrir(self._icono, self._una_lectura)
         return self._icono
+
+    @contextlib.contextmanager
+    def _una_lectura(self) -> Iterator[None]:
+        """Durante una construcción del menú, historial y pendientes se leen una vez."""
+        self._foto = {}
+        try:
+            yield
+        finally:
+            self._foto = None
+
+    def _leido(self, clave: str, leer: Callable[[], Any]) -> Any:
+        if self._foto is None:
+            return leer()
+        if clave not in self._foto:
+            self._foto[clave] = leer()
+        return self._foto[clave]
 
     def mostrar(self) -> None:
         """Crea el icono y entra en el bucle de eventos. Bloquea hasta `cerrar()`.

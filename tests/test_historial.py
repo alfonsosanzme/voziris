@@ -188,6 +188,7 @@ def test_poda_por_numero_y_por_dias_pero_nunca_la_ultima(tmp_path: Path) -> None
     h, _ = _historial(tmp_path, conservar_audio=True, audio_maximo=2, audio_dias=7)
     for i in range(4):
         h.registrar(_reciente(f"dictado {i}"), pendiente=_pendiente(tmp_path, 1.0 + i / 10))
+        h.podar_audio()  # lo que hace el orquestador tras cada dictado, ya pegado
     con_audio = [e.indice for e in h.todas() if e.audio]
     assert con_audio == [3, 4]
     assert sorted(f.name for f in h.carpeta_audio.iterdir()) == ["000003.f32", "000004.f32"]
@@ -195,6 +196,7 @@ def test_poda_por_numero_y_por_dias_pero_nunca_la_ultima(tmp_path: Path) -> None
     viejo = _reciente("de hace diez días")
     viejo.momento = datetime(2020, 1, 1, 9, 0)
     h.registrar(viejo, pendiente=_pendiente(tmp_path, 1.9))
+    h.podar_audio()
     # Es la más reciente: aunque sea «vieja» no se quita, es la que se acaba de dictar.
     assert [e.indice for e in h.todas() if e.audio] == [4, 5]
 
@@ -206,6 +208,7 @@ def test_poda_por_tamano(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     h, _ = _historial(tmp_path, conservar_audio=True)
     for i in range(3):
         h.registrar(_reciente(f"dictado {i}"), pendiente=_pendiente(tmp_path, 1.0 + i / 10))
+    h.podar_audio()
     assert [e.indice for e in h.todas() if e.audio] == [3]
 
 
@@ -299,3 +302,110 @@ def test_varios_hilos_a_la_vez_no_pierden_ni_rompen_nada(
 def test_nada_registrado(tmp_path: Path) -> None:
     h, _ = _historial(tmp_path)
     assert h.ultimas() == [] and h.buscar(1) is None
+
+
+# --- segunda revisión de VOZ-80 -------------------------------------------------------------------
+
+
+def test_registrar_no_poda_para_no_retrasar_el_pegado(tmp_path: Path) -> None:
+    """Va antes de pegar: lo mínimo. La poda la pide el orquestador después."""
+    h, _ = _historial(tmp_path, conservar_audio=True, audio_maximo=1)
+    for i in range(3):
+        h.registrar(_reciente(f"dictado {i}"), pendiente=_pendiente(tmp_path, 1.0 + i / 10))
+    assert [e.indice for e in h.todas() if e.audio] == [1, 2, 3]
+    assert h.podar_audio() == 2
+    assert [e.indice for e in h.todas() if e.audio] == [3]
+
+
+def test_poda_por_dias_de_verdad(tmp_path: Path) -> None:
+    """Con sitio de sobra por número: la de hace diez días se va por los días."""
+    from datetime import timedelta
+
+    h, _ = _historial(tmp_path, conservar_audio=True, audio_maximo=50, audio_dias=7)
+    viejo = _reciente("de hace diez días")
+    viejo.momento = datetime.now() - timedelta(days=10)
+    h.registrar(viejo, pendiente=_pendiente(tmp_path, 1.1))
+    h.registrar(_reciente("de hoy"), pendiente=_pendiente(tmp_path, 1.2))
+    h.podar_audio()
+    assert [e.indice for e in h.todas() if e.audio] == [2]
+
+
+def test_si_la_linea_no_se_puede_escribir_el_pendiente_vuelve_a_su_sitio(tmp_path: Path) -> None:
+    """Nunca una grabación sin el texto que la nombra: la borraría la limpieza."""
+    import stat
+
+    h, _ = _historial(tmp_path, conservar_audio=True)
+    h.registrar(_reciente("uno"), pendiente=_pendiente(tmp_path, 1.1))
+    pendiente = _pendiente(tmp_path, 1.2)
+    crudo = pendiente.read_bytes()
+    os.chmod(h.ruta, stat.S_IREAD)
+    try:
+        with pytest.raises(OSError):
+            h.registrar(_reciente("dos"), pendiente=pendiente)
+    finally:
+        os.chmod(h.ruta, stat.S_IREAD | stat.S_IWRITE)
+    assert pendiente.read_bytes() == crudo
+    assert sorted(f.name for f in h.carpeta_audio.iterdir()) == ["000001.f32"]
+
+
+def test_un_corte_de_luz_a_media_linea_no_se_come_el_dictado_siguiente(tmp_path: Path) -> None:
+    h, _ = _historial(tmp_path)
+    h.registrar(_reciente("antes del corte"))
+    with open(h.ruta, "a", encoding="utf-8") as archivo:
+        archivo.write('{"momento": "2026-09-23T09:54:00", "texto": "a medi')  # sin salto
+    h.registrar(_reciente("después del corte"))
+    assert [e.texto for e in h.todas()] == ["antes del corte", "después del corte"]
+
+
+def test_las_lineas_ilegibles_se_apartan_en_vez_de_perderse(tmp_path: Path) -> None:
+    """Al reescribir (marcar entregado, podar…) la línea rota puede ser la única copia."""
+    h, _ = _historial(tmp_path)
+    h.registrar(_reciente("uno"))
+    rota = '{"momento": "2026-09-23T09:54:00", "texto": "lo dictado justo antes del cor'
+    with open(h.ruta, "a", encoding="utf-8") as archivo:
+        archivo.write(rota + "\n" + "\x00" * 40 + "\n")
+    h.registrar(_reciente("dos"))
+    h.marcar_entregado(2)  # reescribe el archivo entero
+    apartado = h.ruta.with_name("dictados.ilegibles.jsonl")
+    assert apartado.read_text(encoding="utf-8").splitlines() == [rota]  # los ceros, no
+    assert [e.texto for e in h.todas()] == ["uno", "dos"]
+    assert rota not in h.ruta.read_text(encoding="utf-8")
+
+
+def test_cambiar_texto_solo_si_la_entrada_sigue_siendo_la_misma(tmp_path: Path) -> None:
+    h, _ = _historial(tmp_path)
+    entrada = h.registrar(_reciente("el de siempre"))
+    assert h.cambiar_texto(1, "otro", "local", momento=datetime(2001, 1, 1)) is False
+    assert h.cambiar_texto(1, "nuevo", "local", momento=entrada.momento.replace(microsecond=0))
+    actual = h.buscar(1)
+    assert actual is not None
+    assert (actual.texto, actual.texto_anterior) == ("nuevo", "el de siempre")
+
+
+def test_si_el_pendiente_quedo_corto_se_guarda_el_audio_de_memoria(tmp_path: Path) -> None:
+    """El escritor se atascó y cerró a medias: la grabación completa está en memoria."""
+    h, _ = _historial(tmp_path, conservar_audio=True)
+    corto = _pendiente(tmp_path, 1.0)
+    completo = Audio(muestras=np.full(SAMPLE_RATE * 6, 0.2, np.float32))
+    h.registrar(_reciente("seis segundos"), completo, corto)
+    audio = h.cargar_audio(1)
+    assert audio is not None and len(audio.muestras) == SAMPLE_RATE * 6
+    assert corto.exists()  # el corto lo borra el orquestador, que sabe si está a salvo
+
+
+def test_con_la_grabacion_apagada_al_arrancar_se_borra_la_que_hubiera(tmp_path: Path) -> None:
+    """Quien apaga conservar_audio no quiere que siga ahí siete días más."""
+    h, _ = _historial(tmp_path, conservar_audio=True)
+    h.registrar(_reciente("con grabación"), pendiente=_pendiente(tmp_path))
+    apagado, _ = _historial(tmp_path, conservar_audio=False)
+    apagado.limpiar_audio()
+    assert [e.audio for e in apagado.todas()] == [None]
+    assert list(apagado.carpeta_audio.iterdir()) == []
+
+
+def test_recortar_con_una_sola_entrada_tambien_se_lleva_la_grabacion(tmp_path: Path) -> None:
+    h, _ = _historial(tmp_path, maximo=1, conservar_audio=True, audio_maximo=50)
+    for i in range(3):
+        h.registrar(_reciente(f"dictado {i}"), pendiente=_pendiente(tmp_path, 1.0 + i / 10))
+    quedan = {e.audio for e in h.todas() if e.audio}
+    assert {f.name for f in h.carpeta_audio.iterdir()} == quedan

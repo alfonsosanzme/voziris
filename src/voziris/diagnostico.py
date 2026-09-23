@@ -68,7 +68,7 @@ def generar(carpeta: Path, ruta_log: Path | None = None, version: str = __versio
         _cola_del_log(ruta_log or carpeta / "voziris.log"),
         "",
         "== Fallos nativos (voziris-fallos.log) ==",
-        _cola_del_log(carpeta / "voziris-fallos.log", lineas=60),
+        _fallos_nativos(carpeta / "voziris-fallos.log"),
         "",
         "== Eventos de Windows sobre voziris.exe (últimos 30 días) ==",
         eventos_windows(),
@@ -91,6 +91,22 @@ def _ahora() -> str:
     import time
 
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fallos_nativos(ruta: Path) -> str:
+    """La cola de voziris-fallos.log, sin que las marcas de arranque parezcan fallos.
+
+    Desde VOZ-80 cada arranque de la bandeja deja una línea «=== fecha ·
+    arranque ===», para poder fechar los volcados. Si no hay nada más, no hubo
+    fallos, y así se dice.
+    """
+    cola = _cola_del_log(ruta, lineas=60)
+    if cola.startswith("("):
+        return cola
+    lineas = [ln for ln in cola.splitlines() if ln.strip()]
+    if all(ln.startswith("===") and "arranque de Voziris" in ln for ln in lineas):
+        return f"(sin fallos; {len(lineas)} arranque(s) anotado(s))"
+    return cola
 
 
 def _cola_del_log(ruta: Path, lineas: int = LINEAS_DE_LOG) -> str:

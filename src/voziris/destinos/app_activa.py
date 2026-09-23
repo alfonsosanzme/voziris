@@ -125,15 +125,18 @@ class AppActiva:
         return Entrega(ok=True, detalle=f"{verbo} en {app}")
 
     def _pegar(self, texto: str) -> None:
-        anterior = winapi.leer_portapapeles() if self._restaurar else None
-        winapi.escribir_portapapeles(texto)
-        time.sleep(ESPERA_TRAS_ESCRIBIR_MS / 1000)
-        winapi.soltar_modificadores()
-        winapi.pulsar_combinacion(winapi.VK_CONTROL, winapi.VK_V)
-        if self._restaurar:
-            time.sleep(RETARDO_RESTAURACION_MS / 1000)
-            if anterior is not None:
-                winapi.escribir_portapapeles(anterior)
+        # Entero bajo el cerrojo: guardar, escribir, Ctrl+V y restaurar son un solo
+        # gesto, y una copia desde la bandeja en medio lo estropea (VOZ-80).
+        with winapi.cerrojo_portapapeles:
+            anterior = winapi.leer_portapapeles() if self._restaurar else None
+            winapi.escribir_portapapeles(texto)
+            time.sleep(ESPERA_TRAS_ESCRIBIR_MS / 1000)
+            winapi.soltar_modificadores()
+            winapi.pulsar_combinacion(winapi.VK_CONTROL, winapi.VK_V)
+            if self._restaurar:
+                time.sleep(RETARDO_RESTAURACION_MS / 1000)
+                if anterior is not None:
+                    winapi.escribir_portapapeles(anterior)
 
     @staticmethod
     def app_en_primer_plano() -> str | None:

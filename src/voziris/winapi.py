@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from ctypes import wintypes
@@ -623,3 +624,16 @@ def escribir_portapapeles(texto: str) -> None:
             _user32.CloseClipboard()
         time.sleep(ESPERA_PORTAPAPELES_S)
     raise OSError(f"no se pudo escribir en el portapapeles: {ultimo}")
+
+
+cerrojo_portapapeles = threading.RLock()
+"""Lo toma quien usa el portapapeles en varios pasos (pegar: guardar lo que había,
+escribir, Ctrl+V, restaurar) y quien solo escribe en él. Sin esto, «Volver a
+transcribir» podía copiar su texto justo a mitad de un pegado: acababa pegado
+en la aplicación en lugar del dictado, o borrado por la restauración (VOZ-80)."""
+
+
+def copiar(texto: str) -> None:
+    """Deja `texto` en el portapapeles sin pisar un pegado que esté a medias."""
+    with cerrojo_portapapeles:
+        escribir_portapapeles(texto)

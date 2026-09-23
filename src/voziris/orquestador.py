@@ -106,6 +106,9 @@ ESPERA_ATASCO_S = 60.0
 No se corta nada: se deja escrito dónde está cada hilo (VOZ-80), que es lo
 que faltaba para saber por qué «se queda pillado».
 """
+DONDE_SE_ENTREGA = {"app_activa": "pegando en la ventana activa",
+                    "markdown": "escribiendo en el Markdown"}
+"""La fase de entrega dicha como la entiende quien usa Voziris, no con el nombre interno."""
 
 
 class Historial(Protocol):
@@ -120,9 +123,15 @@ class Historial(Protocol):
 
     def marcar_entregado(self, indice: int) -> bool: ...
 
+    def buscar(self, indice: int) -> EntradaHistorial | None: ...
+
     def cargar_audio(self, indice: int) -> Audio | None: ...
 
-    def cambiar_texto(self, indice: int, texto: str, motor: str) -> bool: ...
+    def cambiar_texto(
+        self, indice: int, texto: str, motor: str, momento: datetime | None = None
+    ) -> bool: ...
+
+    def podar_audio(self) -> int: ...
 
 
 @dataclass
@@ -152,7 +161,7 @@ class Orquestador:
         app_en_primer_plano: Callable[[], str | None] = lambda: None,
         pendientes: Pendientes | None = None,
         mezclador: Mezclador | None = None,
-        al_atasco: Callable[[str], None] = lambda _fase: None,
+        al_atasco: Callable[[str, bool], None] = lambda _fase, _hay_copia: None,
     ) -> None:
         self._captura = captura
         self._motor = motor
@@ -172,6 +181,11 @@ class Orquestador:
         self._al_atasco = al_atasco
         self._fase = ""
         """En qué está el hilo de trabajo: lo dice el vigía si el dictado se atasca."""
+        self._hay_copia = False
+        """Si lo que se está procesando ya tiene copia en disco (pendiente o historial)."""
+        self._pendiente_en_proceso: Path | None = None
+        """El archivo del dictado que se está procesando: el menú no debe ofrecerlo
+        como «sin transcribir» mientras tanto, o se transcribiría dos veces."""
 
         self._lock = threading.Lock()
         self._estado = Estado.REPOSO
@@ -382,6 +396,7 @@ class Orquestador:
                 self._fallar(f"Dictado descartado: {e}")
                 return
             pendiente = getattr(self._captura, "ultimo_pendiente", None)
+            self._pendiente_en_proceso = pendiente
             self._cambiar(Estado.PROCESANDO)
         log.info("grabación cerrada: %.1f s de audio", audio.duracion_s)
         self._tono("fin")
@@ -431,19 +446,48 @@ class Orquestador:
             self.empezar(modo, destino)
 
     def cancelar(self) -> None:
-        """Descarta el dictado en curso sin entregar nada."""
+        """Descarta el dictado en curso sin entregar nada.
+
+        Una grabación de `LARGO_PARA_GUARDAR_SIN_TEXTO_S` o más no se tira: se
+        cierra y queda en «Dictados sin transcribir» (VOZ-80). Un Esc a destiempo
+        tras un minuto hablando no debería costar el minuto; si de verdad sobra,
+        se borra desde el menú o se va sola a los siete días.
+        """
+        guardada = False
         with self._lock:
             if self._estado == Estado.GRABANDO:
                 self._escuchando_vad = False
-                self._captura.cancelar_dictado()
+                dictado = self._dictado
+                if dictado is not None and (
+                    time.monotonic() - dictado.inicio >= LARGO_PARA_GUARDAR_SIN_TEXTO_S
+                ):
+                    guardada = self._cerrar_sin_procesar()
+                if not guardada:
+                    self._captura.cancelar_dictado()
                 self._dictado = None
                 self._cambiar(Estado.REPOSO)
-                log.info("grabación cancelada")
+                log.info("grabación cancelada%s", " (se guarda en pendientes)" if guardada else "")
                 self._tono("error")
             elif self._estado == Estado.PROCESANDO and self._dictado is not None:
                 self._dictado.cancelado.set()  # el hilo de trabajo lo mira antes de entregar
             elif self._estado == Estado.ERROR:
                 self._cambiar(Estado.REPOSO)
+        if guardada:
+            self._avisar(
+                "Cancelado. La grabación queda en «Dictados sin transcribir», por si acaso"
+            )
+
+    def _cerrar_sin_procesar(self) -> bool:
+        """Con el lock tomado: cierra la grabación dejando su archivo en disco, sin procesarla.
+
+        True si el archivo quedó. Sin pendientes (o si no se pudo abrir), no hay
+        nada que guardar y quien llama la descarta como siempre.
+        """
+        if self._pendientes is None:
+            return False
+        with contextlib.suppress(MicrofonoNoDisponible):  # el archivo ya está cerrado igual
+            self._captura.terminar_dictado()
+        return getattr(self._captura, "ultimo_pendiente", None) is not None
 
     def _fallar(self, texto: str) -> None:
         """Con el lock tomado. Deja la aplicación viva y el icono en error."""
@@ -462,6 +506,7 @@ class Orquestador:
                 return
             dictado, audio, pendiente = trabajo
             a_salvo = False
+            self._hay_copia = pendiente is not None
             vigia = threading.Timer(ESPERA_ATASCO_S + audio.duracion_s, self._atascado)
             vigia.daemon = True
             vigia.start()
@@ -480,13 +525,29 @@ class Orquestador:
                     if self._estado == Estado.PROCESANDO:
                         self._cambiar(Estado.REPOSO)
             self._cerrar_pendiente(pendiente, a_salvo)
+            self._pendiente_en_proceso = None
+            self._podar()
+
+    @property
+    def pendiente_en_proceso(self) -> Path | None:
+        """El archivo del dictado que se está transcribiendo, si lo hay. Para el menú."""
+        return self._pendiente_en_proceso
+
+    def _podar(self) -> None:
+        """Después de pegar, no antes: la poda lee y borra, y no debe retrasar el pegado."""
+        if self._historial is None:
+            return
+        try:
+            self._historial.podar_audio()
+        except Exception:  # noqa: BLE001 — podar es mantenimiento, no puede tumbar nada
+            log.exception("no se pudo podar la grabación del historial")
 
     def _atascado(self) -> None:
         """Del vigía: el dictado lleva demasiado procesándose. Deja rastro, no mata nada."""
         fase = self._fase or "sin fase"
         log.warning("el dictado lleva demasiado tiempo procesándose (%s)", fase)
         try:
-            self._al_atasco(fase)
+            self._al_atasco(fase, self._hay_copia)
         except Exception:  # noqa: BLE001 — el vigía no puede empeorar el atasco
             log.exception("al_atasco falló")
 
@@ -523,9 +584,15 @@ class Orquestador:
                 self._fallar(f"No se pudo transcribir: {e}")
             return False
         except TranscripcionFallida as e:
-            self._avisar(f"Nada que escribir: {e}")
-            # Si es largo, False: el audio se queda en «Dictados sin transcribir».
-            return audio.duracion_s < LARGO_PARA_GUARDAR_SIN_TEXTO_S
+            if audio.duracion_s < LARGO_PARA_GUARDAR_SIN_TEXTO_S:
+                self._avisar(f"Nada que escribir: {e}")
+                return True
+            # Cinco segundos o más sin texto suele ser el motor, no silencio: el
+            # audio se queda en «Dictados sin transcribir», y se dice con el icono
+            # de error y un aviso de la bandeja, no solo 1,5 s en el indicador.
+            with self._lock:
+                self._fallar(f"No salió texto de {audio.duracion_s:.0f} s de audio ({e})")
+            return False
 
         self._fase = "post-procesando"
         transcripcion = self.postprocesar(transcripcion, ctx)
@@ -536,6 +603,8 @@ class Orquestador:
         # grabación, marcado como no entregado. Antes se guardaba después, y un
         # atasco al pegar se llevaba el texto por delante.
         entrada = self._registrar(dictado, transcripcion, False, ms_total, audio, pendiente)
+        if entrada is not None:
+            self._hay_copia = True
 
         if dictado.cancelado.is_set():
             # Cancelar es «no lo pegues», no «tíralo»: el texto ya existe y se
@@ -543,7 +612,7 @@ class Orquestador:
             log.info("dictado cancelado antes de entregar: el texto queda en el historial")
             return entrada is not None
 
-        self._fase = f"entregando en {ctx.destino}"
+        self._fase = DONDE_SE_ENTREGA.get(ctx.destino, f"entregando en {ctx.destino}")
         log.info("entregando en %s", ctx.destino)
         entregado, detalle = self.entregar(transcripcion.texto, ctx)
         if entregado and entrada is not None:
@@ -570,7 +639,10 @@ class Orquestador:
         """Transcribe un pendiente, lo deja en el historial y devuelve el texto.
 
         No entrega en ninguna ventana: quien llama lo copia al portapapeles.
-        El archivo solo se borra si el texto quedó en el historial.
+        El archivo solo se borra si el texto quedó en el historial, o si es
+        corto y no tenía nada. Si es largo y el motor vuelve a no sacar texto,
+        lanza `TranscripcionFallida` y el archivo se queda: un reintento que
+        falla igual no puede ser lo que borre diez minutos de dictado (VOZ-80).
         """
         if self._pendientes is None:
             return None
@@ -581,7 +653,9 @@ class Orquestador:
         try:
             transcripcion = self.postprocesar(self._transcribir(audio), ctx)
         except TranscripcionFallida:
-            self._pendientes.borrar(ruta)  # era silencio: no hay nada que recuperar
+            if audio.duracion_s >= LARGO_PARA_GUARDAR_SIN_TEXTO_S:
+                raise
+            self._pendientes.borrar(ruta)  # corto y sin nada: era silencio
             return ""
         ms_total = int((time.perf_counter() - t0) * 1000)
         dictado = Dictado(modo=Modo.CLAVAR, destino="app_activa")
@@ -593,28 +667,33 @@ class Orquestador:
 
     # --- volver a transcribir un dictado del historial (VOZ-80) ---------------------------
 
-    def retranscribir(self, indice: int) -> str | None:
+    def retranscribir(self, indice: int) -> Transcripcion | None:
         """Vuelve a transcribir la grabación de una entrada y le cambia el texto.
 
-        None si esa entrada ya no tiene grabación; "" si en la grabación no
-        hay nada que transcribir, y entonces el texto de antes se queda como
-        estaba. No pega en ninguna ventana: quien llama lo copia.
+        Devuelve la transcripción nueva, con sus avisos (que se diga si cayó al
+        motor local o si faltó la red). El texto de antes queda en
+        `texto_anterior`. None si la entrada ya no tiene grabación, o si
+        mientras se transcribía dejó de ser la misma (se borró y otro dictado
+        heredó su número). Si no sale texto, lanza `TranscripcionFallida` con el
+        motivo, y el texto de antes se queda como estaba. No pega en ninguna
+        ventana: quien llama lo copia.
         """
         if self._historial is None:
             return None
-        audio = self._historial.cargar_audio(indice)
-        if audio is None:
+        entrada = self._historial.buscar(indice)
+        audio = self._historial.cargar_audio(indice) if entrada is not None else None
+        if entrada is None or audio is None:
             return None
         ctx = Contexto(destino="app_activa", modo=Modo.CLAVAR, app_activa=None,
                        hay_red=self._hay_red(), nivel=self.nivel)
-        try:
-            transcripcion = self.postprocesar(self._transcribir(audio), ctx)
-        except TranscripcionFallida:
-            return ""
-        self._historial.cambiar_texto(indice, transcripcion.texto, transcripcion.motor)
+        transcripcion = self.postprocesar(self._transcribir(audio), ctx)
+        if not self._historial.cambiar_texto(
+            indice, transcripcion.texto, transcripcion.motor, entrada.momento
+        ):
+            return None
         log.info("dictado %d vuelto a transcribir por %s (%d caracteres)", indice,
                  transcripcion.motor, len(transcripcion.texto))
-        return transcripcion.texto
+        return transcripcion
 
     def _transcribir(self, audio: Audio) -> Transcripcion:
         self.motor_listo.wait()  # el primer dictado del día puede pillar el modelo cargando
