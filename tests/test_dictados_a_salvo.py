@@ -171,6 +171,19 @@ def test_sin_conservar_audio_el_pendiente_se_borra_como_antes(tmp_path: Path) ->
     assert not historial.carpeta_audio.exists()
 
 
+@pytest.mark.parametrize(("segundos", "se_guarda"), [(2.0, False), (6.0, True)])
+def test_un_dictado_largo_sin_texto_no_se_tira(
+    tmp_path: Path, segundos: float, se_guarda: bool
+) -> None:
+    """Seis segundos sin texto suele ser el motor, no silencio: se guarda para reintentarlo."""
+    orq, historial, pendientes, motor, destino = _montar(tmp_path, segundos=segundos)
+    motor.falla = TranscripcionFallida("no se oyó nada")
+    _dictar(orq)
+    orq.parar()
+    assert destino.textos == [] and historial.todas() == []
+    assert len(pendientes.listar()) == (1 if se_guarda else 0)
+
+
 # --- volver a transcribir -------------------------------------------------------------------------
 
 

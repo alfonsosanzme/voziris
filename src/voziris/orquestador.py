@@ -93,6 +93,13 @@ class Sonidos(Protocol):
     def error(self) -> None: ...
 
 
+LARGO_PARA_GUARDAR_SIN_TEXTO_S = 5.0
+"""Un dictado así de largo del que no sale texto se guarda para reintentarlo.
+
+Es más probable un fallo del motor (una API que devuelve vacío) que cinco
+segundos de silencio de verdad, y perderlo es justo lo que no se quiere
+(VOZ-80). Por debajo, suele ser un roce de tecla o un «dictar» sin hablar.
+"""
 ESPERA_ATASCO_S = 60.0
 """Procesar un dictado más que esto, más lo que dure su audio, es un atasco.
 
@@ -517,7 +524,8 @@ class Orquestador:
             return False
         except TranscripcionFallida as e:
             self._avisar(f"Nada que escribir: {e}")
-            return True
+            # Si es largo, False: el audio se queda en «Dictados sin transcribir».
+            return audio.duracion_s < LARGO_PARA_GUARDAR_SIN_TEXTO_S
 
         self._fase = "post-procesando"
         transcripcion = self.postprocesar(transcripcion, ctx)
