@@ -399,3 +399,20 @@ vídeo. Vídeos en mp4».
   - `normalizar` y el cálculo de energía trabajan por trozos, con salida idéntica bit a bit y el doble de rápidos (1,7 GB menos con 4 h);
   - la separación de hablantes pide unas 11 veces el audio de golpe (medido: 4,9 GB con 2 h), así que se comprueba contra la memoria libre y, si no cabe, se transcribe sin separar en lugar de morir a media hora de trabajo;
   - la ventana de progreso dice cuánto dura y cuánto va a tardar.
+
+### VOZ-80 · Ningún dictado se pierde, todos se ven, y se pueden volver a transcribir
+**Archivos:** `historial.py`, `orquestador.py`, `ui/bandeja.py`, `__main__.py`, `config.py`
+
+Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dictados.jsonl`, ninguno visible en «Últimos dictados»; ninguno con su grabación; y el texto se guardaba después de pegar.
+
+**Criterios de aceptación**
+- [x] «Últimos dictados» enseña el dictado de hace un momento. pystray en Windows construía el menú una vez y lo reutilizaba; tras un dictado nadie pedía rehacerlo. Ahora se rehace al abrirlo, en el hilo de la bandeja. Probado sobre el HMENU nativo, no sobre el menú de Python (que es donde miraba el test anterior, y por eso no lo vio).
+- [x] El texto entra en el historial ANTES de pegar, sin entregar, y se marca al pegar bien. Si el pegado se cuelga o el proceso muere a media entrega, lo dicho ya está a salvo.
+- [x] La grabación de los últimos dictados se conserva (`historial/audio/<indice>.f32`) moviendo el archivo que se escribía mientras se hablaba: sin copiar nada. Poda sola: 20 dictados, 7 días, 1 GB como mucho; la más reciente nunca.
+- [x] «Volver a transcribir la grabación» en cada dictado que la tenga. El texto nuevo sustituye al viejo y se deja copiado; si no sale nada, el de antes se queda.
+- [x] «Copiar el último dictado» a un clic, para cuando se pegó con el foco fuera del campo de texto.
+- [x] Opción nueva `conservar_audio` (activada). La antigua `guardar_audio` no la apaga: la plantilla la escribía a false en todas las instalaciones.
+- [x] Cada fase del dictado en el log (grabando, grabación cerrada, transcribiendo, entregando), sin lo dicho.
+- [x] Vigía: si un dictado pasa de 60 s más su duración procesándose, se vuelca dónde está cada hilo en `voziris-fallos.log` y se avisa. No corta nada.
+- [x] Cada arranque deja su fecha en `voziris-fallos.log`: los volcados de faulthandler no la llevan.
+- [x] Historial con cerrojo: el hilo de trabajo escribe mientras la bandeja lee y el usuario borra o copia.

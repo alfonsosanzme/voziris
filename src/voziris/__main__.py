@@ -128,9 +128,35 @@ def activar_faulthandler(carpeta: Path) -> None:
 
     try:
         _archivo_fallos = open(carpeta / "voziris-fallos.log", "a", encoding="utf-8")  # noqa: SIM115
+        # Los volcados de faulthandler no llevan fecha: sin esta línea no hay
+        # forma de saber a qué arranque pertenece cada uno (VOZ-80).
+        _archivo_fallos.write(f"\n=== {_ahora()} · arranque de Voziris {__version__} "
+                              f"(pid {os.getpid()}) ===\n")
+        _archivo_fallos.flush()
         faulthandler.enable(_archivo_fallos, all_threads=True)
     except OSError as e:
         log.warning("sin voziris-fallos.log: %s", e)
+
+
+def _ahora() -> str:
+    from datetime import datetime
+
+    return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
+
+
+def volcar_hilos(motivo: str) -> None:
+    """Deja en `voziris-fallos.log` dónde está cada hilo, sin matar nada. Para los atascos."""
+    if _archivo_fallos is None:
+        return
+    import faulthandler
+
+    try:
+        _archivo_fallos.write(f"\n=== {_ahora()} · {motivo} (el proceso sigue vivo) ===\n")
+        _archivo_fallos.flush()
+        faulthandler.dump_traceback(_archivo_fallos, all_threads=True)
+        _archivo_fallos.flush()
+    except (OSError, ValueError) as e:
+        log.warning("no se pudo volcar dónde estaba cada hilo: %s", e)
 
 
 def configurar_log(carpeta: Path, depurar: bool, a_consola: bool) -> None:
@@ -450,6 +476,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     def cambiar_estado(estado: str) -> None:
         if bandeja is not None:
             bandeja.estado(estado)
+            if estado in ("reposo", "error"):
+                # Un dictado ha terminado: el menú tiene que enseñarlo. Si la
+                # bandeja ya lo rehace al abrirse (Windows), esto no hace nada.
+                bandeja.actualizar_menu()
         if estado == "grabando":
             hud.mostrar_grabando(orq.modo or Modo.MANTENER if orq is not None else Modo.MANTENER)
         elif estado == "procesando":
@@ -485,8 +515,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
     h = configuracion.historial
     historial = Historial(
-        configuracion.carpeta / "historial" / "dictados.jsonl", h.entradas, h.guardar_audio,
-        destinos, contexto_de_reintento,
+        configuracion.carpeta / "historial" / "dictados.jsonl", h.entradas,
+        conservar_audio=h.conservar_audio or h.guardar_audio,
+        audio_maximo=h.audio_dictados, audio_dias=h.audio_dias,
+        destinos=destinos, contexto=contexto_de_reintento,
     )
 
     from voziris.audio.mezclador import Mezclador, control_del_sistema
@@ -514,6 +546,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         app_en_primer_plano=destinos["app_activa"].app_en_primer_plano,
         pendientes=pendientes,
         mezclador=mezclador,
+        al_atasco=lambda fase: al_atasco(fase),
     )
     orq.corte_por_silencio = configuracion.audio.corte_por_silencio
 
@@ -562,6 +595,44 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
     def en_curso_ahora() -> Path | None:
         return getattr(captura, "_escritor", None) and captura._escritor.ruta
+
+    def al_atasco(fase: str) -> None:
+        """Un dictado lleva demasiado procesándose: rastro para diagnosticar y aviso."""
+        volcar_hilos(f"dictado atascado ({fase})")
+        avisar(
+            f"Voziris se ha atascado {fase}. Lo dicho está guardado: si no se "
+            "desatasca, sal desde la bandeja y vuelve a abrirlo"
+        )
+
+    def retranscribir_entrada(indice: int) -> None:
+        """Desde «Últimos dictados»: vuelve a transcribir la grabación y deja el texto copiado."""
+        import threading
+
+        def trabajo() -> None:
+            hud.aviso("Transcribiendo otra vez la grabación…")
+            try:
+                texto = orq.retranscribir(indice)
+            except VozirisError as e:
+                avisar(f"No se pudo volver a transcribir: {e}")
+                return
+            except Exception as e:  # noqa: BLE001
+                log.exception("fallo volviendo a transcribir el dictado %d", indice)
+                avisar(f"No se pudo volver a transcribir: {e}")
+                return
+            if texto is None:
+                avisar("Ese dictado ya no tiene la grabación guardada")
+            elif not texto:
+                avisar("En esa grabación no había nada que transcribir")
+            else:
+                try:
+                    winapi.escribir_portapapeles(texto)
+                    avisar("Vuelto a transcribir: está copiado (Ctrl+V) y en Últimos dictados")
+                except OSError:
+                    avisar("Vuelto a transcribir: está en Últimos dictados")
+            if bandeja is not None:
+                bandeja.actualizar_menu()
+
+        threading.Thread(target=trabajo, name="voziris-retranscribir", daemon=True).start()
 
     def recuperar_pendiente(pendiente: Any) -> None:
         """Transcribe un audio que se quedó sin texto, lo copia y lo deja en el historial."""
@@ -703,6 +774,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         pendientes=lambda: pendientes.listar(excepto=en_curso_ahora()),
         recuperar=recuperar_pendiente,
         borrar_pendiente=borrar_pendiente,
+        retranscribir=retranscribir_entrada,
         salir=lambda: en_hilo_tk(raiz.quit),
         ver_registro=lambda: _abrir_con_windows(configuracion.carpeta / NOMBRE_LOG),
         diagnostico=lambda: _abrir_con_windows(_generar_diagnostico(configuracion.carpeta)),
@@ -748,6 +820,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             bandeja.estado("error")
         _ajustar_arranque_con_windows(configuracion, avisar)
         pendientes.limpiar()
+        historial.limpiar_audio()
         sin_texto = pendientes.listar()
         if sin_texto:
             avisar(

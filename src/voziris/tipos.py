@@ -104,4 +104,4 @@ class EntradaHistorial:
     indice: int = 0
     """Lo asigna el historial al registrar: es lo que identifica la entrada en el menú."""
     audio: str | None = None
-    """Nombre del WAV junto al historial, si `guardar_audio` estaba activo."""
+    """La grabación en `historial/audio/`, si se conserva. None cuando ya se ha podado."""

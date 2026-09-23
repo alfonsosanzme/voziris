@@ -186,7 +186,16 @@ class SeccionDestino:
 @dataclass
 class SeccionHistorial:
     entradas: int = 50
+    conservar_audio: bool = True
+    """Quedarse con la grabación de los últimos dictados para volver a transcribirlos."""
+    audio_dictados: int = 20
+    """De cuántos dictados se conserva la grabación, como mucho."""
+    audio_dias: int = 7
+    """Y de cuántos días atrás, como mucho."""
     guardar_audio: bool = False
+    """Antigua (antes de VOZ-80, WAV para depurar). Si está a true, cuenta como
+    `conservar_audio`; a false no apaga nada, porque la plantilla la escribía
+    así en todas las instalaciones sin que nadie la hubiera elegido."""
 
 
 @dataclass
@@ -353,7 +362,8 @@ _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "destino": (),
     "destino.app_activa": ("metodo", "restaurar_portapapeles", "auto_enter"),
     "destino.markdown": ("ruta", "formato", "sello", "separador"),
-    "historial": ("entradas", "guardar_audio"),
+    "historial": ("entradas", "conservar_audio", "audio_dictados", "audio_dias",
+                  "guardar_audio"),
 }
 
 
@@ -534,6 +544,13 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
     dh = SeccionHistorial()
     historial = SeccionHistorial(
         entradas=_rango(h, "historial", "entradas", int, 1, 10000, dh.entradas, errores),
+        conservar_audio=_leer(
+            h, "historial", "conservar_audio", bool, dh.conservar_audio, errores
+        ),
+        audio_dictados=_rango(
+            h, "historial", "audio_dictados", int, 1, 1000, dh.audio_dictados, errores
+        ),
+        audio_dias=_rango(h, "historial", "audio_dias", int, 1, 365, dh.audio_dias, errores),
         guardar_audio=_leer(h, "historial", "guardar_audio", bool, dh.guardar_audio, errores),
     )
 
@@ -610,6 +627,11 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
     """{"seccion.subseccion": {opcion: valor}} con los valores tal como van al TOML."""
     proceso = _campos(config.proceso)
     sustituciones = proceso.pop("sustituciones")
+    historial = _campos(config.historial)
+    if not historial["guardar_audio"]:
+        # La antigua: no se escribe si no está puesta. Así un config.toml
+        # nuevo no la estrena, y uno viejo la conserva tal cual (VOZ-80).
+        historial.pop("guardar_audio")
     return {
         "general": _campos(config.general),
         "atajos": _campos(config.atajos),
@@ -620,7 +642,7 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
         "proceso.sustituciones": dict(sustituciones),
         "destino.app_activa": _campos(config.destino.app_activa),
         "destino.markdown": _campos(config.destino.markdown),
-        "historial": _campos(config.historial),
+        "historial": historial,
     }
 
 

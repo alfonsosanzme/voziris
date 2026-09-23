@@ -135,8 +135,25 @@ class Historial:
     def __init__(self) -> None:
         self.entradas: list[EntradaHistorial] = []
 
-    def registrar(self, entrada: EntradaHistorial, audio: Audio | None = None) -> None:
+    def registrar(
+        self, entrada: EntradaHistorial, audio: Audio | None = None, pendiente: Path | None = None
+    ) -> EntradaHistorial:
+        entrada.indice = len(self.entradas) + 1
         self.entradas.append(entrada)
+        return entrada
+
+    def marcar_entregado(self, indice: int) -> bool:
+        for entrada in self.entradas:
+            if entrada.indice == indice:
+                entrada.entregado = True
+                return True
+        return False
+
+    def cargar_audio(self, indice: int) -> Audio | None:
+        return None
+
+    def cambiar_texto(self, indice: int, texto: str, motor: str) -> bool:
+        return False
 
 
 def _montar(tmp_path: Path) -> tuple[Orquestador, Pendientes, Motor, Destino, Historial, list[str]]:
