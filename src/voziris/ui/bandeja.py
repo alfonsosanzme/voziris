@@ -199,6 +199,10 @@ def rehacer_menu_al_abrir(
             abierto[0] = False
 
     manejadores[win32.WM_NOTIFY] = al_notificar
+    # pystray también rehace el menú tras cada clic en un elemento (su _handler
+    # llama a update_menu, que destruye antes de construir). Que ese camino use
+    # el mismo rehacer seguro.
+    icono._update_menu = rehacer
     return True
 
 
@@ -361,16 +365,24 @@ class Bandeja:
         import pystray
 
         accion = self._acciones.copiar
+        mostrado: list[int | None] = [None]
 
         def copiar() -> None:
-            ultimas = self._ultimas_seguro()  # al pulsar, lo de ahora, no lo de al abrir
+            # El que dice la etiqueta, aunque mientras el menú estaba abierto haya
+            # entrado otro: la etiqueta está para saber qué se va a pegar.
+            if mostrado[0] is not None:
+                accion(mostrado[0])
+                return
+            ultimas = self._ultimas_seguro()
             if ultimas:
                 accion(ultimas[0].indice)
 
         def etiqueta(_item: Any) -> str:
             ultimas = self._ultimas_seguro()
             if not ultimas:
+                mostrado[0] = None
                 return "Copiar el último dictado"
+            mostrado[0] = ultimas[0].indice
             return f"Copiar el último dictado ({resumen(ultimas[0], 28)})"
 
         return [
@@ -415,7 +427,7 @@ class Bandeja:
             if self._acciones.copiar_anterior is None or not entrada.texto_anterior:
                 return []
             accion, indice = self._acciones.copiar_anterior, entrada.indice
-            return [Item("Copiar el texto de antes de volver a transcribir",
+            return [Item("Copiar el texto original (el de antes de volver a transcribir)",
                          lambda: accion(indice))]
 
         return [

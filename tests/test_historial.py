@@ -409,3 +409,95 @@ def test_recortar_con_una_sola_entrada_tambien_se_lleva_la_grabacion(tmp_path: P
         h.registrar(_reciente(f"dictado {i}"), pendiente=_pendiente(tmp_path, 1.0 + i / 10))
     quedan = {e.audio for e in h.todas() if e.audio}
     assert {f.name for f in h.carpeta_audio.iterdir()} == quedan
+
+
+# --- tercera ronda de VOZ-80 ----------------------------------------------------------------------
+
+
+def test_un_historial_guardado_con_bom_se_sigue_leyendo(tmp_path: Path) -> None:
+    """El Bloc de notas antiguo o PowerShell 5 ponen BOM al guardar."""
+    h, _ = _historial(tmp_path)
+    h.registrar(_reciente("uno"))
+    h.ruta.write_bytes(b"\xef\xbb\xbf" + h.ruta.read_bytes())
+    assert [e.texto for e in h.todas()] == ["uno"]
+    assert h.registrar(_reciente("dos")).indice == 2  # sin reutilizar el índice del primero
+
+
+def test_una_linea_json_que_no_es_una_entrada_no_tumba_el_historial(tmp_path: Path) -> None:
+    h, _ = _historial(tmp_path)
+    h.registrar(_reciente("uno"))
+    with open(h.ruta, "a", encoding="utf-8") as archivo:
+        archivo.write("0\nnull\n[]\n\"texto suelto\"\n")
+    h.registrar(_reciente("dos"))
+    assert [e.texto for e in h.todas()] == ["uno", "dos"]
+
+
+def test_una_grabacion_sin_texto_se_rescata_a_pendientes_en_vez_de_borrarse(
+    tmp_path: Path,
+) -> None:
+    """La línea no llegó a disco (un apagón): la grabación es un dictado sin transcribir."""
+    from voziris.pendientes import Pendientes
+
+    h, _ = _historial(tmp_path, conservar_audio=True)
+    h.registrar(_reciente("con su línea"), pendiente=_pendiente(tmp_path, 1.1))
+    huerfana = h.carpeta_audio / "000002.f32"
+    np.full(SAMPLE_RATE * 3, 0.1, dtype="<f4").tofile(huerfana)
+    viejo_wav = h.carpeta_audio / "000003.wav"
+    viejo_wav.write_bytes(b"RIFF")
+    hace_una_hora = datetime.now().timestamp() - 3600
+    for ruta in (huerfana, viejo_wav):
+        os.utime(ruta, (hace_una_hora, hace_una_hora))
+
+    h.limpiar_audio()
+
+    assert not huerfana.exists() and not viejo_wav.exists()
+    [rescatado] = Pendientes(h.carpeta_pendientes).listar()
+    assert abs(rescatado.duracion_s - 3.0) < 0.01
+    assert rescatado.momento.hour == datetime.fromtimestamp(hace_una_hora).hour
+
+
+def test_sin_pendiente_y_sin_poder_escribir_la_linea_la_grabacion_va_a_pendientes(
+    tmp_path: Path,
+) -> None:
+    """Se escribió desde memoria: era la única copia y no se puede borrar."""
+    import stat
+
+    from voziris.pendientes import Pendientes
+
+    h, _ = _historial(tmp_path, conservar_audio=True)
+    h.registrar(_reciente("uno"))
+    os.chmod(h.ruta, stat.S_IREAD)
+    try:
+        with pytest.raises(OSError):
+            h.registrar(_reciente("dos"), Audio(muestras=np.full(SAMPLE_RATE * 2, 0.1,
+                                                                 np.float32)))
+    finally:
+        os.chmod(h.ruta, stat.S_IREAD | stat.S_IWRITE)
+    assert len(Pendientes(h.carpeta_pendientes).listar()) == 1
+    assert list(h.carpeta_audio.iterdir()) == []  # se fue a pendientes, no se borró
+
+
+def test_las_ilegibles_no_se_duplican_si_falla_la_reescritura(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import historial as modulo
+
+    h, _ = _historial(tmp_path)
+    h.registrar(_reciente("uno"))
+    with open(h.ruta, "a", encoding="utf-8") as archivo:
+        archivo.write('{"roto\n')
+    replace = os.replace
+    fallos = [1]
+
+    def replace_que_falla_una_vez(origen: object, destino: object) -> None:
+        if fallos:
+            fallos.pop()
+            raise PermissionError("otro programa tiene dictados.jsonl abierto")
+        replace(origen, destino)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(modulo.os, "replace", replace_que_falla_una_vez)
+    with pytest.raises(PermissionError):
+        h.marcar_entregado(1)
+    h.marcar_entregado(1)
+    apartado = h.ruta.with_name("dictados.ilegibles.jsonl")
+    assert apartado.read_text(encoding="utf-8").splitlines() == ['{"roto']

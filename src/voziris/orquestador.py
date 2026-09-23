@@ -663,6 +663,7 @@ class Orquestador:
             self._pendientes.borrar(ruta)  # si el historial ya se lo llevó, no hace nada
         log.info("pendiente %s recuperado por %s (%d caracteres)", ruta.name,
                  transcripcion.motor, len(transcripcion.texto))
+        self._podar()  # la grabación se ha ido al historial: que no pase del tope
         return transcripcion.texto
 
     # --- volver a transcribir un dictado del historial (VOZ-80) ---------------------------

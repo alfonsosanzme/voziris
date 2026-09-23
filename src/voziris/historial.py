@@ -204,15 +204,41 @@ class Historial:
         return None, None
 
     def _deshacer_audio(self, entrada: EntradaHistorial, movido: Path | None) -> None:
-        """La línea no se escribió: la grabación no se puede quedar huérfana."""
+        """La línea no se escribió: la grabación vuelve a «Dictados sin transcribir».
+
+        Si vino de un pendiente, a su sitio; si se escribió desde memoria, como
+        un pendiente nuevo. Nunca se borra: puede ser la única copia de lo dicho.
+        Si ni eso se puede, se queda donde está y la próxima poda la rescata.
+        """
         if entrada.audio:
             destino = self.carpeta_audio / entrada.audio
             with contextlib.suppress(OSError):
-                if movido is not None:
-                    os.replace(destino, movido)  # vuelve a «Dictados sin transcribir»
-                else:
-                    destino.unlink()
+                os.replace(destino, movido if movido is not None else self._rescate(destino))
         entrada.audio = None
+
+    @property
+    def carpeta_pendientes(self) -> Path:
+        """La de `pendientes.Pendientes`: vive junto al historial."""
+        return self._ruta.parent / "pendientes"
+
+    def _rescate(self, grabacion: Path) -> Path:
+        """Dónde poner una grabación sin texto para que salga en «Dictados sin transcribir».
+
+        Con el nombre de fecha que entiende `Pendientes`, para que el menú la
+        enseñe con la hora en que se grabó.
+        """
+        self.carpeta_pendientes.mkdir(parents=True, exist_ok=True)
+        try:
+            momento = datetime.fromtimestamp(grabacion.stat().st_mtime)
+        except OSError:
+            momento = datetime.now()
+        base = f"{momento:%Y%m%d-%H%M%S}-rescatado-{grabacion.stem}"
+        ruta = self.carpeta_pendientes / f"{base}{EXTENSION_AUDIO}"
+        n = 2
+        while ruta.exists():
+            ruta = self.carpeta_pendientes / f"{base}-{n}{EXTENSION_AUDIO}"
+            n += 1
+        return ruta
 
     def marcar_entregado(self, indice: int) -> bool:
         """El pegado fue bien: quita la marca de «sin entregar»."""
@@ -221,14 +247,17 @@ class Historial:
     def cambiar_texto(
         self, indice: int, texto: str, motor: str, momento: datetime | None = None
     ) -> bool:
-        """Tras volver a transcribir: el texto nuevo pasa delante y el de antes se guarda.
+        """Tras volver a transcribir: el texto nuevo pasa delante y el original se guarda.
 
         Con `momento`, solo si la entrada es la misma que se cargó. Los índices
         se reutilizan (un borrado del más nuevo deja su número libre), y sin
         esto una retranscripción lenta acababa escrita encima de otro dictado.
         """
         def cambiar(entrada: EntradaHistorial) -> None:
-            entrada.texto_anterior = entrada.texto
+            if entrada.texto_anterior is None:
+                # El original, solo la primera vez: si se vuelve a transcribir otra
+                # vez y sale igual de mal, el bueno de verdad no puede perderse.
+                entrada.texto_anterior = entrada.texto
             entrada.texto = texto
             entrada.motor = motor
 
@@ -296,7 +325,9 @@ class Historial:
         if not self._ruta.exists():
             return []
         entradas: list[EntradaHistorial] = []
-        with open(self._ruta, encoding="utf-8", errors="replace") as archivo:
+        # utf-8-sig: el Bloc de notas antiguo o PowerShell 5 ponen BOM, y sin
+        # esto la primera entrada se volvía ilegible y su índice se reutilizaba.
+        with open(self._ruta, encoding="utf-8-sig", errors="replace") as archivo:
             for linea in archivo:
                 linea = linea.strip()
                 if not linea.strip("\x00"):  # vacía, o la cola de ceros de un corte de luz
@@ -318,6 +349,8 @@ class Historial:
 
     @staticmethod
     def _de_dict(datos: dict[str, object]) -> EntradaHistorial:
+        if not isinstance(datos, dict):  # «0», «null», «[]»: JSON válido, entrada no
+            raise TypeError(f"no es una entrada: {type(datos).__name__}")
         duracion = float(datos.get("duracion_audio_s", 0.0))  # type: ignore[arg-type]
         return EntradaHistorial(
             momento=datetime.fromisoformat(str(datos["momento"])),
@@ -437,17 +470,30 @@ class Historial:
         return quitadas
 
     def _borrar_huerfanos(self, nombrados: set[str], quieto_s: float) -> int:
+        """Los archivos que ninguna entrada nombra. Devuelve cuántos ha quitado de aquí.
+
+        Una grabación .f32 sin entrada no es basura: es un dictado cuya línea no
+        llegó a escribirse (un apagón, un disco lleno). Se rescata a
+        «Dictados sin transcribir». Solo se borran los .wav del antiguo modo de
+        depuración y los que no tienen nada.
+        """
         if not self.carpeta_audio.is_dir():
             return 0
-        borrados = 0
+        quitados = 0
         for ruta in self.carpeta_audio.iterdir():
             if ruta.suffix not in (EXTENSION_AUDIO, ".wav") or ruta.name in nombrados:
                 continue
             with contextlib.suppress(OSError):
-                if time.time() - ruta.stat().st_mtime >= quieto_s:
+                info = ruta.stat()
+                if time.time() - info.st_mtime < quieto_s:
+                    continue  # puede ser de un registro a medias ahora mismo
+                if ruta.suffix == EXTENSION_AUDIO and info.st_size and self._conservar_audio:
+                    os.replace(ruta, self._rescate(ruta))
+                    log.warning("grabación sin texto rescatada a pendientes: %s", ruta.name)
+                else:
                     ruta.unlink()
-                    borrados += 1
-        return borrados
+                quitados += 1
+        return quitados
 
     def _reescribir(
         self, entradas: list[EntradaHistorial], borradas: list[EntradaHistorial]
@@ -458,24 +504,26 @@ class Historial:
         `dictados.ilegibles.jsonl`, porque pueden ser la única copia de un
         dictado y un editor a veces las arregla.
         """
-        sin_apartar: list[str] = []
-        if self._ilegibles:
-            apartado = self._ruta.with_name(self._ruta.stem + ".ilegibles.jsonl")
-            try:
-                with open(apartado, "a", encoding="utf-8", newline="\n") as archivo:
-                    archivo.write("\n".join(self._ilegibles) + "\n")
-            except OSError:
-                sin_apartar = self._ilegibles  # si no se pueden apartar, se quedan donde estaban
-            self._ilegibles = []
+        ilegibles, self._ilegibles = self._ilegibles, []
         temporal = self._ruta.with_suffix(".jsonl.tmp")
         with open(temporal, "w", encoding="utf-8", newline="\n") as archivo:
-            for linea in sin_apartar:
-                archivo.write(linea + "\n")
             for entrada in entradas:
                 archivo.write(json.dumps(self._a_dict(entrada), ensure_ascii=False) + "\n")
             archivo.flush()
             os.fsync(archivo.fileno())
         os.replace(temporal, self._ruta)
+        if ilegibles:
+            # Después del replace: si este fallara, seguirían en el principal y
+            # cada reescritura las volvería a apartar, duplicadas.
+            apartado = self._ruta.with_name(self._ruta.stem + ".ilegibles.jsonl")
+            try:
+                with open(apartado, "a", encoding="utf-8", newline="\n") as archivo:
+                    archivo.write("\n".join(ilegibles) + "\n")
+            except OSError:
+                with contextlib.suppress(OSError), open(
+                    self._ruta, "a", encoding="utf-8", newline="\n"
+                ) as archivo:
+                    archivo.write("\n".join(ilegibles) + "\n")  # donde estaban
         for entrada in borradas:
             if entrada.audio:
                 with contextlib.suppress(OSError):

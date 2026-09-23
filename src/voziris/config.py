@@ -193,9 +193,10 @@ class SeccionHistorial:
     audio_dias: int = 7
     """Y de cuántos días atrás, como mucho."""
     guardar_audio: bool = False
-    """Antigua (antes de VOZ-80, WAV para depurar). Si está a true, cuenta como
-    `conservar_audio`; a false no apaga nada, porque la plantilla la escribía
-    así en todas las instalaciones sin que nadie la hubiera elegido."""
+    """Antigua (antes de VOZ-80, WAV para depurar). Ya no hace nada: la grabación
+    la decide `conservar_audio`. Se acepta para no dar error con un config.toml
+    viejo, y al guardar se quita si está a false, que es como la escribía la
+    plantilla en todas las instalaciones."""
 
 
 @dataclass

@@ -429,3 +429,13 @@ Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dicta
 - [x] Poda después de pegar; con `conservar_audio = false` se borra lo ya guardado.
 - [x] Al guardar ajustes, un `guardar_audio = false` de la plantilla vieja se quita, y `conservar_audio` entra con su comentario.
 - [x] pystray fijada a 0.19.x: el enganche toca sus internos.
+
+**Tras la verificación de la segunda ronda** (los arreglos aguantan con el icono real, su bucle de mensajes real y la captura real; esto es lo que no):
+- [x] Copiar desde la bandeja espera como mucho 0,5 s a un pegado: sin límite, un pegado colgado congelaba la bandeja entera, «Salir» incluido (regresión de la segunda ronda).
+- [x] Una grabación que ninguna entrada nombra (la línea no llegó a disco) se rescata a «Dictados sin transcribir» en vez de borrarse; y si la línea no se escribe y el audio venía de memoria, va también ahí, nunca a la papelera.
+- [x] El historial se lee con BOM, y una línea JSON que no es una entrada no tumba la lectura.
+- [x] Volver a transcribir guarda el texto original, no solo el anterior: dos intentos malos no se llevan el bueno.
+- [x] «Copiar el último dictado» copia el que dice la etiqueta aunque entre otro con el menú abierto.
+- [x] El rehacer seguro vale también cuando pystray rehace el menú tras pulsar un elemento.
+- [x] Recuperar poda la grabación; el mismo audio no se recupera dos veces a la vez.
+- [x] Cada proceso (también «Transcribir» del Explorador) deja su marca en voziris-fallos.log, y el diagnóstico busca volcados en todo el archivo y solo enseña las marcas que tienen uno detrás.

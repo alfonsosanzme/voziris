@@ -272,13 +272,20 @@ def test_volver_a_transcribir_guarda_el_texto_de_antes_y_dice_sus_avisos(banco: 
     entrada = b.historial.buscar(1)
     assert entrada is not None
     assert (entrada.texto, entrada.texto_anterior) == ("Hola, mundo entero.", "Hola, mundo.")
+
+    # Una segunda vez que sale igual de mal no se lleva el original.
+    b.motor.texto = "Hola, mundo peor todavía."
+    b.motor.avisos = []
+    b.orq.retranscribir(1)
+    entrada = b.historial.buscar(1)
+    assert entrada is not None and entrada.texto_anterior == "Hola, mundo."
     assert b.destino.textos == ["Hola, mundo."]  # no pega en ninguna ventana
 
     b.motor.falla = TranscripcionFallida("no se oyó nada")
     with pytest.raises(TranscripcionFallida):
         b.orq.retranscribir(1)
     entrada = b.historial.buscar(1)
-    assert entrada is not None and entrada.texto == "Hola, mundo entero."  # el de antes se queda
+    assert entrada is not None and entrada.texto == "Hola, mundo peor todavía."  # se queda
 
     assert b.orq.retranscribir(99) is None
 
@@ -472,10 +479,10 @@ def test_volver_a_transcribir_y_el_texto_de_antes_solo_donde_toca() -> None:
     acciones = {str(a.text): a for a in con.submenu.items}
     assert "Volver a transcribir la grabación (1:23)" in acciones
     acciones["Volver a transcribir la grabación (1:23)"](None)
-    acciones["Copiar el texto de antes de volver a transcribir"](None)
+    acciones["Copiar el texto original (el de antes de volver a transcribir)"](None)
     assert pedidos == [("otra vez", 3), ("antes", 3)]
     etiquetas_sin = [str(a.text) for a in sin.submenu.items]
-    assert not any("Volver a transcribir" in t or "de antes" in t for t in etiquetas_sin)
+    assert not any("Volver a transcribir" in t or "original" in t for t in etiquetas_sin)
 
 
 def test_si_el_historial_no_se_puede_leer_el_menu_no_se_rompe() -> None:
@@ -710,7 +717,7 @@ def test_cada_arranque_y_cada_atasco_dejan_fecha_en_el_archivo_de_fallos(
         if principal._archivo_fallos is not None:
             principal._archivo_fallos.close()
     texto = (tmp_path / "voziris-fallos.log").read_text(encoding="utf-8")
-    assert "· arranque de Voziris" in texto and "(pid " in texto
+    assert "· arranque de Voziris 0.1.0: bandeja (pid " in texto
     assert "· dictado atascado (pegando en la ventana activa) (el proceso sigue vivo) ===" in texto
     assert "Thread 0x" in texto or "Current thread 0x" in texto  # el volcado de verdad
     assert "test_cada_arranque_y_cada_atasco" in texto  # con la línea de Python de cada hilo
@@ -752,3 +759,102 @@ def test_volcar_hilos_sin_archivo_no_hace_nada(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(principal, "_archivo_fallos", None)
     principal.volcar_hilos("nada")  # no lanza
     principal.anotar_arranque_en_fallos()  # tampoco
+
+
+# --- tercera ronda: lo que encontró la verificación de la segunda --------------------------------
+
+
+def test_copiar_no_espera_para_siempre_a_un_pegado_colgado() -> None:
+    """Se llama desde el hilo de la bandeja: esperar sin límite la congelaba entera."""
+    from voziris import winapi
+
+    tomado, soltar = threading.Event(), threading.Event()
+
+    def pegado_colgado() -> None:
+        with winapi.cerrojo_portapapeles:
+            tomado.set()
+            soltar.wait(5)
+
+    colgado = threading.Thread(target=pegado_colgado)
+    colgado.start()
+    try:
+        assert tomado.wait(2)
+        t0 = time.monotonic()
+        with pytest.raises(OSError, match="pegando"):
+            winapi.copiar("lo que se quería copiar")
+        assert time.monotonic() - t0 < 2 * winapi.ESPERA_PEGADO_S + 0.5
+    finally:
+        soltar.set()
+        colgado.join()
+
+
+def test_copiar_el_ultimo_copia_el_que_dice_la_etiqueta() -> None:
+    """Si con el menú abierto entra otro dictado, se copia el que se ve, no el nuevo."""
+    copiados: list[int] = []
+    historial = [_entrada("El que se ve", 5)]
+    bandeja = Bandeja(_acciones(copiar=copiados.append), ultimas=lambda: list(historial))
+    copiar = [i for i in bandeja.construir_menu().items
+              if str(i.text).startswith("Copiar el último")][0]
+    assert "El que se ve" in str(copiar.text)  # el menú se abre: la etiqueta se calcula
+    historial.insert(0, _entrada("Otro que entra con el menú abierto", 6))
+    copiar(None)
+    assert copiados == [5]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="es el menú nativo de Windows")
+def test_tras_pulsar_un_elemento_pystray_tambien_rehace_seguro(icono_de: Any) -> None:
+    """pystray rehace el menú tras cada clic con su _update_menu, que destruye primero."""
+    roto = [False]
+
+    def motor() -> str:
+        if roto[0]:
+            raise RuntimeError("una marca del menú que revienta")
+        return "auto"
+
+    bandeja = Bandeja(_acciones(), motor_actual=motor)
+    icono = icono_de(bandeja)
+    icono.update_menu()
+    viejo = icono._menu_handle[0]
+    roto[0] = True
+    with contextlib.suppress(RuntimeError):
+        icono.update_menu()  # lo que hace pystray tras pulsar un elemento
+    assert icono._menu_handle[0] == viejo and _es_menu(viejo)
+
+
+def test_recuperar_tambien_poda_la_grabacion(tmp_path: Path) -> None:
+    pendientes = Pendientes(tmp_path / "historial" / "pendientes")
+    historial = Historial(tmp_path / "historial" / "dictados.jsonl", conservar_audio=True,
+                          audio_maximo=1)
+    orq = Orquestador(Captura(pendientes, 2.0), Motor(), {"app_activa": Destino()}, [],
+                      historial=historial, pendientes=pendientes)
+    orq.arrancar()
+    try:
+        assert orq.motor_listo.wait(3)
+        for _ in range(2):
+            escritor = pendientes.abrir()
+            assert escritor is not None
+            escritor.escribir(np.full(SAMPLE_RATE * 2, 0.1, dtype=np.float32))
+            orq.recuperar(escritor.cerrar())
+    finally:
+        orq.parar()
+    assert [e.indice for e in historial.todas() if e.audio] == [2]
+
+
+def test_cada_proceso_deja_su_marca_y_el_diagnostico_encuentra_los_volcados_viejos(
+    tmp_path: Path,
+) -> None:
+    """Un volcado de «Transcribir» no puede quedar bajo la marca de la bandeja, y uno de hace
+    un mes no puede desaparecer detrás de treinta marcas de arranque."""
+    from voziris.diagnostico import _fallos_nativos
+
+    ruta = tmp_path / "voziris-fallos.log"
+    lineas = ["", "=== 2026-08-20 10:00:00 · arranque de Voziris 0.1.0: transcribir (pid 9) ===",
+              "Windows fatal exception: code 0xc0000005", "", "Current thread 0x1 (most recent):",
+              '  File "voziris\\hablantes.py", line 88 in separar']
+    for dia in range(30):
+        lineas += ["", f"=== 2026-09-{dia % 28 + 1:02d} 07:00:00 · arranque de Voziris 0.1.0: "
+                       f"bandeja (pid {100 + dia}) ==="]
+    ruta.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+    salida = _fallos_nativos(ruta)
+    assert "transcribir (pid 9)" in salida and "0xc0000005" in salida
+    assert "bandeja (pid" not in salida  # las marcas sin volcado no se enseñan

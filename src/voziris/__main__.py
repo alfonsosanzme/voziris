@@ -133,19 +133,19 @@ def activar_faulthandler(carpeta: Path) -> None:
         log.warning("sin voziris-fallos.log: %s", e)
 
 
-def anotar_arranque_en_fallos() -> None:
-    """Una línea con la fecha en `voziris-fallos.log` al arrancar la app de bandeja.
+def anotar_arranque_en_fallos(modo: str = "bandeja") -> None:
+    """Una línea con la fecha, el modo y el pid en `voziris-fallos.log`.
 
-    Los volcados de faulthandler no llevan fecha: sin esta línea no hay forma
-    de saber a qué arranque pertenece cada uno (VOZ-80). Solo la app de
-    bandeja: la consola, «Transcribir» del Explorador o el diagnóstico
-    llenarían el archivo de cabeceras y echarían de la vista los volcados de
-    verdad.
+    Los volcados de faulthandler no llevan fecha ni dicen de qué proceso son:
+    sin esta línea no hay forma de saber a qué arranque pertenece cada uno
+    (VOZ-80). Cada proceso la suya, también «Transcribir» del Explorador, que
+    es el de más código nativo. El diagnóstico se salta las marcas que no
+    tienen un volcado detrás, así que no echan de la vista los de verdad.
     """
     if _archivo_fallos is None:
         return
     try:
-        _archivo_fallos.write(f"\n=== {_ahora()} · arranque de Voziris {__version__} "
+        _archivo_fallos.write(f"\n=== {_ahora()} · arranque de Voziris {__version__}: {modo} "
                               f"(pid {os.getpid()}) ===\n")
         _archivo_fallos.flush()
     except (OSError, ValueError) as e:
@@ -440,7 +440,6 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     from voziris.orquestador import Orquestador
     from voziris.ui.bandeja import AccionesBandeja, Bandeja, texto_acerca_de
 
-    anotar_arranque_en_fallos()
     raiz = tk.Tk()
     raiz.withdraw()
     cola_ui: queue.Queue[Callable[[], object]] = queue.Queue()
@@ -621,14 +620,21 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         except OSError as e:
             avisar(f"No se pudo copiar: {e}")
 
+    import threading as _hilos
+
+    recuperando: set[Path] = set()
+    cerrojo_recuperando = _hilos.Lock()
+
     def en_curso_ahora() -> list[Path]:
         """Los archivos que no son «sin transcribir» aunque estén en pendientes/: el que
-        se está grabando y el que se está transcribiendo. Si no, el menú los ofrecería
-        y recuperarlos los transcribiría dos veces."""
+        se está grabando, el que se está transcribiendo y los que se están recuperando.
+        Si no, el menú los ofrecería y recuperarlos los transcribiría dos veces."""
         escritor = getattr(captura, "_escritor", None)
         en_uso = [escritor.ruta] if escritor is not None else []
         if orq.pendiente_en_proceso is not None:
             en_uso.append(orq.pendiente_en_proceso)
+        with cerrojo_recuperando:
+            en_uso.extend(recuperando)
         return en_uso
 
     def al_atasco(fase: str, hay_copia: bool) -> None:
@@ -687,7 +693,22 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
         from voziris.errores import TranscripcionFallida
 
+        with cerrojo_recuperando:
+            if pendiente.ruta in recuperando:
+                # Un segundo clic mientras se transcribe: dos llamadas al motor y
+                # dos entradas con el mismo texto.
+                hud.aviso("Ese audio ya se está transcribiendo")
+                return
+            recuperando.add(pendiente.ruta)
+
         def trabajo() -> None:
+            try:
+                recuperar_ya()
+            finally:
+                with cerrojo_recuperando:
+                    recuperando.discard(pendiente.ruta)
+
+        def recuperar_ya() -> None:
             hud.aviso("Transcribiendo el audio guardado…")
             try:
                 texto = orq.recuperar(pendiente.ruta)
@@ -1156,6 +1177,11 @@ def main(argv: list[str] | None = None) -> int:
         carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug
     )
     activar_faulthandler(carpeta)
+    anotar_arranque_en_fallos(
+        "instalar" if args.instalar else "desinstalar" if args.desinstalar
+        else "diagnóstico" if args.diagnostico else "consola" if consola
+        else "transcribir" if transcribir else "bandeja"
+    )
     log.info("arrancando Voziris %s", __version__)  # la marca de tiempo del arranque
 
     if args.instalar:
