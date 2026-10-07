@@ -169,6 +169,46 @@ def test_fallo_de_carga_no_lanza_y_se_explica(tmp_path: Path, onnx_falso: dict[s
         motor.transcribir(_audio(), "es")
 
 
+def test_sin_red_la_primera_vez_lo_dice_en_castellano(
+    tmp_path: Path, onnx_falso: dict[str, Any]
+) -> None:
+    """VOZ-81: antes, «ni la API ni el motor local están disponibles», y la causa al log."""
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    onnx_falso["falla"] = LocalEntryNotFoundError("Please check your internet connection")
+    motor = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
+    motor.precalentar()
+    assert motor.error is not None
+    assert motor.error.startswith("No hay conexión para descargar el modelo de voz (unos 640 MB)")
+
+
+def test_sin_red_con_el_modelo_ya_bajado_no_culpa_a_la_red(
+    tmp_path: Path, onnx_falso: dict[str, Any]
+) -> None:
+    motor = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
+    motor.precalentar()  # descarga
+    otro = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
+    fallo = RuntimeError("fallo raro")
+    fallo.__cause__ = ConnectionError("sin red")
+    onnx_falso["falla"] = fallo
+    otro.precalentar()
+    assert otro.error == "No se pudo cargar el modelo local: fallo raro"
+
+
+def test_onnxruntime_que_no_carga_se_explica(
+    tmp_path: Path, onnx_falso: dict[str, Any]
+) -> None:
+    onnx_falso["falla"] = ImportError(
+        "DLL load failed while importing onnxruntime_pybind11_state: Una directiva de "
+        "Control de aplicaciones bloqueó este archivo."
+    )
+    motor = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
+    motor.precalentar()
+    assert motor.error is not None
+    assert "Windows no deja cargar el motor de voz (onnxruntime)" in motor.error
+    assert "Control inteligente de aplicaciones" in motor.error
+
+
 def test_precalentar_dos_veces_carga_una(tmp_path: Path, onnx_falso: dict[str, Any]) -> None:
     motor = MotorLocal("nemo-parakeet-tdt-0.6b-v3", tmp_path)
     motor.precalentar()

@@ -93,13 +93,31 @@ class Pista:
         return f"{self.n + 1}: {self.canales} {canales}"
 
 
+def _av() -> Any:
+    """PyAV, o un error que dice por qué no carga.
+
+    Antes era «Falta PyAV, que decodifica el audio», y la causa se perdía. Un
+    compañero lo recibió con el paquete completo: basta con que el antivirus
+    se quede UNA de las 74 DLL de PyAV, y Windows no dice cuál (VOZ-81).
+    """
+    try:
+        import av
+    except (ImportError, OSError) as e:
+        log.exception("PyAV no carga")
+        from voziris.integridad import explicar_fallo_de_carga
+
+        raise ArchivoNoLegible(
+            explicar_fallo_de_carga("PyAV, que decodifica grabaciones y vídeos", e)
+        ) from e
+    return av
+
+
 def pistas(ruta: Path) -> list[Pista]:
     """Las pistas de audio del archivo, sin decodificar nada."""
-    import av
-
     ruta = Path(ruta)
     if not ruta.is_file():
         raise ArchivoNoLegible(f"No existe {ruta}")
+    av = _av()
     try:
         with av.open(str(ruta)) as contenedor:
             return _pistas_de(contenedor)
@@ -260,10 +278,7 @@ def decodificar(
     ruta = Path(ruta)
     if not ruta.is_file():
         raise ArchivoNoLegible(f"No existe {ruta}")
-    try:
-        import av
-    except ImportError as e:  # pragma: no cover - dependencia declarada
-        raise ArchivoNoLegible("Falta PyAV, que decodifica el audio") from e
+    av = _av()
 
     avisos: list[str] = []
     try:

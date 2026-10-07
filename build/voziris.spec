@@ -63,10 +63,7 @@ a = Analysis(
         "sherpa_onnx",
         "av",
         "pystray._win32",
-        "win32gui",
-        "win32con",
         "win32api",
-        "win32process",
         "pythoncom",
         "win32com.client",
         "tkinter",
@@ -81,6 +78,11 @@ a = Analysis(
         # Nada de esto se usa y engorda el paquete de forma notable
         "torch", "tensorflow", "transformers", "matplotlib",
         "scipy", "pandas", "IPython", "pytest", "faster_whisper", "ctranslate2",
+        # Pythonwin (VOZ-81): entra porque el hook de win32com recoge sus
+        # navegadores de tipos, que nadie usa. win32ui.pyd pide mfc140u.dll,
+        # que no va en el paquete: si algo lo importara, fallaría en un
+        # Windows sin el redistribuible. Mejor que no esté.
+        "win32ui", "win32uiole", "dde", "pythonwin",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

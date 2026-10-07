@@ -64,9 +64,26 @@ desde `_internal/` a `config.toml`, arrancar y responder a `voziris.exe
 python tools/empaquetar.py
 ```
 
-Crea `Instalar Voziris.cmd` junto al ejecutable, comprime la carpeta sin
-`config.toml`, `modelos/`, `historial/` ni los logs, y deja el SHA-256 en
+Si PyInstaller dejó el paquete en otra carpeta: `--dist <carpeta>/voziris`.
+
+Crea `Instalar Voziris.cmd` y la guía `LÉEME - Instalar Voziris.html`
+(copiada de `docs/LEEME-instalar.html`) junto al ejecutable, escribe en
+`_internal/` el manifiesto (`voziris-manifiesto.txt`) y las versiones de cada
+paquete (`voziris-versiones.txt`), comprime la carpeta sin `config.toml`,
+`modelos/`, `historial/` ni los logs, y deja el SHA-256 en
 `build/dist/SHA256SUMS.txt` y en `docs/notas-release.md`.
+
+Antes de comprimir se niega a seguir (VOZ-81) si:
+
+- falta alguno de los runtimes de Visual C++ en `_internal/`;
+- alguna ruta del paquete pasa de 100 caracteres, porque «Extraer todo» se
+  salta las rutas largas y quien pulsa «Omitir» se queda sin esos archivos;
+- `voziris.exe --comprobar` no carga PyAV, onnxruntime, sherpa-onnx y demás,
+  no decodifica un audio de prueba o no crea un acceso directo.
+
+Lo último se puede repetir a mano sobre cualquier copia:
+`voziris.exe --comprobar` imprime una línea por prueba y sale con 0 si todo
+carga.
 
 El ZIP tiene que pesar menos de 200 MB (con ffmpeg y sherpa-onnx dentro; sin
 la transcripción de grabaciones eran 120). El hash va en las notas de la
@@ -90,6 +107,14 @@ convierte «funciona aquí» en «funciona»:
       ajustes viajan con ella.
 - [ ] Si el antivirus lo marca: comprobar que el SHA-256 del ZIP coincide con
       el publicado y anotar qué antivirus y qué firma dice.
+- [ ] Borrar una DLL de `_internal\av.libs` en la carpeta extraída: el
+      instalador se niega y nombra el archivo; en la portable, «Transcribir»
+      dice qué archivo falta.
+- [ ] En un Windows 11 con **Control inteligente de aplicaciones** activado:
+      anotar si deja abrir la carpeta extraída, si el instalador se niega
+      («Windows no deja ejecutar Voziris…») y si el acceso de Inicio abre la
+      instalada. El paquete no está firmado: hasta que lo esté, aquí puede
+      bloquearlo, y lo que se espera es que lo explique, no que lo evite.
 
 ## 5. Publicar
 
