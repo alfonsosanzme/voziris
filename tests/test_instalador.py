@@ -117,6 +117,28 @@ def test_reinstalar_no_pisa_la_configuracion_ni_el_modelo(tmp_path: Path, regist
     assert (destino / "_internal" / "nuevo.dll").exists()
 
 
+def test_actualizar_no_pisa_el_historial_de_la_instalada(tmp_path: Path, registro: int) -> None:
+    """Quien abre la voziris.exe nueva antes de instalarla deja en ella un historial de una línea.
+
+    Copiarlo encima borraba el de la instalada (visto al verificar la 0.1.1).
+    """
+    origen = _paquete(tmp_path)
+    destino = tmp_path / "Programs" / "Voziris"
+    kwargs = dict(menu_inicio=tmp_path / "menu", startup=tmp_path / "st",
+                  raiz_registro=registro, clave_registro=CLAVE_PRUEBAS,
+                  base_menu=BASE_MENU_PRUEBAS)
+    instalador.instalar(origen, destino, **kwargs)  # type: ignore[arg-type]
+    (destino / "historial").mkdir()
+    meses = "".join(f'{{"texto": "dictado {i}"}}\n' for i in range(300))
+    (destino / "historial" / "dictados.jsonl").write_text(meses, encoding="utf-8")
+    (origen / "historial").mkdir()
+    (origen / "historial" / "dictados.jsonl").write_text('{"texto": "prueba"}\n', encoding="utf-8")
+    (origen / "historial" / "solo-en-la-nueva.txt").write_text("x", encoding="utf-8")
+    instalador.instalar(origen, destino, **kwargs)  # type: ignore[arg-type]
+    assert (destino / "historial" / "dictados.jsonl").read_text(encoding="utf-8") == meses
+    assert (destino / "historial" / "solo-en-la-nueva.txt").exists()  # lo que no está, sí viaja
+
+
 def test_desinstalar_quita_todo(tmp_path: Path, registro: int) -> None:
     import winreg
 

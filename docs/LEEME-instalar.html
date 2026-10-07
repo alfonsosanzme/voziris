@@ -79,7 +79,7 @@
   <li><strong>Desbloquea el ZIP antes de abrirlo.</strong> Clic derecho sobre el archivo <code>voziris-…-win64.zip</code> → <em>Propiedades</em> → abajo, marca <strong>Desbloquear</strong> → <em>Aceptar</em>. Así Windows no te preguntará por cada archivo al ejecutarlo.<br>
   <span class="sub">Si no aparece la casilla, no pasa nada: sigue.</span></li>
 
-  <li><strong>Extráelo entero.</strong> Clic derecho sobre el ZIP → <strong>Extraer todo…</strong> y elige una carpeta (Documentos, por ejemplo). No lo ejecutes desde dentro del ZIP sin extraer. Son unos mil archivos: <strong>espera a que termine</strong> la extracción antes de seguir.
+  <li><strong>Extráelo entero, en una carpeta nueva.</strong> Clic derecho sobre el ZIP → <strong>Extraer todo…</strong> y elige una carpeta (Documentos, por ejemplo). No lo extraigas encima de una versión anterior, ni lo ejecutes desde dentro del ZIP sin extraer. Son unos mil archivos: <strong>espera a que termine</strong> la extracción antes de seguir.
     <div class="aviso">Si Windows dice que <strong>una ruta es demasiado larga</strong>, no pulses <em>Omitir</em>: te dejaría el programa a medias sin avisar. Pulsa <em>Cancelar</em> y extrae en una carpeta más corta, como Documentos.</div>
   </li>
 
@@ -165,7 +165,7 @@
 <p>Algunos equipos con Windows 11 tienen activado <strong>Control inteligente de aplicaciones</strong>, que bloquea los programas sin firma digital que Microsoft todavía no conoce. Voziris no está firmado, así que puede tocarle. Lo reconocerás por el aviso «Control inteligente de aplicaciones ha bloqueado un archivo que podría no ser seguro». Ese aviso no tiene botón para saltárselo. Lo decide archivo por archivo: puede dejar abrir el programa desde la carpeta extraída y bloquearlo en la instalada.</p>
 <ol>
   <li><strong>Usa la copia que funciona.</strong> Abre <code>voziris.exe</code> desde la carpeta donde extrajiste el ZIP y, para tenerlo a mano, clic derecho sobre él → <strong>Anclar a Inicio</strong>. Deja esa carpeta donde está: es tu Voziris.</li>
-  <li><strong>O quita la marca de «descargado de Internet»</strong> a la instalada. Abre PowerShell (sin administrador) y pega:
+  <li><strong>Solo si la instalaste con la versión 0.1.0:</strong> quita a la instalada la marca de «descargado de Internet», que esa versión copiaba (desde la 0.1.1 el instalador ya la quita). Abre PowerShell (sin administrador) y pega:
     <pre><code>Get-ChildItem "$env:LOCALAPPDATA\Programs\Voziris" -Recurse | Unblock-File
 Unblock-File "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Voziris.lnk"</code></pre>
     Si después sigue bloqueado, vuelve a la opción 1.</li>
