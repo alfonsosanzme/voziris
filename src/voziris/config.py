@@ -641,6 +641,10 @@ def _leer_documento(ruta: Path) -> tomlkit.TOMLDocument:
         return tomlkit.parse(ruta.read_text(encoding="utf-8"))
     except TOMLKitError as e:
         raise ConfigInvalida(f"{ruta} no es un TOML válido: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ConfigInvalida(
+            f"{ruta} no está guardado en UTF-8: vuelve a guardarlo con esa codificación ({e})"
+        ) from e
     except OSError as e:
         raise ConfigInvalida(f"No se puede leer {ruta}: {e}") from e
 

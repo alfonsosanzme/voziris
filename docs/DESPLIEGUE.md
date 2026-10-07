@@ -218,11 +218,14 @@ No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de p
 3. Bandeja → «Buscar actualizaciones» → «Actualizar a la <publicada>…».
 4. Comprueba lo siguiente:
    - sale la ventana de progreso, y Cancelar no deja nada;
-   - si no cancelas, la bandeja se cierra y se abre la versión publicada, con el aviso «Voziris actualizado»;
+   - si no cancelas, la bandeja se cierra y se abre la versión publicada;
    - `config.toml`, `modelos/` e `historial/` siguen intactos;
-   - `voziris-actualizar.log` y `voziris-instalar.log` están en la carpeta de la instalación.
+   - `voziris-actualizar.log` está en la carpeta de la instalación.
 
-Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la publicada.
+Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la **publicada**, y lo que se ve al final depende de cuál sea:
+
+- **Si la publicada es la 0.1.1** (el caso de la primera prueba, con la 0.1.2): su instalador termina con «Voziris instalado» y no con «Voziris actualizado». Escribe su registro en `voziris.log` y no en `voziris-instalar.log`, y no toma el mutex de instalar. Por eso la ventana de `--actualizar` sigue abierta unos 3 minutos (`ESPERA_INSTALADOR_S`) antes de cerrarse sola. Todo eso es lo esperado.
+- **Si la publicada es la 0.1.2 o posterior:** el aviso dice «Voziris actualizado», el registro del instalador está en `voziris-instalar.log` junto a la instalación, y `--actualizar` se cierra en cuanto el instalador arranca.
 
 **6.3. Máquina limpia.** La lista a mano está en `docs/RELEASE.md` §4 y no se repite aquí. Incluye Windows sin Python, un USB, el arranque en menos de 3 segundos y Control inteligente de aplicaciones. Más detalles en el último apartado de este documento.
 

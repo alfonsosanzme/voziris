@@ -908,9 +908,11 @@ def test_actualizar_bloqueado_por_windows(
     monkeypatch.setattr(principal, "_lanzar_desatendido", bloqueado)
     assert principal._actualizar_cli() == 1
     assert "Control inteligente" in cli["errores"][0]
-    # El .cmd lanzaría el mismo .exe bloqueado: se remite al LÉEME, no a él.
+    # El .cmd lanzaría el mismo .exe bloqueado: se remite al LÉEME, no a él. Y al que va
+    # dentro de la descarga, que es donde está: la página de la release no lo tiene.
     assert "Instalar Voziris.cmd" not in cli["errores"][0]
     assert "Si Windows lo bloquea" in cli["errores"][0]
+    assert principal.NOMBRE_GUIA in cli["errores"][0] and str(exe.parent) in cli["errores"][0]
 
 
 def test_si_el_instalador_no_arranca_por_otra_cosa_se_ofrece_el_cmd(
@@ -1418,3 +1420,67 @@ def test_el_diagnostico_recoge_los_registros_de_actualizar_e_instalar(
     (tmp_path / "voziris-instalar.log").write_text("linea de instalar\n", encoding="utf-8")
     texto = diagnostico.generar(tmp_path).read_text(encoding="utf-8")
     assert "linea de actualizar" in texto and "linea de instalar" in texto
+
+
+# --- lo que encontró la cuarta revisión -----------------------------------------------------
+
+
+def test_un_guardado_desde_la_bandeja_no_deshace_lo_desmarcado_sin_guardar(
+    raiz: Any, tmp_path: Path
+) -> None:
+    """Desmarcar en Ajustes, cambiar el motor desde la bandeja y luego Guardar: queda «no»."""
+    from voziris import __main__ as principal
+
+    (tmp_path / "vault").mkdir()
+    ruta = _plantilla(tmp_path, "sí")
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'ruta = "C:/Users/CAMBIAME/vault/entrada.md"', 'ruta = "./vault/entrada.md"'),
+        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    a = _casilla(raiz, c)
+    casilla = a._vars["actualizaciones.buscar"]
+    casilla.set(False)  # el clic, aún sin guardar
+    c.general.motor = "local"  # lo que hace cambiar_motor desde la bandeja…
+    cfg.guardar(c, estricto=False)
+    a.reflejar_buscar(c.actualizaciones.buscar, forzar=False)  # …y su reflejo en el panel
+    assert casilla.get() is False
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    assert not principal._puede_mirar_versiones(cfg.cargar(ruta))
+    a.cerrar()
+
+
+def test_el_reflejo_sin_cambio_pendiente_pone_la_casilla_al_dia(raiz: Any, tmp_path: Path) -> None:
+    c = cfg.cargar(_plantilla(tmp_path, "sí"))
+    a = _casilla(raiz, c)
+    a.reflejar_buscar("no", forzar=False)  # «no» adoptado del archivo, sin nada pendiente
+    assert a._vars["actualizaciones.buscar"].get() is False
+    a.cerrar()
+
+
+@pytest.mark.parametrize("codificacion", ["cp1252", "utf-16"])
+def test_un_config_que_no_esta_en_utf8_da_un_error_claro(
+    tmp_path: Path, codificacion: str
+) -> None:
+    from voziris import __main__ as principal
+    from voziris.errores import ConfigInvalida
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    ruta.write_bytes(ruta.read_text(encoding="utf-8").encode(codificacion))
+    error = principal._guardar_respuesta(c, False)  # la respuesta no se pierde sin más
+    assert error is not None and "UTF-8" in error
+    assert c.actualizaciones.buscar == "no"  # vale hasta reiniciar
+    with pytest.raises(ConfigInvalida, match="UTF-8"):
+        cfg.cargar(ruta)
+
+
+def test_el_cmd_del_zip_manda_al_registro_del_instalador() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("empaquetar", RAIZ / "tools" / "empaquetar.py")
+    assert spec is not None and spec.loader is not None
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    assert "voziris-instalar.log" in modulo.INSTALAR_CMD
+    assert " voziris.log" not in modulo.INSTALAR_CMD

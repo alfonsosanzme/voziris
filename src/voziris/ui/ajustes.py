@@ -626,18 +626,26 @@ class Ajustes:
 
     # --- guardar -------------------------------------------------------------------------------
 
-    def reflejar_buscar(self, valor: str) -> None:
+    def reflejar_buscar(self, valor: str, forzar: bool = True) -> None:
         """Pone la casilla de las versiones nuevas como está de verdad (VOZ-82).
 
         Al contestar la tarjeta del arranque con el panel abierto, la casilla
         seguía como al abrirlo: con «sí» activo se veía vacía, y desmarcarla no
         lo apagaba. Con el panel cerrado no hace nada: al abrirlo se lee.
+
+        Args:
+            forzar: con False (tras un guardado desde la bandeja), una casilla que
+                el usuario ha cambiado y aún no ha guardado no se toca: su clic
+                es lo último que ha dicho. Solo se mueve el punto de partida, para
+                que ese cambio siga contando al pulsar Guardar.
         """
         si = valor == "sí"
-        self._buscar_al_abrir = si
         variable = self._vars.get("actualizaciones.buscar")
-        if variable is not None and self._ventana is not None:
-            variable.set(si)
+        abierto = variable is not None and self._ventana is not None
+        pendiente = abierto and bool(self._valor("actualizaciones.buscar")) != self._buscar_al_abrir
+        self._buscar_al_abrir = si
+        if abierto and (forzar or not pendiente):
+            variable.set(si)  # type: ignore[union-attr]
 
     def _valor(self, clave: str) -> Any:
         """El valor de una variable de Tk. `Variable.get` no lleva tipos en typeshed."""

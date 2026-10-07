@@ -58,7 +58,7 @@ if not exist "%~dp0_internal\\voziris-manifiesto.txt" goto incompleto
 if errorlevel 1 (
   echo.
   echo No se ha instalado. El motivo esta en el aviso que acaba de salir
-  echo y en voziris.log, en esta misma carpeta.
+  echo y en voziris-instalar.log, en esta misma carpeta.
   pause
 )
 goto :eof

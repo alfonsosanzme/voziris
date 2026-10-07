@@ -932,7 +932,9 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     def reflejar_buscar_en_ajustes() -> None:
         """Tras guardar desde la bandeja, que puede haber adoptado un `buscar` escrito a
         mano: que la casilla del panel, si está abierto, enseñe lo que vale de verdad."""
-        en_hilo_tk(lambda: ajustes.reflejar_buscar(configuracion.actualizaciones.buscar))
+        en_hilo_tk(lambda: ajustes.reflejar_buscar(
+            configuracion.actualizaciones.buscar, forzar=False
+        ))
 
     from voziris import actualizaciones
 
@@ -1009,7 +1011,11 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         """En el hilo de Tk, como el panel de ajustes: no se pisan."""
         tarjeta.clear()
         error = _guardar_respuesta(configuracion, si)
-        if error:
+        if error and si:
+            # El Vigilante mira también el archivo, que sigue sin el «sí».
+            avisar(f"No se pudo guardar tu respuesta en config.toml ({error}). Hasta que se "
+                   "pueda, Voziris no mirará si hay versiones nuevas")
+        elif error:
             avisar(f"Respuesta aplicada hasta reiniciar; no se pudo guardar config.toml: {error}")
         ajustes.reflejar_buscar(configuracion.actualizaciones.buscar)
         if si:
@@ -1550,6 +1556,8 @@ MUTEX_INSTALAR = "Local\\Voziris.Instalar"
 """Una instalación a la vez."""
 MUTEX_ACTUALIZAR = "Local\\Voziris.Actualizar"
 """Una actualización a la vez: un segundo clic en el menú no lanza otra."""
+NOMBRE_GUIA = "LÉEME - Instalar Voziris.html"
+"""La guía que va en el ZIP junto a voziris.exe (`tools/empaquetar.py`)."""
 SALIDA_NADA_QUE_INSTALAR = 2
 """`--actualizar` termina así cuando no arranca ningún instalador: ya está al día, ya hay
 otra en marcha, o la versión no trae paquete y se ha abierto su página. La bandeja lo usa
@@ -1650,9 +1658,10 @@ def _actualizar_cli() -> int:
                 "Windows no deja abrir la versión nueva: lo ha bloqueado una directiva de "
                 "control de aplicaciones. En Windows 11 suele ser «Control inteligente de "
                 "aplicaciones», que bloquea los programas sin firma digital que Microsoft "
-                "no conoce.\n\nLa versión que tienes sigue funcionando. Para usar la nueva, "
-                "mira el apartado «Si Windows lo bloquea» del LÉEME, en "
-                f"{novedad.pagina}"
+                "no conoce.\n\nLa versión que tienes sigue funcionando. Qué hacer para usar "
+                "la nueva lo explica el apartado «Si Windows lo bloquea» de "
+                f"«{NOMBRE_GUIA}», que está en {exe.parent} (esa carpeta se borra en el "
+                "próximo arranque de Voziris pasada una hora: cópiala si la quieres)."
             )
         else:
             texto = (
