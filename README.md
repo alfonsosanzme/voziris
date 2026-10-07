@@ -483,6 +483,7 @@ release.
 | `docs/PLAN.md` | El plan de desarrollo: comportamiento, hilos, fallos, pruebas |
 | `docs/H0.md` | Veredicto del hito 0: medidas del motor local en el equipo real |
 | `docs/RELEASE.md` | Cómo verificar el paquete y publicar una versión |
+| `docs/DESPLIEGUE.md` | Publicar una versión de principio a fin: release, enlace del blog, equipos y vuelta atrás |
 | `docs/LEEME-instalar.html` | La guía que viaja en el ZIP, para quien lo instala |
 | `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
