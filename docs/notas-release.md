@@ -94,7 +94,7 @@ conectar una clave de Groq.
 
 ```
 SHA-256  voziris-0.1.1-win64.zip
-e1edd782aa0fc837c5b98531f141c85a7c6e838bd6dc151c2623dabba93d3351
+6cc615079d8018897bb043bedbb22c81cc7e5ec358af1402edacc23035841d87
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
