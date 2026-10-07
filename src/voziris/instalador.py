@@ -16,6 +16,7 @@ desinstalar. Se hace sin permisos de administrador:
 
 `config.toml`, `modelos/` e `historial/` viajan con la copia si estaban al
 lado del ejecutable: no hay que volver a descargar 640 MB ni reconfigurar.
+Lo que ya esté en la instalación no se pisa: al actualizar, manda lo instalado.
 
 Con la instalación va también el menú contextual del Explorador: botón
 derecho sobre un .m4a (o .mp3, .wav…) → «Transcribir con Voziris» → «Una sola
@@ -648,9 +649,17 @@ def _borrar_clave(raiz: int, clave: str) -> bool:
 
 
 def _copiar_arbol(fuente: Path, destino: Path) -> None:
-    """Los datos del usuario (modelos/, historial/): se copia encima de lo que haya."""
+    """Los datos del usuario (modelos/, historial/): solo lo que no esté ya en la instalación.
+
+    Lo que hay en la instalación manda, igual que con config.toml. Si quien
+    actualiza abre antes la voziris.exe recién extraída, esa carpeta tiene
+    su propio historial/dictados.jsonl de una línea, y copiarlo encima
+    borraba el historial de meses de la instalada (visto al verificar la 0.1.1).
+    """
 
     def copiar(origen: str, copia: str) -> str:
+        if Path(copia).exists():
+            return copia
         _copiar_archivo(Path(origen), Path(copia))
         return copia
 

@@ -210,6 +210,43 @@ def test_si_el_acceso_no_la_arranca_se_abre_el_exe_y_se_explica(
     assert aviso is not None and "Control inteligente" not in aviso
 
 
+def test_si_la_instalacion_falla_tras_cerrar_la_abierta_se_vuelve_a_abrir(
+    instalada: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import instalador
+
+    destino = tmp_path / "Programs" / "Voziris"
+    destino.mkdir(parents=True)
+    (destino / "voziris.exe").write_bytes(b"MZ")
+    monkeypatch.setattr(instalador, "carpeta_instalacion", lambda: destino)
+    monkeypatch.setattr(principal, "_cerrar_la_abierta", lambda: None)
+    instalada["abiertas"].append("la que estaba")  # hay una Voziris abierta
+    errores: list[str] = []
+    monkeypatch.setattr(principal, "_error_fatal",
+                        lambda mensaje, con_ventana, titulo="": errores.append(mensaje))
+
+    def instalar(**k: Any) -> Path:
+        k["antes_de_sustituir"]()  # la cierra…
+        raise instalador.InstalacionFallida("no se pudo sustituir")  # …y falla después
+
+    monkeypatch.setattr(instalador, "instalar", instalar)
+    monkeypatch.setattr("voziris.ui.transcripcion.ejecutar_con_progreso",
+                        lambda titulo, detalle, trabajo: trabajo(lambda m, f: None))
+    assert principal._instalar_cli() == 1
+    assert errores == ["no se pudo sustituir"]
+    assert instalada["lanzadas"] == [[str(destino / "voziris.exe")]]  # vuelve a estar abierta
+
+    instalada["lanzadas"].clear()
+    instalada["abiertas"].clear()  # si no había ninguna abierta, no se abre nada
+
+    def falla_antes(**k: Any) -> Path:
+        raise instalador.InstalacionFallida("falta un archivo")
+
+    monkeypatch.setattr(instalador, "instalar", falla_antes)
+    assert principal._instalar_cli() == 1
+    assert instalada["lanzadas"] == []
+
+
 def test_revisar_paquete_avisa_de_lo_que_falta(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

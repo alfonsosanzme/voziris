@@ -20,17 +20,25 @@ silencio y de que, cuando algo falla, el aviso diga qué hacer.
   - Revisa que la carpeta extraída esté completa.
   - Copia el programa aparte y comprueba que esa copia arranca.
   - Solo entonces sustituye la versión anterior. Si algo falla por el camino,
-    la anterior se queda como estaba.
+    la anterior se queda como estaba y se vuelve a abrir.
   - Ya no arrastra la marca de «descargado de Internet» a la copia instalada.
+  - Al actualizar, no pisa la configuración, el modelo ni el historial que
+    ya tengas instalados.
+  - Muestra una ventana con el progreso. Tarda algo más que antes, porque
+    comprueba cada archivo.
 - **Control inteligente de aplicaciones de Windows 11.** Si esa protección
   bloquea Voziris, el instalador lo detecta y explica qué hacer. La guía del
   ZIP tiene un apartado nuevo, «Si Windows lo bloquea».
-- **Sin conexión en el primer arranque**, el aviso dice que falta descargar el
-  modelo de voz. Antes decía «ni la API ni el motor local están disponibles».
-- **Transcribir abre el archivo antes de cargar el modelo.** Un archivo dañado
-  se nota al momento, no tras esperar a la carga.
-- **El diagnóstico de la bandeja** comprueba el paquete y recoge los bloqueos
-  que haya anotado Windows.
+- **Al transcribir un archivo sin conexión la primera vez**, el aviso dice que
+  falta descargar el modelo de voz. Antes decía «ni la API ni el motor local
+  están disponibles».
+- **Transcribir abre el archivo antes de cargar el modelo.** Si no se puede
+  abrir, o a la instalación le falta PyAV, se sabe al momento y no tras esperar
+  a la carga.
+- **Registro aparte para las transcripciones de archivos.** Su registro está en
+  `voziris-transcribir.log`, junto a `voziris.log`.
+- **El diagnóstico de la bandeja** comprueba el paquete, recoge los bloqueos
+  que haya anotado Windows e incluye ese registro de transcripciones.
 
 ## Qué hay
 
@@ -58,17 +66,29 @@ silencio y de que, cuando algo falla, el aviso diga qué hacer.
 
 ## Instalación
 
-Descomprime el ZIP **entero** y ejecuta `voziris.exe`. El primer arranque
-descarga el modelo local (640 MB) a `modelos/`; mientras tanto puedes usar el
-motor por API. Dentro va `LÉEME - Instalar Voziris.html`, con la instalación en
-el equipo y cómo conectar una clave de Groq.
+Descomprime el ZIP **entero**, en una carpeta nueva, y ejecuta `voziris.exe`.
+El primer arranque descarga el modelo local (640 MB) a `modelos/`. Hasta que
+termina, los dictados esperan, también con el motor por API. Dentro va
+`LÉEME - Instalar Voziris.html`, con la instalación en el equipo y cómo
+conectar una clave de Groq.
 
 **Si ya tenías la 0.1.0:**
 
-- **Instalada:** extrae este ZIP y ejecuta su `Instalar Voziris.cmd`. Se
-  quedan tu configuración, el modelo descargado y el historial.
-- **Portable:** copia `config.toml`, `modelos/` e `historial/` de la carpeta
-  vieja a la nueva.
+- **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
+  `Instalar Voziris.cmd`. Cierra la Voziris abierta solo cuando va a
+  sustituirla. Se quedan tu configuración, el modelo descargado y el historial.
+- **Portable, y quieres instalarla:** copia `config.toml`, `modelos/` e
+  `historial/` de la carpeta vieja junto al `voziris.exe` nuevo y ejecuta
+  `Instalar Voziris.cmd`. La instalación se los lleva y el arranque con Windows
+  pasa a la instalada.
+- **Portable, y quieres seguir en portable:**
+  - Cierra la vieja (bandeja → Salir).
+  - Copia esas tres cosas a la carpeta nueva.
+  - Si arrancaba con Windows, abre los Ajustes de la nueva: desmarca
+    «Arrancar con Windows» y pulsa Guardar, y luego márcalo y Guardar otra vez.
+    Si no, al iniciar sesión seguiría abriéndose la vieja.
+  - Si usabas el botón derecho del Explorador, ejecuta
+    `voziris.exe --menu-contextual` desde la carpeta nueva.
 
 ## Verificación del archivo
 
@@ -89,6 +109,8 @@ has descargado tiene este hash, es el que se publicó aquí.
   - En equipos con **Control inteligente de aplicaciones** activado, Windows
     puede bloquear la copia instalada. Esto pasa aunque deje abrir la carpeta
     extraída. La guía explica qué hacer.
+- Si el primer arranque no tiene conexión, la bandeja solo dice que el motor de
+  voz no está disponible. Conéctate y vuelve a abrir Voziris.
 - Sobre una ventana que corre como administrador, Windows no entrega la
   pulsación sintética: el dictado queda en el historial y en el portapapeles.
 - Solo se conserva el portapapeles si contenía texto.

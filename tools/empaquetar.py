@@ -51,6 +51,7 @@ dentro quedan 159 para la carpeta donde se extrae.
 INSTALAR_CMD = """@echo off
 rem Instala Voziris para este usuario: menu Inicio y "Aplicaciones instaladas".
 rem No pide administrador. Para volver al modo portable: voziris.exe --desinstalar
+if not exist "%~dp0voziris.exe" goto incompleto
 if not exist "%~dp0_internal\\{python_dll}" goto incompleto
 if not exist "%~dp0_internal\\voziris-manifiesto.txt" goto incompleto
 "%~dp0voziris.exe" --instalar
@@ -64,9 +65,10 @@ goto :eof
 
 :incompleto
 echo.
-echo A esta carpeta le falta parte de Voziris: el ZIP no se ha extraido entero.
-echo Vuelve a extraerlo (boton derecho sobre el ZIP, "Extraer todo"), espera
-echo a que termine y abre este archivo desde la carpeta extraida.
+echo A esta carpeta le falta parte de Voziris: el ZIP no se ha extraido entero,
+echo o el antivirus ha retirado algun archivo (mira su cuarentena).
+echo Vuelve a extraerlo (boton derecho sobre el ZIP, "Extraer todo") en una
+echo carpeta nueva, espera a que termine y abre este archivo desde ahi.
 echo.
 pause
 """
@@ -124,7 +126,10 @@ def main(argv: list[str] | None = None) -> int:
         for p in _lo_que_va_en_el_zip(dist, integridad):
             archivo.write(p, Path("voziris") / p.relative_to(dist))
     h = hashlib.sha256(zip_path.read_bytes()).hexdigest()
-    (dist.parent / "SHA256SUMS.txt").write_text(f"{h}  {zip_path.name}\n", encoding="ascii")
+    # Con LF: con CRLF, `sha256sum -c` (Linux, macOS, Git Bash) da FAILED con el hash bueno.
+    (dist.parent / "SHA256SUMS.txt").write_text(
+        f"{h}  {zip_path.name}\n", encoding="ascii", newline="\n"
+    )
 
     notas = RAIZ / "docs" / "notas-release.md"
     if notas.exists():
@@ -170,8 +175,10 @@ def _rutas_largas(dist: Path, archivos: list[Path]) -> list[str]:
 
 
 def _escribir_versiones(destino: Path, version: str) -> None:
-    """Qué lleva el paquete, para saber con qué se compiló cuando algo falle en otro equipo.
+    """El entorno con el que se compiló, para cuando algo falle en otro equipo.
 
+    Es el `pip freeze` entero del entorno de compilación, no solo lo que va en
+    el paquete: incluye herramientas (pytest, ruff…) que PyInstaller no mete.
     Sin rutas del equipo que compila: el paquete se reparte, y `pip freeze`
     escribe las instalaciones editables con su carpeta, nombre de usuario incluido.
     """
@@ -186,6 +193,7 @@ def _escribir_versiones(destino: Path, version: str) -> None:
     ]
     destino.write_text(
         f"# Voziris {version} · compilado el {time.strftime('%Y-%m-%d %H:%M')}\n"
+        f"# Entorno de compilación (pip freeze), no solo lo que va en el paquete\n"
         f"# Python {sys.version.split()[0]}\n" + "\n".join(lineas) + "\n",
         encoding="utf-8", newline="\n",
     )

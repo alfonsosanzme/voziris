@@ -1164,6 +1164,11 @@ def _instalar_cli() -> int:
     from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
 
     titulo_error = "Voziris no se ha instalado"
+    cerrada: list[bool] = []
+
+    def cerrar_la_abierta() -> None:
+        cerrada.append(winapi.ES_WINDOWS and winapi.hay_instancia_abierta())
+        _cerrar_la_abierta()
 
     def trabajo(progreso: Callable[[str, float | None], None]) -> Path:
         return instalador.instalar(
@@ -1172,7 +1177,7 @@ def _instalar_cli() -> int:
             ),
             # La Voziris abierta se cierra justo antes de cambiar el programa, no al
             # empezar: si la instalación no sigue, el usuario no se queda sin ella.
-            antes_de_sustituir=_cerrar_la_abierta,
+            antes_de_sustituir=cerrar_la_abierta,
             al_progresar=progreso,
             pausar_volcados=volcados_en_pausa,
         )
@@ -1186,10 +1191,12 @@ def _instalar_cli() -> int:
         _mensaje("Instalación cancelada", "No se ha cambiado nada.")
         return 3
     except instalador.InstalacionFallida as e:
+        _reabrir_si_se_cerro(any(cerrada), instalador.carpeta_instalacion())
         _error_fatal(str(e), con_ventana=True, titulo=titulo_error)
         return 1
     except Exception as e:  # noqa: BLE001 — sin esto, el cuadro de PyInstaller con la traza
         log.exception("instalación fallida")
+        _reabrir_si_se_cerro(any(cerrada), instalador.carpeta_instalacion())
         _error_fatal(f"No se pudo instalar Voziris: {e}", con_ventana=True, titulo=titulo_error)
         return 1
     log.info("instalado en %s", destino)
@@ -1202,6 +1209,23 @@ def _instalar_cli() -> int:
         + (f"\n\n{aviso}" if aviso else ""),
     )
     return 0
+
+
+def _reabrir_si_se_cerro(se_cerro: bool, destino: Path) -> None:
+    """La instalación cerró la Voziris abierta y luego falló: que el usuario no se quede sin ella.
+
+    El programa de antes sigue en su sitio (la sustitución se deshace). Se
+    abre la instalada si está, y si no, esta misma copia.
+    """
+    if not se_cerro:
+        return
+    exe = destino / "voziris.exe"
+    orden = [str(exe)] if exe.is_file() else _comando_propio()
+    try:
+        _lanzar_desatendido(orden, cwd=exe.parent if exe.is_file() else None)
+        log.info("se vuelve a abrir la Voziris que se cerró para instalar: %s", orden[0])
+    except OSError as e:
+        log.warning("no se pudo volver a abrir Voziris: %s", e)
 
 
 def _abrir_la_instalada(destino: Path) -> str | None:

@@ -41,8 +41,8 @@ por unos 0,60 $ al mes; en local, por cero.
    **empieza a descargar el modelo local** (640 MB, una sola vez, a la
    carpeta `modelos/` junto al ejecutable). Con una conexión normal tarda
    entre uno y tres minutos; la bandeja avisa del progreso.
-4. Mientras baja, o si prefieres no esperar, puedes usar el motor por API:
-   menú de la bandeja → Motor → API (necesita una clave, ver abajo).
+4. Espera a que termine: hasta entonces los dictados se quedan esperando,
+   también con el motor por API, porque el local es su respaldo.
 5. Pon el cursor en cualquier aplicación, mantén `Ctrl+Win`, habla, suelta.
 
 El primer arranque también copia `config.ejemplo.toml` a `config.toml` y,
