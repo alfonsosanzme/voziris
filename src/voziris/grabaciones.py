@@ -39,7 +39,13 @@ VENTANA_MAXIMA_S = 30.0
 BUSQUEDA_DE_CORTE_S = 4.0
 """Cuánto se mira alrededor del corte teórico para caer en el punto más silencioso."""
 TROZO_MINIMO_S = 0.8
-"""Una intervención más corta no da texto fiable (el motor se inventa un «Yeah»)."""
+"""Lo mínimo que se le pasa al motor: con menos, el texto no es fiable.
+
+Una intervención más corta no se tira, que así se perdían los «Buenos días.»
+sueltos (0,79 y 0,71 s, medido el 1 de octubre): se alarga hasta aquí con el
+silencio de alrededor (`con_margen`). Si el motor se inventa un «Yeah» en un
+trozo así, lo caza `parece_relleno`.
+"""
 PAUSA_DE_PARRAFO_S = 1.5
 """En una sola voz, un silencio así separa párrafos."""
 VECES_EL_AUDIO_QUE_PIDEN_LOS_HABLANTES = 11
@@ -144,7 +150,9 @@ PALABRAS_FRECUENTES_ES = frozenset(
     "suyos suyas nuestro nuestra nuestros nuestras vuestro vuestra vuestros vuestras esos "
     "esas estoy estás está estamos estáis están esté estés estemos estéis estén estaré "
     "vale bueno claro pues entonces bien soy eres somos sois son era eras éramos erais eran "
-    "he has hemos habéis han hola gracias ahora luego aquí ahí allí".split()
+    "he has hemos habéis han hola gracias ahora luego aquí ahí allí "
+    "buenos buenas días tardes noches adiós perdón perfecto exacto correcto genial venga "
+    "vamos dime mira oye espera cierto verdad seguro tampoco".split()
 )
 """Para cazar el «Yeah» que el motor multilingüe se inventa en un trozo corto y ruidoso."""
 
@@ -242,12 +250,15 @@ def transcribir_varias_voces(
     ms = 0
     descartadas = 0
     motores: set[str] = set()
+    total_s = len(muestras) / audio.sr
+    voz_hasta = 0.0  # dónde acaba la voz más tardía de las anteriores (pueden solaparse)
     for i, inter in enumerate(intervenciones):
         if al_progresar:
             al_progresar("Transcribiendo intervenciones…", i / max(1, len(intervenciones)))
-        a, b = int(inter.inicio * audio.sr), int(inter.fin * audio.sr)
-        if b - a < TROZO_MINIMO_S * audio.sr:
-            continue
+        siguiente = intervenciones[i + 1].inicio if i + 1 < len(intervenciones) else total_s
+        inicio, fin = con_margen(inter.inicio, inter.fin, voz_hasta, siguiente)
+        voz_hasta = max(voz_hasta, inter.fin)
+        a, b = int(inicio * audio.sr), int(fin * audio.sr)
         partes = []
         for x, y in trocear(muestras[a:b], audio.sr):
             texto, tardo, nombre = _transcribir_trozo(motor, muestras[a + x : a + y], idioma)
@@ -263,8 +274,43 @@ def transcribir_varias_voces(
             lineas.append(Linea(inter.inicio, inter.hablante, texto))
     if descartadas:
         log.info("%d intervenciones cortas descartadas como relleno", descartadas)
-    cuantos = len({ln.hablante for ln in lineas}) if lineas else 0
+    lineas = renumerar_lineas(lineas)
+    cuantos = len({ln.hablante for ln in lineas})
     return Resultado(lineas, audio.duracion_s, cuantos, _nombre_motor(motores, motor), ms)
+
+
+def con_margen(
+    inicio: float, fin: float, desde: float, hasta: float, minimo: float = TROZO_MINIMO_S
+) -> tuple[float, float]:
+    """Una intervención corta, alargada hasta `minimo` s con el silencio de alrededor.
+
+    A partes iguales por delante y por detrás, sin pasar de `desde` (donde
+    acaba la voz anterior) ni de `hasta` (donde empieza la siguiente): meterse
+    en la voz de otro sacaría su frase dos veces. Lo que no cabe por un lado
+    se pone por el otro, y si no cabe por ninguno se queda como está.
+    """
+    falta = minimo - (fin - inicio)
+    if falta <= 0:
+        return inicio, fin
+    delante, detras = max(0.0, inicio - desde), max(0.0, hasta - fin)
+    antes = min(falta / 2, delante)
+    despues = min(falta - antes, detras)
+    antes = min(falta - despues, delante)
+    return inicio - antes, fin + despues
+
+
+def renumerar_lineas(lineas: list[Linea]) -> list[Linea]:
+    """Hablante 1 es el primero que sale en el .md, 2 el siguiente distinto, sin huecos.
+
+    El separador ya numera por orden de aparición, pero en el audio: si al
+    primero no le queda ninguna línea (todo ruido o un «Yeah» descartado), el
+    .md empezaba en «Hablante 2» y la cabecera contaba menos de los que se
+    numeraban. Se numera sobre las líneas que de verdad se escriben.
+    """
+    orden: dict[int | None, int] = {}
+    for ln in lineas:
+        orden.setdefault(ln.hablante, len(orden))
+    return [Linea(ln.inicio, orden[ln.hablante], ln.texto) for ln in lineas]
 
 
 NOMBRE_INTERNO_DEL_SELECTOR = "selector"

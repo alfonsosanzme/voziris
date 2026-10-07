@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -183,13 +184,114 @@ def test_varias_voces_transcribe_por_intervencion_y_trocea_las_largas() -> None:
     )
     r = grabaciones.transcribir_varias_voces(audio, motor, sep, "es", hablantes=2)
     assert sep.pedido == 2
-    assert [ln.hablante for ln in r.lineas] == [0, 1]  # la de 0,2 s se descarta
-    assert len(motor.trozos) == 3  # 5 s + 40 s partida en dos
+    # La de 0,2 s no se tira: va al motor con lo que queda de audio detrás hasta 0,8 s.
+    assert [ln.hablante for ln in r.lineas] == [0, 1, 0]
+    assert motor.trozos[:1] == [5.0] and motor.trozos[-1] == 0.8
+    assert len(motor.trozos) == 4  # 5 s + 40 s partida en dos + 0,2 s con margen
     assert r.hablantes == 2
     md = r.markdown("reunion", datetime(2026, 9, 11, 10, 0))
     assert "2 hablantes" in md
     assert "**Hablante 1** (00:00) trozo de 5.0 s" in md
     assert "**Hablante 2** (00:05) trozo de" in md
+
+
+class MotorConGuion(MotorFalso):
+    """Contesta según lo que dura el trozo, como si cada intervención dijera su frase."""
+
+    def __init__(self, guion: Callable[[float], str]) -> None:
+        super().__init__()
+        self.guion = guion
+
+    def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
+        self.trozos.append(round(audio.duracion_s, 2))
+        texto = self.guion(audio.duracion_s)
+        if not texto:
+            raise TranscripcionFallida("no se oyó nada")
+        return Transcripcion(texto, idioma, "falso", 7, audio.duracion_s)
+
+
+class SeparadorFijo(SeparadorFalso):
+    def __init__(self, intervenciones: list[Intervencion]) -> None:
+        super().__init__()
+        self.intervenciones = intervenciones
+
+    def separar(self, audio: Audio, hablantes_: int | None = None) -> list[Intervencion]:
+        self.pedido = hablantes_
+        return self.intervenciones
+
+
+def _ruido(segundos: float) -> Audio:
+    rng = np.random.default_rng(4)
+    return Audio(muestras=(rng.standard_normal(int(segundos * SR)) * 0.1).astype(np.float32))
+
+
+def test_un_saludo_corto_no_se_pierde() -> None:
+    """«Buenos días.» dura 0,79 s y 0,71 s y desaparecía del .md las dos veces.
+
+    Son las intervenciones que dio el separador con el diálogo de prueba del
+    1 de octubre: el saludo es un hablante aparte, sin vecino de su misma voz
+    al que pegarse, y se tiraba por corto antes de llegar al motor.
+    """
+    sep = SeparadorFijo([
+        Intervencion(0.03, 0.82, 0),
+        Intervencion(1.67, 3.76, 1),
+        Intervencion(4.62, 9.55, 2),
+        Intervencion(11.15, 18.49, 3),
+        Intervencion(20.11, 20.82, 0),
+        Intervencion(21.66, 23.76, 1),
+        Intervencion(24.62, 29.53, 2),
+    ])
+    motor = MotorConGuion(lambda s: "Buenos días." if s < 1.5 else f"Frase de {s:.0f} s.")
+    r = grabaciones.transcribir_varias_voces(_ruido(31.0), motor, sep, "es")
+    md = r.markdown("p", datetime(2026, 10, 1, 8, 11))
+    assert "**Hablante 1** (00:00) Buenos días." in md
+    assert "**Hablante 1** (00:20) Buenos días." in md  # la marca es la de la voz, no la del margen
+    assert len(motor.trozos) == 7 and min(motor.trozos) >= 0.8  # llegan al motor con margen
+    assert r.hablantes == 4 and "4 hablantes" in md
+
+
+def test_los_hablantes_se_numeran_sin_huecos() -> None:
+    """Si al primero que habla no le queda ninguna línea, el .md no empieza en «Hablante 2».
+
+    Con --hablantes 50 salía «5 hablantes» y las etiquetas 2, 3, 5, 7 y 8: la
+    cuenta y los números tienen que salir de las mismas líneas que se escriben.
+    """
+    sep = SeparadorFijo([
+        Intervencion(0.0, 2.0, 0),  # un «Yeah» que se descarta como relleno
+        Intervencion(2.5, 6.5, 1),
+        Intervencion(7.0, 12.0, 2),
+        Intervencion(13.0, 15.0, 0),
+        Intervencion(15.5, 19.5, 1),
+    ])
+    frases = {2: "Yeah.", 4: "Esta es una prueba.", 5: "De acuerdo, yo llevo las cifras."}
+    motor = MotorConGuion(lambda s: frases[round(s)])
+    r = grabaciones.transcribir_varias_voces(_ruido(20.0), motor, sep, "es", hablantes=3)
+    assert sep.pedido == 3
+    assert [ln.hablante for ln in r.lineas] == [0, 1, 0]
+    md = r.markdown("reunion", datetime(2026, 10, 1, 8, 21))
+    assert "Yeah" not in md
+    assert "**Hablante 1** (00:02) Esta es una prueba." in md
+    assert "**Hablante 2** (00:07) De acuerdo, yo llevo las cifras." in md
+    assert "Hablante 3" not in md
+    assert r.hablantes == 2 and "2 hablantes" in md
+
+
+def test_con_margen_alarga_lo_corto_sin_pisar_al_vecino() -> None:
+    from voziris.grabaciones import con_margen
+
+    # Largo de sobra: no se toca.
+    assert con_margen(5.0, 7.0, desde=0.0, hasta=10.0) == (5.0, 7.0)
+    # Sitio a los dos lados: a partes iguales hasta 0,8 s.
+    assert con_margen(5.0, 5.4, desde=4.0, hasta=6.0) == pytest.approx((4.8, 5.6))
+    # Al principio del audio: lo que no cabe delante va detrás.
+    assert con_margen(0.0, 0.5, desde=0.0, hasta=3.0) == pytest.approx((0.0, 0.8))
+    # La voz de antes acaba justo donde empieza esta: todo detrás.
+    assert con_margen(45.0, 45.2, desde=45.0, hasta=46.0) == pytest.approx((45.0, 45.8))
+    # Poco sitio detrás: se completa por delante.
+    assert con_margen(5.0, 5.5, desde=4.0, hasta=5.6) == pytest.approx((4.8, 5.6))
+    # Encajada entre dos voces, o pisada por la de antes: se queda como está.
+    assert con_margen(5.0, 5.5, desde=5.0, hasta=5.5) == (5.0, 5.5)
+    assert con_margen(5.0, 5.5, desde=5.3, hasta=5.5) == (5.0, 5.5)
 
 
 def test_transcribir_archivo_sin_separador_avisa(tmp_path: Path) -> None:
@@ -369,6 +471,9 @@ def test_parece_relleno() -> None:
     assert not parece_relleno("Mucho trap.", "es")
     assert not parece_relleno("Sí.", "es")
     assert not parece_relleno("Recogida de nombre tal, tener sitio, datos.", "es")
+    # Saludos y respuestas cortas: ahora llegan al motor y no son relleno.
+    for corta in ("Buenos días.", "Buenas tardes.", "Adiós.", "Perfecto.", "Exacto."):
+        assert not parece_relleno(corta, "es"), corta
     assert not parece_relleno("Yeah.", "en")  # solo hay lista para el español
 
 
