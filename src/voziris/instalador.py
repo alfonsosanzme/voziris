@@ -240,7 +240,7 @@ def comprobar_arrancando(exe: Path) -> None:
     fallos = integridad.fallos_del_informe(informe) or ["no se sabe por qué"]
     mas = ""
     if len(fallos) > 1:
-        mas = f"\n\n(Y {len(fallos) - 1} problema(s) más, anotados en voziris.log.)"
+        mas = f"\n\n(Y {len(fallos) - 1} problema(s) más, anotados en voziris-instalar.log.)"
     raise InstalacionFallida(
         f"La copia instalada no funciona, así que no se ha cambiado nada.\n\n{fallos[0]}{mas}"
     )

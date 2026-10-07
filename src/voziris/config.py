@@ -232,8 +232,10 @@ class Config:
     """Lo que no impidió cargar pero el usuario debe saber."""
     buscar_leido: str = field(default="preguntar", compare=False, metadata={"toml": False})
     """Lo que decía config.toml de `[actualizaciones] buscar` al leerlo o escribirlo por
-    última vez. Si al guardar el archivo dice otra cosa y aquí no ha cambiado, alguien
-    lo ha editado a mano con Voziris abierta: manda el archivo (ver `guardar`)."""
+    última vez. Si al guardar dice otra cosa, alguien lo ha editado a mano con Voziris
+    abierta (ver `guardar`)."""
+    buscar_tocado: bool = field(default=False, compare=False, metadata={"toml": False})
+    """El panel de ajustes ha cambiado `buscar` y aún no se ha guardado."""
 
     @property
     def carpeta(self) -> Path:
@@ -598,12 +600,19 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
 
 
 def _normalizar_buscar(valor: object) -> object:
-    """Sin tilde también vale, y true / false, que es lo natural para un sí o un no."""
-    if valor == "si" or valor is True:
+    """Sin tilde también vale, en mayúsculas también, y true / false, que es lo natural
+    para un sí o un no."""
+    if isinstance(valor, str):
+        valor = valor.strip().lower()
+    if valor in ("si", "sí") or valor is True:
         return "sí"
     if valor is False:
         return "no"
     return valor
+
+
+RESTRICCION = {"no": 0, "preguntar": 1, "sí": 2}
+"""De más a menos restrictivo: si un cambio a mano y uno de la sesión chocan, gana el primero."""
 
 
 def _buscar_en(documento: Any) -> str | None:
@@ -779,13 +788,7 @@ def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) 
     base = ruta.parent
 
     if origen == ruta:
-        en_archivo = _buscar_en(documento)
-        memoria = config.actualizaciones.buscar
-        if en_archivo is not None and en_archivo != memoria and memoria == config.buscar_leido:
-            # Editado a mano con Voziris abierta, y aquí no se ha tocado: manda el
-            # archivo. Si no, un «no» escrito a mano volvía a «sí» con el siguiente
-            # cambio desde la bandeja (VOZ-82).
-            config.actualizaciones.buscar = en_archivo
+        _conciliar_buscar(config, _buscar_en(documento))
 
     nuevos = _valores_toml(config)
     clave = config.motor.api.clave
@@ -822,6 +825,62 @@ def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) 
     except OSError as e:
         raise ConfigInvalida(f"No se puede escribir {ruta}: {e}") from e
     config.buscar_leido = config.actualizaciones.buscar
+    config.buscar_tocado = False
+
+
+def _conciliar_buscar(config: Config, en_archivo: str | None) -> None:
+    """Qué `buscar` se escribe cuando el archivo y la memoria no coinciden (VOZ-82).
+
+    `guardar` escribe la Config entera. Sin esto, un «no» escrito a mano con
+    Voziris abierta volvía a «sí» con el siguiente cambio desde la bandeja.
+    - Si solo ha cambiado el archivo (a mano), manda el archivo.
+    - Si solo ha cambiado la sesión (el panel), manda la sesión.
+    - Si han cambiado los dos, gana lo más restrictivo: nunca se pasa a
+      consultar sin el último sí claro.
+    """
+    memoria = config.actualizaciones.buscar
+    if en_archivo is None or en_archivo == memoria:
+        return
+    a_mano = en_archivo != config.buscar_leido
+    if a_mano and (not config.buscar_tocado or RESTRICCION[en_archivo] < RESTRICCION[memoria]):
+        config.actualizaciones.buscar = en_archivo
+    config.buscar_leido = en_archivo  # lo que dice el archivo ya está visto
+
+
+def guardar_buscar(config: Config, valor: str) -> None:
+    """Cambia solo `[actualizaciones] buscar` en config.toml, sin tocar nada más (VOZ-82).
+
+    Para la respuesta a la tarjeta del arranque: `guardar` reescribiría la
+    Config entera con lo que hay en memoria, y desharía lo que el usuario
+    haya editado a mano mientras tanto (por ejemplo, `nivel`). Tampoco exige
+    la carpeta del Markdown, que con la plantilla de serie no existe.
+
+    Raises:
+        ConfigInvalida: no se puede leer o escribir el archivo.
+    """
+    if valor not in BUSCAR_VERSIONES:
+        raise ValueError(valor)
+    ruta = config.ruta_archivo.resolve()
+    documento = _leer_documento(ruta)
+    tabla = _tabla(documento, "actualizaciones")
+    if "buscar" in tabla:
+        tabla["buscar"] = valor
+    else:
+        elemento = tomlkit.item(valor)
+        elemento.comment(_COMENTARIOS_NUEVAS[("actualizaciones", "buscar")])
+        tabla["buscar"] = elemento
+    texto = tomlkit.dumps(documento)
+    if b"\r\n" in ruta.read_bytes():
+        texto = texto.replace("\n", "\r\n")
+    temporal = ruta.with_suffix(ruta.suffix + ".tmp")
+    try:
+        temporal.write_text(texto, encoding="utf-8", newline="")
+        os.replace(temporal, ruta)
+    except OSError as e:
+        raise ConfigInvalida(f"No se puede escribir {ruta}: {e}") from e
+    config.actualizaciones.buscar = valor
+    config.buscar_leido = valor
+    config.buscar_tocado = False
 
 
 def _plano(item: Any) -> Any:

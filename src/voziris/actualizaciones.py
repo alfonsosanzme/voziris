@@ -167,7 +167,12 @@ def _vigilar_redireccion(respuesta: Any) -> None:
         return
     # httpx llama a los ganchos antes de construir la petición siguiente: el
     # destino se calcula aquí, como lo hará él, desde la cabecera Location.
-    destino = respuesta.request.url.join(respuesta.headers["Location"])
+    try:
+        destino = respuesta.request.url.join(respuesta.headers["Location"])
+    except Exception as e:  # noqa: BLE001 — httpx.InvalidURL no es HTTPError; idna, ValueError
+        raise ActualizacionFallida(
+            f"GitHub ha redirigido a una dirección que no se entiende: {e}"
+        ) from e
     host = (destino.host or "").lower()
     seguro = destino.scheme == "https" and any(
         host == h or host.endswith("." + h) for h in HOSTS_DE_GITHUB

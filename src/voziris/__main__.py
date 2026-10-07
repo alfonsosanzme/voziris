@@ -76,8 +76,12 @@ log = logging.getLogger("voziris")
 
 NOMBRE_LOG = "voziris.log"
 NOMBRE_LOG_TRANSCRIBIR = "voziris-transcribir.log"
-NOMBRE_LOG_ACTUALIZAR = "voziris-actualizar.log"
 """El de los procesos `--transcribir`. Ver `configurar_log`."""
+NOMBRE_LOG_ACTUALIZAR = "voziris-actualizar.log"
+"""El de `--actualizar`, que corre mientras la bandeja tiene abierto voziris.log (VOZ-82)."""
+NOMBRE_LOG_INSTALAR = "voziris-instalar.log"
+"""El de `--instalar`. Lanzado por una actualización, en la carpeta de la instalación:
+la suya propia es temporal y se borra (VOZ-82)."""
 
 
 # --- registro ---------------------------------------------------------------------
@@ -674,6 +678,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             cfg.guardar(configuracion, estricto=False)
         except ConfigInvalida as e:
             avisar(f"Cambio aplicado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        reflejar_buscar_en_ajustes()
         if bandeja is not None:
             bandeja.actualizar_menu()
 
@@ -834,6 +839,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             cfg.guardar(configuracion, estricto=False)
         except ConfigInvalida as e:
             avisar(f"Motor cambiado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        reflejar_buscar_en_ajustes()
         if bandeja is not None:
             bandeja.actualizar_menu()
 
@@ -882,6 +888,11 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         if vars(nueva.historial) != vars(vieja.historial):
             pendientes.append("historial (entradas o audio)")
         configuracion = nueva
+        if nueva.actualizaciones.buscar != vieja.actualizaciones.buscar:
+            if tarjeta and nueva.actualizaciones.buscar != "preguntar":
+                tarjeta.pop().cerrar()  # contestada en Ajustes: la tarjeta ya no pregunta nada
+            if nueva.actualizaciones.buscar == "sí":
+                vigilante.despertar()
         _ajustar_arranque_con_windows(nueva, avisar)
         if bandeja is not None:
             bandeja.actualizar_menu()
@@ -908,6 +919,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             cfg.guardar(configuracion, estricto=False)
         except ConfigInvalida as e:
             avisar(f"Cambio aplicado hasta reiniciar; no se pudo guardar config.toml: {e}")
+        reflejar_buscar_en_ajustes()
         if bandeja is not None:
             bandeja.actualizar_menu()
 
@@ -917,6 +929,11 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         _abrir_con_windows(_generar_diagnostico(configuracion.carpeta))
 
     # --- versiones nuevas (VOZ-82) ---
+    def reflejar_buscar_en_ajustes() -> None:
+        """Tras guardar desde la bandeja, que puede haber adoptado un `buscar` escrito a
+        mano: que la casilla del panel, si está abierto, enseñe lo que vale de verdad."""
+        en_hilo_tk(lambda: ajustes.reflejar_buscar(configuracion.actualizaciones.buscar))
+
     from voziris import actualizaciones
 
     instalada = _esta_instalada()
@@ -926,11 +943,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         if bandeja is not None:
             bandeja.actualizar_menu()
 
-    vigilante = actualizaciones.Vigilante(
-        configuracion.carpeta,
-        activa=lambda: _puede_mirar_versiones(configuracion),
-        al_encontrar=al_haber_version_nueva,
-    )
+    vigilante = _crear_vigilante(lambda: configuracion, al_haber_version_nueva)
 
     def buscar_actualizaciones() -> None:
         """Desde la bandeja: consulta ya, diga lo que diga la opción. Lo ha pedido el usuario."""
@@ -994,12 +1007,16 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
     def guardar_respuesta(si: bool) -> None:
         """En el hilo de Tk, como el panel de ajustes: no se pisan."""
+        tarjeta.clear()
         error = _guardar_respuesta(configuracion, si)
         if error:
             avisar(f"Respuesta aplicada hasta reiniciar; no se pudo guardar config.toml: {error}")
         ajustes.reflejar_buscar(configuracion.actualizaciones.buscar)
         if si:
             vigilante.despertar()
+
+    tarjeta: list[Any] = []
+    """La tarjeta del arranque, si está en pantalla: contestar en Ajustes la quita."""
 
     def preguntar_por_versiones() -> None:
         """La primera vez: ¿mirar una vez al día si hay versión nueva? Sin un sí, nada sale.
@@ -1014,7 +1031,9 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             return
         from voziris.ui.pregunta import Pregunta
 
-        Pregunta(raiz, actualizaciones.TITULO_PREGUNTA, actualizaciones.PREGUNTA, guardar_respuesta)
+        tarjeta.append(Pregunta(
+            raiz, actualizaciones.TITULO_PREGUNTA, actualizaciones.PREGUNTA, guardar_respuesta
+        ))
 
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
@@ -1176,25 +1195,49 @@ PREGUNTA_TRAS_S = 20
 def _puede_mirar_versiones(configuracion: cfg.Config) -> bool:
     """¿Puede el Vigilante consultar GitHub por su cuenta? Solo con un «sí» (VOZ-82).
 
-    Además del valor en memoria, se mira config.toml: un «no» escrito a mano
-    con Voziris abierta vale desde ya, sin esperar a reiniciar.
+    Además del valor en memoria, se mira config.toml: si dice otra cosa que
+    «sí» («no», «preguntar»), escrito a mano con Voziris abierta, vale desde
+    ya, sin esperar a reiniciar. Si no se puede leer, vale lo de memoria.
     """
     if configuracion.actualizaciones.buscar != "sí":
         return False
-    return cfg.leer_buscar(configuracion.ruta_archivo) != "no"
+    return cfg.leer_buscar(configuracion.ruta_archivo) in ("sí", None)
+
+
+def _crear_vigilante(
+    configuracion: Callable[[], cfg.Config],
+    al_encontrar: Callable[[Any], None],
+    **opciones: Any,
+) -> Any:
+    """El Vigilante de la bandeja: solo mira cuando `_puede_mirar_versiones` lo permite.
+
+    `configuracion` devuelve la Config vigente: el panel de ajustes la cambia
+    por otra al guardar. Fuera de `_aplicacion` para que los tests prueben
+    el permiso de verdad, no una copia.
+    """
+    from voziris import actualizaciones
+
+    return actualizaciones.Vigilante(
+        configuracion().carpeta,
+        activa=lambda: _puede_mirar_versiones(configuracion()),
+        al_encontrar=al_encontrar,
+        **opciones,
+    )
 
 
 def _guardar_respuesta(configuracion: cfg.Config, si: bool) -> str | None:
     """La respuesta a la tarjeta del arranque, en memoria y en config.toml. El error, si lo hay.
 
-    Sin exigir la carpeta del Markdown: con la plantilla de serie no existe, y
-    entonces la respuesta no se guardaría y la tarjeta saldría en cada arranque.
+    Solo esa opción (`cfg.guardar_buscar`): reescribir la Config entera
+    desharía lo editado a mano mientras tanto, y exigiría la carpeta del
+    Markdown, que con la plantilla de serie no existe.
     """
-    configuracion.actualizaciones.buscar = "sí" if si else "no"
-    log.info("mirar si hay versión nueva: %s", configuracion.actualizaciones.buscar)
+    valor = "sí" if si else "no"
+    log.info("mirar si hay versión nueva: %s", valor)
     try:
-        cfg.guardar(configuracion, estricto=False)
+        cfg.guardar_buscar(configuracion, valor)
     except ConfigInvalida as e:
+        configuracion.actualizaciones.buscar = valor  # vale hasta reiniciar
         return str(e)
     return None
 
@@ -1202,14 +1245,18 @@ def _guardar_respuesta(configuracion: cfg.Config, si: bool) -> str | None:
 def _actualizacion_en_marcha(proceso: Any) -> bool:
     """¿Sigue la actualización de antes? Descargando, o su instalador trabajando.
 
-    `--actualizar` termina en cuanto el instalador nuevo ha tomado su mutex
-    (`MUTEX_INSTALAR`), así que entre los dos no queda hueco: un segundo clic
-    no lanza otra descarga ni otro instalador. Cuando el instalador termina,
-    bien, cancelado o con error, el mutex desaparece y se puede reintentar ya.
+    Mira el proceso lanzado desde aquí y los mutex de `--actualizar` y de
+    `--instalar`: así también cuenta una actualización lanzada antes de
+    reiniciar la bandeja. `--actualizar` no termina hasta que el instalador
+    toma el suyo (o pasan `ESPERA_INSTALADOR_S`, lo que no debería ocurrir
+    ni con el antivirus mirando cada DLL). Cuando el instalador termina, bien,
+    cancelado o con error, el mutex desaparece y se puede reintentar ya.
     """
     if proceso is not None and proceso.poll() is None:
         return True
-    return winapi.ES_WINDOWS and winapi.existe_mutex(MUTEX_INSTALAR)
+    return winapi.ES_WINDOWS and (
+        winapi.existe_mutex(MUTEX_INSTALAR) or winapi.existe_mutex(MUTEX_ACTUALIZAR)
+    )
 
 
 def _esta_instalada() -> bool:
@@ -1399,10 +1446,13 @@ def _instalar_cli() -> int:
     log.info("instalado en %s", destino)
     aviso = _abrir_la_instalada(destino)
     if anterior and anterior != __version__:
-        # Una actualización (VOZ-82), desde la bandeja o con el ZIP a mano.
+        # Otra versión encima (VOZ-82): una actualización, desde la bandeja o con el ZIP
+        # a mano, o la vuelta a una anterior.
+        from voziris.actualizaciones import es_mas_nueva
+
         _mensaje(
-            "Voziris actualizado",
-            f"Ya tienes la versión {__version__} (antes, la {anterior}). "
+            "Voziris actualizado" if es_mas_nueva(__version__, anterior) else "Voziris instalado",
+            f"Ahora tienes la versión {__version__} (antes, la {anterior}). "
             "Tus ajustes, dictados y modelos siguen donde estaban."
             + (f"\n\n{aviso}" if aviso else ""),
         )
@@ -1504,8 +1554,10 @@ SALIDA_NADA_QUE_INSTALAR = 2
 """`--actualizar` termina así cuando no arranca ningún instalador: ya está al día, ya hay
 otra en marcha, o la versión no trae paquete y se ha abierto su página. La bandeja lo usa
 para quitar del menú una versión que ya no se ofrece."""
-ESPERA_INSTALADOR_S = 60.0
-"""Lo que `--actualizar` espera, como mucho, a que el instalador nuevo tome su mutex."""
+ESPERA_INSTALADOR_S = 180.0
+"""Lo que `--actualizar` espera, como mucho, a que el instalador nuevo tome su mutex. Lo
+mismo que se da a `--comprobar` (`integridad.comprobar_en_otro_proceso`): un primer
+arranque en frío, con el antivirus mirando cada DLL nueva."""
 
 
 def _actualizar_cli() -> int:
@@ -1582,25 +1634,33 @@ def _actualizar_cli() -> int:
         _abrir_pagina(novedad.pagina)
         return SALIDA_NADA_QUE_INSTALAR
     log.info("arrancando el instalador de la %s: %s", novedad.version, exe)
+    from voziris import instalador
+
+    # Su registro, en la carpeta de la instalación: la suya es temporal y se borra.
+    registro = ["--config", str(instalador.carpeta_instalacion() / cfg.NOMBRE_ARCHIVO)]
     try:
-        instalador_nuevo = _lanzar_desatendido([str(exe), "--instalar"], cwd=exe.parent)
+        instalador_nuevo = _lanzar_desatendido(
+            [str(exe), *registro, "--instalar"], cwd=exe.parent
+        )
     except OSError as e:
         log.warning("no arranca el instalador de la versión nueva: %s", e)
         if integridad.es_bloqueo_de_windows(e):
-            motivo = (
+            # El .cmd lanzaría el mismo .exe: Windows lo volvería a bloquear.
+            texto = (
                 "Windows no deja abrir la versión nueva: lo ha bloqueado una directiva de "
                 "control de aplicaciones. En Windows 11 suele ser «Control inteligente de "
                 "aplicaciones», que bloquea los programas sin firma digital que Microsoft "
-                "no conoce. La versión que tienes sigue funcionando."
+                "no conoce.\n\nLa versión que tienes sigue funcionando. Para usar la nueva, "
+                "mira el apartado «Si Windows lo bloquea» del LÉEME, en "
+                f"{novedad.pagina}"
             )
         else:
-            motivo = f"No arranca el instalador de la versión nueva: {e}"
-        _error_fatal(
-            f"{motivo}\n\nEstá descargada en {exe.parent}: puedes instalarla con "
-            "«Instalar Voziris.cmd», o descargarla de nuevo desde "
-            f"{novedad.pagina}",
-            con_ventana=True, titulo=titulo_error,
-        )
+            texto = (
+                f"No arranca el instalador de la versión nueva: {e}\n\nEstá descargada "
+                f"en {exe.parent}: puedes instalarla con «Instalar Voziris.cmd», o "
+                f"descargarla de nuevo desde {novedad.pagina}"
+            )
+        _error_fatal(texto, con_ventana=True, titulo=titulo_error)
         return 1
     _esperar_al_instalador(instalador_nuevo, ESPERA_INSTALADOR_S)
     return 0
@@ -1748,7 +1808,8 @@ def main(argv: list[str] | None = None) -> int:
     configurar_log(
         carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug,
         nombre=NOMBRE_LOG_TRANSCRIBIR if transcribir
-        else NOMBRE_LOG_ACTUALIZAR if args.actualizar else NOMBRE_LOG,
+        else NOMBRE_LOG_ACTUALIZAR if args.actualizar
+        else NOMBRE_LOG_INSTALAR if args.instalar else NOMBRE_LOG,
     )
     activar_faulthandler(carpeta)
     anotar_arranque_en_fallos(

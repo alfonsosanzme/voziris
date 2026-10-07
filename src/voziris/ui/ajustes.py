@@ -654,8 +654,10 @@ class Ajustes:
             buscar = bool(g("actualizaciones.buscar"))
             if buscar != self._buscar_al_abrir:
                 # Solo si se ha tocado: la respuesta a la pregunta del arranque, dada
-                # con el panel abierto, no se pisa con lo que la casilla enseñaba.
+                # con el panel abierto, no se pisa con lo que la casilla enseñaba. Y
+                # se marca: un clic aquí no lo deshace una edición a mano (VOZ-82).
                 nueva.actualizaciones.buscar = "sí" if buscar else "no"
+                nueva.buscar_tocado = True
             for nombre in cfg.NOMBRES_ATAJOS:
                 setattr(nueva.atajos, nombre, str(g(f"atajos.{nombre}")).strip())
             dispositivo = str(g("audio.dispositivo"))

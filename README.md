@@ -321,9 +321,11 @@ abre su página para descargarla a mano. Mientras dura una actualización,
 volver a pulsar «Actualizar» no lanza otra. «Buscar actualizaciones», en la
 bandeja, mira en ese momento, aunque la opción esté en `"no"`.
 
-Un `"no"` escrito a mano en `config.toml` con Voziris abierta vale desde ese
-momento: no se vuelve a consultar, y no se pisa al cambiar algo desde la
-bandeja.
+Un `"no"` o un `"preguntar"` escritos a mano en `config.toml` con Voziris
+abierta valen desde ese momento: no se vuelve a consultar, y no se pisan al
+cambiar algo desde la bandeja. Si a la vez se cambia la casilla de Ajustes,
+gana lo más restrictivo. Contestar la tarjeta solo escribe esa opción: no
+deshace lo que hayas editado a mano.
 
 Solo se actualiza sola la copia instalada. Si usas Voziris sin instalar, la
 entrada se llama «Descargar la X.Y.Z…» y abre la página de la versión.
@@ -412,9 +414,11 @@ Junto al ejecutable hay estos archivos de registro:
 - `voziris.log`: lo que hace la aplicación, dictado a dictado, con qué motor
   entregó cada uno y cualquier error de Python. Se abre desde la bandeja →
   «Ver registro».
-- `voziris-transcribir.log` y `voziris-actualizar.log`: los de «Transcribir
-  grabación o vídeo…» y de «Actualizar a la X.Y.Z…», que corren en procesos
-  aparte mientras la bandeja tiene abierto `voziris.log`.
+- `voziris-transcribir.log`, `voziris-actualizar.log` y
+  `voziris-instalar.log`: los de «Transcribir grabación o vídeo…», de
+  «Actualizar a la X.Y.Z…» y del instalador, que corren en procesos aparte
+  mientras la bandeja tiene abierto `voziris.log`. El instalador que lanza una
+  actualización escribe el suyo en la carpeta de la instalación.
 - `voziris-fallos.log`: solo se escribe si el proceso muere por un fallo
   nativo del que Python aún pudo dejar rastro (una violación de acceso).
 

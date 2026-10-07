@@ -211,6 +211,19 @@ No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de p
 2. **La actualización** desde cada versión que pueda estar instalada, con 6.1 o con una prueba equivalente escrita a partir de `src/voziris/instalador.py`.
 3. **Las notas contra el código.** Cada frase de `docs/notas-release.md`, y de `docs/LEEME-instalar.html` si ha cambiado, se contrasta con el código y con `git diff v<anterior>..HEAD`. Lo que no se sostenga, se quita.
 
+**6.2 bis. La actualización desde la bandeja (desde la 0.1.2) (sin probar).** Es la única parte que no se puede arreglar después de publicar. Si `--actualizar` de una versión falla, publicar otra no lo arregla, porque es la versión instalada la que descarga. Se prueba contra la release viva sin publicar nada:
+
+1. Compila la versión nueva con `__version__` cambiado **solo en la copia de compilación** a una anterior a la publicada (por ejemplo `0.0.1`).
+2. Instálala en un equipo o usuario de Windows de pruebas, **nunca en el de Alfonso**: la actualización cierra la Voziris abierta y escribe en el registro de su usuario. Contesta «Sí» a la tarjeta y deja algún dictado en el historial.
+3. Bandeja → «Buscar actualizaciones» → «Actualizar a la <publicada>…».
+4. Comprueba lo siguiente:
+   - sale la ventana de progreso, y Cancelar no deja nada;
+   - si no cancelas, la bandeja se cierra y se abre la versión publicada, con el aviso «Voziris actualizado»;
+   - `config.toml`, `modelos/` e `historial/` siguen intactos;
+   - `voziris-actualizar.log` y `voziris-instalar.log` están en la carpeta de la instalación.
+
+Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la publicada.
+
 **6.3. Máquina limpia.** La lista a mano está en `docs/RELEASE.md` §4 y no se repite aquí. Incluye Windows sin Python, un USB, el arranque en menos de 3 segundos y Control inteligente de aplicaciones. Más detalles en el último apartado de este documento.
 
 Si algo falla, el arreglo va en la rama: commit y vuelta al paso 3. Hay que volver a compilar y a empaquetar, y el hash cambia.
@@ -395,7 +408,7 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
 
    Después abre la instalada y avisa con «Voziris instalado». Desde la 0.1.2, si había otra versión instalada, el aviso es «Voziris actualizado».
 
-Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora. Lo que pasa queda en `voziris-actualizar.log`, junto al `voziris.log` de la instalación, y lo recoge el diagnóstico.
+Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora. Lo que pasa queda en `voziris-actualizar.log` y en `voziris-instalar.log`, junto al `voziris.log` de la instalación, y el diagnóstico recoge los dos.
 
 No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
 

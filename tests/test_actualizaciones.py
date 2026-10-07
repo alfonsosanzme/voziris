@@ -817,8 +817,16 @@ def test_actualizar_arranca_el_instalador_nuevo(
     monkeypatch.setattr(act, "consultar", _novedad)
     monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
     assert principal._actualizar_cli() == 0
-    assert cli["lanzadas"] == [[str(exe), "--instalar"]]
+    # Con --config de la instalación: su registro no se queda en la carpeta temporal.
+    config_instalada = str(principal_instalacion() / cfg.NOMBRE_ARCHIVO)
+    assert cli["lanzadas"] == [[str(exe), "--config", config_instalada, "--instalar"]]
     assert cli["errores"] == [] and cli["mensajes"] == []
+
+
+def principal_instalacion() -> Path:
+    from voziris import instalador
+
+    return instalador.carpeta_instalacion()
 
 
 def test_actualizar_al_dia(cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -900,7 +908,26 @@ def test_actualizar_bloqueado_por_windows(
     monkeypatch.setattr(principal, "_lanzar_desatendido", bloqueado)
     assert principal._actualizar_cli() == 1
     assert "Control inteligente" in cli["errores"][0]
-    assert str(exe.parent) in cli["errores"][0]  # dice dónde está, para instalarla a mano
+    # El .cmd lanzaría el mismo .exe bloqueado: se remite al LÉEME, no a él.
+    assert "Instalar Voziris.cmd" not in cli["errores"][0]
+    assert "Si Windows lo bloquea" in cli["errores"][0]
+
+
+def test_si_el_instalador_no_arranca_por_otra_cosa_se_ofrece_el_cmd(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    exe = tmp_path / "voziris" / "voziris.exe"
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+
+    def falla(orden: list[str], cwd: Path | None = None) -> None:
+        raise OSError(2, "No se encuentra el archivo")
+
+    monkeypatch.setattr(principal, "_lanzar_desatendido", falla)
+    assert principal._actualizar_cli() == 1
+    assert "Instalar Voziris.cmd" in cli["errores"][0] and str(exe.parent) in cli["errores"][0]
 
 
 def test_actualizar_una_copia_portable_abre_la_pagina(
@@ -1041,6 +1068,7 @@ def test_un_cambio_hecho_en_la_sesion_si_se_escribe(tmp_path: Path) -> None:
     ("no", "no", False),
     ("sí", "sí", True),
     ("sí", "no", False),  # un «no» escrito a mano vale desde ya
+    ("sí", "preguntar", False),  # y un «preguntar», también
     ("sí", None, True),  # un config.toml sin la sección (de la 0.1.1)
 ])
 def test_solo_se_mira_con_un_si(tmp_path: Path, memoria: str, archivo: str | None,
@@ -1197,3 +1225,196 @@ def test_ejecutar_con_progreso_atiende_el_cancelar_tardio(tmp_path: Path) -> Non
     assert "CANCELADO hecho" in r.stdout, r.stdout + r.stderr
     # Sin la opción (la transcripción), se devuelve: el .md ya está escrito.
     assert "SIN-LA-OPCION hecho" in r.stdout, r.stdout + r.stderr
+
+
+# --- lo que encontró la tercera revisión ----------------------------------------------------
+
+
+def test_un_guardado_fallido_no_hace_perder_un_no_escrito_despues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris.errores import ConfigInvalida
+
+    ruta = _plantilla(tmp_path, "no")
+    c = cfg.cargar(ruta)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace('buscar = "no"', 'buscar = "sí"'),
+                    encoding="utf-8")  # «sí» a mano…
+    real = cfg.os.replace
+
+    def bloqueado(origen: Any, destino: Any) -> None:
+        raise PermissionError(32, "en uso")
+
+    monkeypatch.setattr(cfg.os, "replace", bloqueado)
+    c.general.motor = "local"  # …un cambio desde la bandeja que no llega a escribirse…
+    with pytest.raises(ConfigInvalida):
+        cfg.guardar(c, estricto=False)
+    monkeypatch.setattr(cfg.os, "replace", real)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace('buscar = "sí"', 'buscar = "no"'),
+                    encoding="utf-8")  # …y se arrepiente: «no» a mano
+    c.audio.al_dictar = "atenuar"
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+@pytest.mark.parametrize(("en_el_panel", "a_mano", "queda"), [
+    ("no", "sí", "no"),  # los dos cambian: gana lo más restrictivo
+    ("sí", "no", "no"),
+    ("sí", "preguntar", "preguntar"),
+])
+def test_un_cambio_en_el_panel_y_otro_a_mano_gana_lo_mas_restrictivo(
+    tmp_path: Path, en_el_panel: str, a_mano: str, queda: str
+) -> None:
+    inicial = "preguntar" if "preguntar" not in (en_el_panel, a_mano) else "no"
+    ruta = _plantilla(tmp_path, inicial)
+    c = cfg.cargar(ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    ruta.write_text(texto.replace(f'buscar = "{inicial}"', f'buscar = "{a_mano}"'),
+                    encoding="utf-8")
+    c.actualizaciones.buscar = en_el_panel  # lo que hace Ajustes.leer al tocar la casilla
+    c.buscar_tocado = True
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+    assert c.actualizaciones.buscar == queda
+
+
+def test_la_respuesta_a_la_tarjeta_no_deshace_otras_ediciones_a_mano(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    assert 'nivel = "limpio"' in texto
+    ruta.write_text(texto.replace('nivel = "limpio"', 'nivel = "literal"'), encoding="utf-8")
+    assert principal._guardar_respuesta(c, True) is None  # en memoria sigue «limpio»
+    final = cfg.cargar(ruta)
+    assert final.actualizaciones.buscar == "sí"
+    assert final.proceso.nivel.value == "literal"  # lo editado a mano se queda
+
+
+def test_la_respuesta_conserva_los_finales_de_linea_y_crea_la_seccion(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    viejo = ruta.read_text(encoding="utf-8").split("[actualizaciones]")[0]
+    ruta.write_bytes(viejo.replace("\n", "\r\n").encode("utf-8"))  # un config.toml de la 0.1.1
+    c = cfg.cargar(ruta)
+    assert principal._guardar_respuesta(c, False) is None
+    datos = ruta.read_bytes()
+    assert b"\r\n" in datos and b"\n" not in datos.replace(b"\r\n", b"")
+    assert "una vez al día" in datos.decode("utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+@pytest.mark.parametrize(("escrito", "queda"), [("No", "no"), (" SÍ ", "sí"), ("Si", "sí")])
+def test_mayusculas_y_espacios_tambien_valen(tmp_path: Path, escrito: str, queda: str) -> None:
+    ruta = _plantilla(tmp_path)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'buscar = "preguntar"', f'buscar = "{escrito}"'), encoding="utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+    assert cfg.leer_buscar(ruta) == queda
+
+
+@pytest.mark.parametrize("buscar", ["preguntar", "no"])
+def test_sin_un_si_el_vigilante_de_la_bandeja_no_consulta_nunca(
+    tmp_path: Path, buscar: str
+) -> None:
+    """El permiso tal como lo cablea la bandeja (`_crear_vigilante`), no una copia."""
+    from voziris import __main__ as principal
+
+    c = cfg.cargar(_plantilla(tmp_path, buscar))
+    consultas = Consultas(None)
+    v = principal._crear_vigilante(lambda: c, lambda n: None, version="0.1.1",
+                                   consultar=consultas, primera_espera_s=0, revisar_cada_s=0.01)
+    v.arrancar()
+    v.despertar()
+    time.sleep(0.2)
+    v.parar()
+    assert consultas.veces == 0
+
+
+def test_con_un_si_el_vigilante_de_la_bandeja_consulta(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    actual = [cfg.cargar(_plantilla(tmp_path, "preguntar"))]
+    consultas = Consultas(None)
+    v = principal._crear_vigilante(lambda: actual[0], lambda n: None, version="0.1.1",
+                                   consultar=consultas, primera_espera_s=0, revisar_cada_s=3600)
+    v.arrancar()
+    time.sleep(0.1)
+    assert consultas.veces == 0
+    principal._guardar_respuesta(actual[0], True)  # la tarjeta: «Sí»
+    v.despertar()
+    assert consultas.hecha.wait(3)
+    v.parar()
+
+
+def test_main_despacha_actualizar_e_instalar_con_su_registro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    registros: list[str | None] = []
+    monkeypatch.setattr(principal, "configurar_log",
+                        lambda carpeta, depurar, a_consola, nombre=None: registros.append(nombre))
+    monkeypatch.setattr(principal, "activar_faulthandler", lambda carpeta: None)
+    monkeypatch.setattr(principal, "anotar_arranque_en_fallos", lambda modo="bandeja": None)
+    monkeypatch.setattr(principal, "_actualizar_cli", lambda: 42)
+    monkeypatch.setattr(principal, "_instalar_cli", lambda: 43)
+    config = str(tmp_path / cfg.NOMBRE_ARCHIVO)
+    assert principal.main(["--config", config, "--actualizar"]) == 42
+    assert principal.main(["--config", config, "--instalar"]) == 43
+    assert registros == [principal.NOMBRE_LOG_ACTUALIZAR, principal.NOMBRE_LOG_INSTALAR]
+
+
+@pytest.mark.parametrize("location", ["https://[zz]/x", "https://[::1/x"])
+def test_una_redireccion_que_no_se_entiende_da_el_error_de_siempre(
+    tmp_path: Path, location: str
+) -> None:
+    def a_ninguna_parte(peticion: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": location})
+
+    with pytest.raises(act.ConsultaFallida, match="no se entiende"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(a_ninguna_parte))
+    with pytest.raises(act.ActualizacionFallida, match="no se entiende"):
+        act.descargar(_novedad(), base=tmp_path / "d",
+                      transporte=httpx.MockTransport(a_ninguna_parte))
+
+
+def test_una_actualizacion_lanzada_antes_de_reiniciar_la_bandeja_tambien_cuenta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from voziris import __main__ as principal
+
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex",
+                        lambda nombre: nombre == principal.MUTEX_ACTUALIZAR)
+    assert principal._actualizacion_en_marcha(None)
+
+
+def test_volver_a_una_version_anterior_no_dice_actualizado(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+    from voziris import instalador
+
+    monkeypatch.setattr(instalador, "version_instalada", lambda: "99.0.0")
+    monkeypatch.setattr(instalador, "instalar", lambda **k: tmp_path)
+    monkeypatch.setattr(principal, "_abrir_la_instalada", lambda destino: None)
+    assert principal._instalar_cli() == 0
+    titulo, texto = cli["mensajes"][-1]
+    assert titulo == "Voziris instalado" and "(antes, la 99.0.0)" in texto
+
+
+def test_el_diagnostico_recoge_los_registros_de_actualizar_e_instalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import diagnostico
+
+    for nombre in ("eventos_windows", "bloqueos_de_codigo"):
+        monkeypatch.setattr(diagnostico, nombre, lambda dias=30: "(ninguno)")
+    monkeypatch.setattr(diagnostico, "informes_wer", lambda: [])
+    monkeypatch.setattr(diagnostico, "comprobacion_del_paquete", lambda espera_s=120.0: "ok")
+    (tmp_path / "voziris-actualizar.log").write_text("linea de actualizar\n", encoding="utf-8")
+    (tmp_path / "voziris-instalar.log").write_text("linea de instalar\n", encoding="utf-8")
+    texto = diagnostico.generar(tmp_path).read_text(encoding="utf-8")
+    assert "linea de actualizar" in texto and "linea de instalar" in texto
