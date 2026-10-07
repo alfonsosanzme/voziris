@@ -49,6 +49,8 @@ METODOS = ("portapapeles", "tecleo")
 NIVELES = tuple(n.value for n in Nivel)
 AL_DICTAR = ("nada", "atenuar", "silenciar")
 """[audio].al_dictar — qué pasa con la música mientras se dicta. Ver audio/mezclador.py."""
+BUSCAR_VERSIONES = ("preguntar", "sí", "no")
+"""[actualizaciones].buscar — ¿mirar una vez al día si hay versión nueva? (VOZ-82)."""
 NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
 
@@ -200,6 +202,12 @@ class SeccionHistorial:
 
 
 @dataclass
+class SeccionActualizaciones:
+    buscar: str = "preguntar"
+    """¿Mirar una vez al día si hay versión nueva? «preguntar» lo pregunta al arrancar (VOZ-82)."""
+
+
+@dataclass
 class Config:
     """Configuración completa, ya validada y con rutas absolutas.
 
@@ -214,6 +222,7 @@ class Config:
     proceso: SeccionProceso = field(default_factory=SeccionProceso)
     destino: SeccionDestino = field(default_factory=SeccionDestino)
     historial: SeccionHistorial = field(default_factory=SeccionHistorial)
+    actualizaciones: SeccionActualizaciones = field(default_factory=SeccionActualizaciones)
 
     ruta_archivo: Path = field(
         default=Path(NOMBRE_ARCHIVO), compare=False, metadata={"toml": False}
@@ -221,6 +230,12 @@ class Config:
     """De dónde se cargó. `guardar()` escribe ahí por defecto."""
     avisos: list[str] = field(default_factory=list, compare=False, metadata={"toml": False})
     """Lo que no impidió cargar pero el usuario debe saber."""
+    buscar_leido: str = field(default="preguntar", compare=False, metadata={"toml": False})
+    """Lo que decía config.toml de `[actualizaciones] buscar` al leerlo o escribirlo por
+    última vez. Si al guardar dice otra cosa, alguien lo ha editado a mano con Voziris
+    abierta (ver `guardar`)."""
+    buscar_tocado: bool = field(default=False, compare=False, metadata={"toml": False})
+    """El panel de ajustes ha cambiado `buscar` y aún no se ha guardado."""
 
     @property
     def carpeta(self) -> Path:
@@ -365,6 +380,7 @@ _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "destino.markdown": ("ruta", "formato", "sello", "separador"),
     "historial": ("entradas", "conservar_audio", "audio_dictados", "audio_dias",
                   "guardar_audio"),
+    "actualizaciones": ("buscar",),
 }
 
 
@@ -555,6 +571,16 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         guardar_audio=_leer(h, "historial", "guardar_audio", bool, dh.guardar_audio, errores),
     )
 
+    ac = _seccion(datos, "actualizaciones", errores)
+    if "buscar" in ac:
+        ac = {**ac, "buscar": _normalizar_buscar(ac["buscar"])}
+    actualizaciones = SeccionActualizaciones(
+        buscar=_elegir(
+            ac, "actualizaciones", "buscar", BUSCAR_VERSIONES,
+            SeccionActualizaciones().buscar, errores,
+        ),
+    )
+
     _desconocidas(datos, avisos)
     errores.lanzar_si_hay(ruta)
 
@@ -566,9 +592,48 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         proceso=proceso,
         destino=SeccionDestino(app_activa=app_activa, markdown=markdown),
         historial=historial,
+        actualizaciones=actualizaciones,
         ruta_archivo=ruta,
         avisos=avisos,
+        buscar_leido=actualizaciones.buscar,
     )
+
+
+def _normalizar_buscar(valor: object) -> object:
+    """Sin tilde también vale, en mayúsculas también, y true / false, que es lo natural
+    para un sí o un no."""
+    if isinstance(valor, str):
+        valor = valor.strip().lower()
+    if valor in ("si", "sí") or valor is True:
+        return "sí"
+    if valor is False:
+        return "no"
+    return valor
+
+
+RESTRICCION = {"no": 0, "preguntar": 1, "sí": 2}
+"""De más a menos restrictivo: si un cambio a mano y uno de la sesión chocan, gana el primero."""
+
+
+def _buscar_en(documento: Any) -> str | None:
+    """`[actualizaciones] buscar` tal como está en el archivo, o None si no está o no vale."""
+    try:
+        valor = _normalizar_buscar(_plano(documento["actualizaciones"]["buscar"]))
+    except (KeyError, TypeError):
+        return None
+    return valor if valor in BUSCAR_VERSIONES else None
+
+
+def leer_buscar(ruta: Path) -> str | None:
+    """`[actualizaciones] buscar` de config.toml ahora mismo. None si no se puede saber.
+
+    El Vigilante lo mira antes de cada consulta: un «no» escrito a mano con
+    Voziris abierta vale desde ya, sin reiniciar (VOZ-82).
+    """
+    try:
+        return _buscar_en(tomlkit.parse(ruta.read_text(encoding="utf-8")))
+    except (OSError, TOMLKitError, ValueError):
+        return None
 
 
 def _leer_documento(ruta: Path) -> tomlkit.TOMLDocument:
@@ -576,6 +641,10 @@ def _leer_documento(ruta: Path) -> tomlkit.TOMLDocument:
         return tomlkit.parse(ruta.read_text(encoding="utf-8"))
     except TOMLKitError as e:
         raise ConfigInvalida(f"{ruta} no es un TOML válido: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ConfigInvalida(
+            f"{ruta} no está guardado en UTF-8: vuelve a guardarlo con esa codificación ({e})"
+        ) from e
     except OSError as e:
         raise ConfigInvalida(f"No se puede leer {ruta}: {e}") from e
 
@@ -644,6 +713,7 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
         "destino.app_activa": _campos(config.destino.app_activa),
         "destino.markdown": _campos(config.destino.markdown),
         "historial": historial,
+        "actualizaciones": _campos(config.actualizaciones),
     }
 
 
@@ -681,6 +751,8 @@ def _mismo_valor(base: Path, actual: object, nuevo: object) -> bool:
 _COMENTARIOS_NUEVAS = {
     ("historial", "conservar_audio"): "grabación de los últimos dictados, para volver a "
                                       "transcribirlos; false para no guardarla",
+    ("actualizaciones", "buscar"): "¿mirar en GitHub una vez al día si hay versión "
+                                   "nueva? sí | no | preguntar",
 }
 """Opciones que un config.toml de antes no trae: al añadirlas, que se entienda qué son."""
 
@@ -697,21 +769,30 @@ def _jubilar_guardar_audio(documento: Any) -> None:
         del tabla["guardar_audio"]
 
 
-def guardar(config: Config, ruta: Path | None = None) -> None:
+def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) -> None:
     """Reescribe el TOML conservando comentarios y orden. Lo usa VOZ-60.
 
     Solo toca las opciones cuyo valor cambia, así una ruta relativa sigue
     relativa y los comentarios de cada línea se quedan donde estaban. La clave
     de API que vino de la variable de entorno no se escribe.
 
+    Args:
+        estricto: una carpeta del Markdown que no existe es error (el panel de
+            ajustes, donde se acaba de escribir). Con False, como al arrancar,
+            no lo es: lo que se cambia desde la bandeja no tiene que ver con
+            esa ruta, y la plantilla trae una que no existe (C-1 del plan).
+
     Raises:
-        ConfigInvalida: la configuración no pasa la validación estricta (por
-            ejemplo, la carpeta del Markdown no existe).
+        ConfigInvalida: la configuración no pasa la validación (con `estricto`,
+            por ejemplo, porque la carpeta del Markdown no existe).
     """
     ruta = (ruta or config.ruta_archivo).resolve()
     origen = ruta if ruta.exists() else _ejemplo_junto_a(ruta.parent)
     documento = _leer_documento(origen) if origen.exists() else tomlkit.document()
     base = ruta.parent
+
+    if origen == ruta:
+        _conciliar_buscar(config, _buscar_en(documento))
 
     nuevos = _valores_toml(config)
     clave = config.motor.api.clave
@@ -719,7 +800,7 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
         nuevos["motor.api"]["clave"] = ""
 
     # Validar ANTES de escribir, con lo que de verdad va a quedar en el archivo.
-    _construir(_a_dict(nuevos), ruta, estricto=True)
+    _construir(_a_dict(nuevos), ruta, estricto=estricto)
 
     for seccion, opciones in nuevos.items():
         tabla = _tabla(documento, seccion)
@@ -747,6 +828,63 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
         os.replace(temporal, ruta)
     except OSError as e:
         raise ConfigInvalida(f"No se puede escribir {ruta}: {e}") from e
+    config.buscar_leido = config.actualizaciones.buscar
+    config.buscar_tocado = False
+
+
+def _conciliar_buscar(config: Config, en_archivo: str | None) -> None:
+    """Qué `buscar` se escribe cuando el archivo y la memoria no coinciden (VOZ-82).
+
+    `guardar` escribe la Config entera. Sin esto, un «no» escrito a mano con
+    Voziris abierta volvía a «sí» con el siguiente cambio desde la bandeja.
+    - Si solo ha cambiado el archivo (a mano), manda el archivo.
+    - Si solo ha cambiado la sesión (el panel), manda la sesión.
+    - Si han cambiado los dos, gana lo más restrictivo: nunca se pasa a
+      consultar sin el último sí claro.
+    """
+    memoria = config.actualizaciones.buscar
+    if en_archivo is None or en_archivo == memoria:
+        return
+    a_mano = en_archivo != config.buscar_leido
+    if a_mano and (not config.buscar_tocado or RESTRICCION[en_archivo] < RESTRICCION[memoria]):
+        config.actualizaciones.buscar = en_archivo
+    config.buscar_leido = en_archivo  # lo que dice el archivo ya está visto
+
+
+def guardar_buscar(config: Config, valor: str) -> None:
+    """Cambia solo `[actualizaciones] buscar` en config.toml, sin tocar nada más (VOZ-82).
+
+    Para la respuesta a la tarjeta del arranque: `guardar` reescribiría la
+    Config entera con lo que hay en memoria, y desharía lo que el usuario
+    haya editado a mano mientras tanto (por ejemplo, `nivel`). Tampoco exige
+    la carpeta del Markdown, que con la plantilla de serie no existe.
+
+    Raises:
+        ConfigInvalida: no se puede leer o escribir el archivo.
+    """
+    if valor not in BUSCAR_VERSIONES:
+        raise ValueError(valor)
+    ruta = config.ruta_archivo.resolve()
+    documento = _leer_documento(ruta)
+    tabla = _tabla(documento, "actualizaciones")
+    if "buscar" in tabla:
+        tabla["buscar"] = valor
+    else:
+        elemento = tomlkit.item(valor)
+        elemento.comment(_COMENTARIOS_NUEVAS[("actualizaciones", "buscar")])
+        tabla["buscar"] = elemento
+    texto = tomlkit.dumps(documento)
+    if b"\r\n" in ruta.read_bytes():
+        texto = texto.replace("\n", "\r\n")
+    temporal = ruta.with_suffix(ruta.suffix + ".tmp")
+    try:
+        temporal.write_text(texto, encoding="utf-8", newline="")
+        os.replace(temporal, ruta)
+    except OSError as e:
+        raise ConfigInvalida(f"No se puede escribir {ruta}: {e}") from e
+    config.actualizaciones.buscar = valor
+    config.buscar_leido = valor
+    config.buscar_tocado = False
 
 
 def _plano(item: Any) -> Any:

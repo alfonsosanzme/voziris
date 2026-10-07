@@ -174,6 +174,7 @@ class Ajustes:
         self._combos_modelo: dict[str, ttk.Combobox] = {}
         self._ventana: tk.Toplevel | None = None
         self._vars: dict[str, tk.Variable] = {}
+        self._buscar_al_abrir = False
         self._textos: dict[str, tk.Text] = {}
         self._medidor: tk.Canvas | None = None
         self._temporizador: str | None = None
@@ -594,6 +595,13 @@ class Ajustes:
         ttk.Label(m, text=f"Voziris {self._version}", font=("Segoe UI", 12, "bold")).pack(
             anchor="w"
         )
+        # «preguntar» se ve sin marcar y sigue siendo «preguntar» si no se toca (VOZ-82).
+        self._buscar_al_abrir = self._config.actualizaciones.buscar == "sí"
+        ttk.Checkbutton(
+            m,
+            text="Avisar de las versiones nuevas (mira en GitHub una vez al día)",
+            variable=self._var("actualizaciones.buscar", self._buscar_al_abrir),
+        ).pack(anchor="w", pady=(6, 0))
         ttk.Label(m, text=texto_acerca_de(self._version), justify="left", wraplength=500).pack(
             anchor="w", pady=8
         )
@@ -618,6 +626,27 @@ class Ajustes:
 
     # --- guardar -------------------------------------------------------------------------------
 
+    def reflejar_buscar(self, valor: str, forzar: bool = True) -> None:
+        """Pone la casilla de las versiones nuevas como está de verdad (VOZ-82).
+
+        Al contestar la tarjeta del arranque con el panel abierto, la casilla
+        seguía como al abrirlo: con «sí» activo se veía vacía, y desmarcarla no
+        lo apagaba. Con el panel cerrado no hace nada: al abrirlo se lee.
+
+        Args:
+            forzar: con False (tras un guardado desde la bandeja), una casilla que
+                el usuario ha cambiado y aún no ha guardado no se toca: su clic
+                es lo último que ha dicho. Solo se mueve el punto de partida, para
+                que ese cambio siga contando al pulsar Guardar.
+        """
+        si = valor == "sí"
+        variable = self._vars.get("actualizaciones.buscar")
+        abierto = variable is not None and self._ventana is not None
+        pendiente = abierto and bool(self._valor("actualizaciones.buscar")) != self._buscar_al_abrir
+        self._buscar_al_abrir = si
+        if abierto and (forzar or not pendiente):
+            variable.set(si)  # type: ignore[union-attr]
+
     def _valor(self, clave: str) -> Any:
         """El valor de una variable de Tk. `Variable.get` no lleva tipos en typeshed."""
         return self._vars[clave].get()  # type: ignore[no-untyped-call]
@@ -630,6 +659,13 @@ class Ajustes:
             nueva.general.idioma = str(g("general.idioma")).strip()
             nueva.general.motor = str(g("general.motor"))
             nueva.general.arranque_con_windows = bool(g("general.arranque_con_windows"))
+            buscar = bool(g("actualizaciones.buscar"))
+            if buscar != self._buscar_al_abrir:
+                # Solo si se ha tocado: la respuesta a la pregunta del arranque, dada
+                # con el panel abierto, no se pisa con lo que la casilla enseñaba. Y
+                # se marca: un clic aquí no lo deshace una edición a mano (VOZ-82).
+                nueva.actualizaciones.buscar = "sí" if buscar else "no"
+                nueva.buscar_tocado = True
             for nombre in cfg.NOMBRES_ATAJOS:
                 setattr(nueva.atajos, nombre, str(g(f"atajos.{nombre}")).strip())
             dispositivo = str(g("audio.dispositivo"))
@@ -672,14 +708,25 @@ class Ajustes:
         return nueva
 
     def guardar(self) -> bool:
-        """Valida, escribe el TOML y aplica. Devuelve True si se guardó."""
+        """Valida, escribe el TOML y aplica. Devuelve True si se guardó.
+
+        La carpeta del Markdown solo se exige si se ha cambiado su ruta aquí. La
+        plantilla trae una que no existe (C:/Users/CAMBIAME/vault), y exigirla
+        siempre impedía guardar cualquier cosa, también la clave de Groq, a
+        quien no usa el destino Markdown.
+        """
         try:
             nueva = self.leer()
-            cfg.guardar(nueva)
+            cfg.guardar(
+                nueva, estricto=nueva.destino.markdown.ruta != self._config.destino.markdown.ruta
+            )
         except ConfigInvalida as e:
             messagebox.showerror("No se puede guardar", str(e), parent=self._ventana or self._raiz)
             return False
         self._config = nueva
+        # Lo guardado es ahora el punto de partida de la casilla. Si no, con el panel
+        # abierto, marcar, guardar, desmarcar y guardar dejaba «sí» (VOZ-82).
+        self.reflejar_buscar(nueva.actualizaciones.buscar)
         try:
             pendientes = self._aplicar(nueva)
         except Exception as e:  # noqa: BLE001 — guardado sí; aplicar en caliente, no

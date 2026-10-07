@@ -1,0 +1,1486 @@
+"""Tests de las versiones nuevas (VOZ-82).
+
+GitHub está simulado con `httpx.MockTransport`: la consulta, las
+redirecciones al almacén de descargas, un SHA-256 que no cuadra, un ZIP con
+rutas tramposas, una descarga cancelada. Ningún test sale a la red.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import re
+import threading
+import time
+import zipfile
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from voziris import actualizaciones as act
+from voziris import config as cfg
+from voziris import integridad
+
+RAIZ = Path(__file__).resolve().parents[1]
+DESCARGA = act.PREFIJO_DESCARGA + "v0.2.0/"
+ALMACEN = "https://release-assets.githubusercontent.com/github-production-release-asset/1/"
+
+
+# --- versiones ------------------------------------------------------------------------------
+
+
+def test_versiones() -> None:
+    assert act.version_de("v0.1.2") == (0, 1, 2, 0)
+    assert act.version_de("0.2") == (0, 2, 0, 0)
+    assert act.version_de("1.0.0-beta") is None
+    assert act.version_de("última") is None
+    assert act.es_mas_nueva("v0.1.10", "0.1.9")  # números, no texto
+    assert act.es_mas_nueva("0.2", "0.1.9")
+    assert act.es_mas_nueva("0.1.1.1", "0.1.1")
+    assert not act.es_mas_nueva("v0.1.1", "0.1.1")
+    assert not act.es_mas_nueva("0.1.0", "0.1.1")
+    assert not act.es_mas_nueva("raro", "0.1.1")
+    assert not act.es_mas_nueva("0.2.0", "0.1.1.dev0")  # la que corre no se entiende: no se toca
+
+
+# --- la respuesta de GitHub -----------------------------------------------------------------
+
+
+def _release(version: str = "0.2.0", **cambios: Any) -> dict[str, Any]:
+    url = f"{act.PREFIJO_DESCARGA}v{version}/"
+    datos: dict[str, Any] = {
+        "tag_name": f"v{version}",
+        "html_url": f"https://github.com/alfonsosanzme/voziris/releases/tag/v{version}",
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {"name": "SHA256SUMS.txt", "size": 90,
+             "browser_download_url": f"{url}SHA256SUMS.txt"},
+            {"name": f"voziris-{version}-win64.zip", "size": 1234,
+             "browser_download_url": f"{url}voziris-{version}-win64.zip"},
+        ],
+    }
+    datos.update(cambios)
+    return datos
+
+
+def test_novedad_de_una_release_mas_nueva() -> None:
+    n = act.novedad_de(_release(), "0.1.1")
+    assert n is not None
+    assert n.version == "0.2.0"
+    assert n.pagina.endswith("/releases/tag/v0.2.0")
+    assert n.zip_nombre == "voziris-0.2.0-win64.zip"
+    assert n.zip_url == DESCARGA + "voziris-0.2.0-win64.zip"
+    assert n.sumas_url == DESCARGA + "SHA256SUMS.txt"
+    assert n.zip_tamano == 1234
+    assert n.instalable
+
+
+def test_nada_nuevo_si_es_la_misma_o_un_borrador() -> None:
+    assert act.novedad_de(_release("0.1.1"), "0.1.1") is None
+    assert act.novedad_de(_release("0.1.0"), "0.1.1") is None
+    assert act.novedad_de(_release(prerelease=True), "0.1.1") is None
+    assert act.novedad_de(_release(draft=True), "0.1.1") is None
+
+
+def test_solo_descargas_de_este_repositorio() -> None:
+    datos = _release()
+    datos["assets"][1]["browser_download_url"] = "https://ejemplo.com/voziris-0.2.0-win64.zip"
+    datos["html_url"] = "https://ejemplo.com/voziris"
+    n = act.novedad_de(datos, "0.1.1")
+    assert n is not None
+    assert n.zip_url == ""
+    assert not n.instalable  # se avisa, pero no se descarga de cualquier sitio
+    assert n.pagina == act.PAGINA
+
+
+def test_una_release_sin_zip_se_avisa_sin_poder_instalarla() -> None:
+    n = act.novedad_de(_release(assets=[]), "0.1.1")
+    assert n is not None and not n.instalable
+
+
+@pytest.mark.parametrize("datos", [[], {"tag_name": 3}, {"tag_name": "nueva"}, "texto"])
+def test_respuestas_raras(datos: Any) -> None:
+    with pytest.raises(act.ConsultaFallida):
+        act.novedad_de(datos, "0.1.1")
+
+
+# --- consultar ------------------------------------------------------------------------------
+
+
+def test_consultar_pregunta_a_la_api_sin_nada_del_usuario() -> None:
+    vistas: list[httpx.Request] = []
+
+    def responder(peticion: httpx.Request) -> httpx.Response:
+        vistas.append(peticion)
+        return httpx.Response(200, json=_release())
+
+    n = act.consultar("0.1.1", transporte=httpx.MockTransport(responder))
+    assert n is not None and n.version == "0.2.0"
+    assert len(vistas) == 1
+    p = vistas[0]
+    assert str(p.url) == act.URL_ULTIMA
+    assert p.method == "GET" and not p.content
+    assert p.headers["user-agent"].startswith("Voziris/")
+    assert "authorization" not in p.headers
+    assert "cookie" not in p.headers
+
+
+@pytest.mark.parametrize(
+    ("respuesta", "texto"),
+    [
+        (httpx.Response(404), "ninguna versión"),
+        (httpx.Response(403), "limita"),
+        (httpx.Response(429), "limita"),
+        (httpx.Response(500), "500"),
+        (httpx.Response(200, content=b"<html>"), "no se entiende"),
+    ],
+)
+def test_consultar_falla_con_un_mensaje_claro(respuesta: httpx.Response, texto: str) -> None:
+    transporte = httpx.MockTransport(lambda _p: respuesta)
+    with pytest.raises(act.ConsultaFallida, match=texto):
+        act.consultar("0.1.1", transporte=transporte)
+
+
+def test_consultar_sin_red() -> None:
+    def sin_red(peticion: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("sin red", request=peticion)
+
+    def lenta(peticion: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("lenta", request=peticion)
+
+    with pytest.raises(act.ConsultaFallida, match="conectar"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(sin_red))
+    with pytest.raises(act.ConsultaFallida, match="a tiempo"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(lenta))
+
+
+# --- descargar ------------------------------------------------------------------------------
+
+
+def _paquete(tmp_path: Path, extra: dict[str, bytes] | None = None,
+             quitar_tras_manifiesto: str | None = None) -> bytes:
+    """Un ZIP como el de empaquetar.py: voziris/ con el .exe, _internal/ y su manifiesto."""
+    dist = tmp_path / "dist-falso"
+    (dist / "_internal" / "av.libs").mkdir(parents=True)
+    (dist / "voziris.exe").write_bytes(b"MZ" + os.urandom(3000))
+    (dist / "_internal" / "python313.dll").write_bytes(os.urandom(5000))
+    (dist / "_internal" / "av.libs" / "avcodec-62.dll").write_bytes(os.urandom(4000))
+    integridad.escribir_manifiesto(dist)
+    if quitar_tras_manifiesto:
+        (dist / quitar_tras_manifiesto).unlink()
+    memoria = io.BytesIO()
+    with zipfile.ZipFile(memoria, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(dist.rglob("*")):
+            if p.is_file():
+                z.write(p, Path("voziris") / p.relative_to(dist))
+        for nombre, contenido in (extra or {}).items():
+            z.writestr(nombre, contenido)
+    return memoria.getvalue()
+
+
+class GitHubFalso:
+    """Las dos descargas de una release, con la redirección al almacén como la real."""
+
+    def __init__(self, zip_: bytes, sumas: str | None = None, almacen: str = ALMACEN) -> None:
+        self.zip = zip_
+        self.sumas = sumas if sumas is not None else (
+            f"{hashlib.sha256(zip_).hexdigest()}  voziris-0.2.0-win64.zip\n"
+        )
+        self.almacen = almacen
+        self.pedidas: list[str] = []
+
+    def __call__(self, peticion: httpx.Request) -> httpx.Response:
+        url = str(peticion.url)
+        self.pedidas.append(url)
+        if url == DESCARGA + "SHA256SUMS.txt":
+            return httpx.Response(200, text=self.sumas)
+        if url == DESCARGA + "voziris-0.2.0-win64.zip":
+            return httpx.Response(302, headers={"Location": self.almacen + "zip"})
+        if url == self.almacen + "zip":
+            return httpx.Response(200, content=self.zip)
+        return httpx.Response(404)
+
+    @property
+    def transporte(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+
+def _novedad(tamano: int = 0) -> act.Novedad:
+    return act.Novedad(
+        "0.2.0", zip_url=DESCARGA + "voziris-0.2.0-win64.zip", zip_tamano=tamano,
+        sumas_url=DESCARGA + "SHA256SUMS.txt",
+    )
+
+
+def test_descargar_comprueba_y_descomprime(tmp_path: Path) -> None:
+    zip_ = _paquete(tmp_path)
+    github = GitHubFalso(zip_)
+    avances: list[tuple[str, float | None]] = []
+    base = tmp_path / "descargas"
+
+    exe = act.descargar(
+        _novedad(len(zip_)), lambda m, f: avances.append((m, f)),
+        base=base, transporte=github.transporte,
+    )
+
+    assert exe.is_file() and exe.name == "voziris.exe"
+    assert exe.parent.name == "voziris" and exe.parent.parent.parent == base
+    assert integridad.comprobar(exe.parent, hashes=True).ok
+    assert not list(base.glob("*/voziris-*.zip"))  # el ZIP se borra: ya está descomprimido
+    assert github.pedidas[0].endswith("SHA256SUMS.txt")  # el hash, antes que nada
+    fracciones = [f for m, f in avances if m.startswith("Descargando") and f is not None]
+    assert fracciones and fracciones[-1] == pytest.approx(1.0)
+    assert any(m.startswith("Descomprimiendo") for m, _ in avances)
+
+
+def test_un_sha256_que_no_cuadra_no_deja_nada(tmp_path: Path) -> None:
+    zip_ = _paquete(tmp_path)
+    github = GitHubFalso(zip_, sumas=f"{'0' * 64}  voziris-0.2.0-win64.zip\n")
+    base = tmp_path / "descargas"
+    with pytest.raises(act.ActualizacionFallida, match="SHA-256"):
+        act.descargar(_novedad(), base=base, transporte=github.transporte)
+    assert not list(base.iterdir())
+
+
+def test_sin_el_hash_del_zip_no_se_descarga(tmp_path: Path) -> None:
+    github = GitHubFalso(b"zip", sumas=f"{'a' * 64}  otro-archivo.zip\n")
+    with pytest.raises(act.ActualizacionFallida, match="no trae el SHA-256"):
+        act.descargar(_novedad(), base=tmp_path / "d", transporte=github.transporte)
+    assert not any(u.endswith("zip") for u in github.pedidas[1:])  # el ZIP ni se pide
+
+
+def test_una_redireccion_fuera_de_https_se_rechaza(tmp_path: Path) -> None:
+    github = GitHubFalso(_paquete(tmp_path), almacen="http://almacen.inseguro/")
+    with pytest.raises(act.ActualizacionFallida, match="no es seguro"):
+        act.descargar(_novedad(), base=tmp_path / "d", transporte=github.transporte)
+
+
+@pytest.mark.parametrize("salto", [
+    "http://release-assets.githubusercontent.com/intermedio",  # un salto en claro…
+    "https://ejemplo.com/otra-cosa",  # …o fuera de GitHub, aunque sea HTTPS
+])
+def test_cada_salto_de_la_redireccion_se_vigila(tmp_path: Path, salto: str) -> None:
+    """No basta con que el último salto sea HTTPS: desde uno en claro se podría ir a otro sitio."""
+    zip_ = _paquete(tmp_path)
+    pedidas: list[str] = []
+
+    def responder(peticion: httpx.Request) -> httpx.Response:
+        url = str(peticion.url)
+        pedidas.append(url)
+        if url.endswith("SHA256SUMS.txt"):
+            return httpx.Response(
+                200, text=f"{hashlib.sha256(zip_).hexdigest()}  voziris-0.2.0-win64.zip"
+            )
+        if url == DESCARGA + "voziris-0.2.0-win64.zip":
+            return httpx.Response(302, headers={"Location": salto})
+        if url == salto:
+            return httpx.Response(302, headers={"Location": ALMACEN + "zip"})
+        return httpx.Response(200, content=zip_)
+
+    with pytest.raises(act.ActualizacionFallida, match="no es seguro"):
+        act.descargar(_novedad(), base=tmp_path / "d",
+                      transporte=httpx.MockTransport(responder))
+    assert salto not in pedidas  # ni siquiera se pide
+
+
+def test_la_consulta_tampoco_sigue_redirecciones_fuera_de_github() -> None:
+    def responder(peticion: httpx.Request) -> httpx.Response:
+        if str(peticion.url) == act.URL_ULTIMA:
+            return httpx.Response(301, headers={"Location": "http://api.github.com/otra"})
+        return httpx.Response(200, json=_release())
+
+    with pytest.raises(act.ConsultaFallida, match="no es seguro"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(responder))
+
+
+@pytest.mark.parametrize("ruta", ["voziris/../../fuera.txt", "otra-cosa/leeme.txt"])
+def test_un_zip_con_rutas_tramposas_no_se_descomprime(tmp_path: Path, ruta: str) -> None:
+    github = GitHubFalso(_paquete(tmp_path, extra={ruta: b"malo"}))
+    base = tmp_path / "descargas"
+    with pytest.raises(act.ActualizacionFallida, match="no es de Voziris"):
+        act.descargar(_novedad(), base=base, transporte=github.transporte)
+    assert not (tmp_path / "fuera.txt").exists()
+    assert not list(base.iterdir())
+
+
+def test_un_paquete_al_que_le_falta_un_archivo_no_se_instala(tmp_path: Path) -> None:
+    zip_ = _paquete(tmp_path, quitar_tras_manifiesto="_internal/av.libs/avcodec-62.dll")
+    with pytest.raises(act.ActualizacionFallida, match="avcodec-62.dll"):
+        act.descargar(_novedad(), base=tmp_path / "d", transporte=GitHubFalso(zip_).transporte)
+
+
+def test_cancelar_borra_lo_descargado(tmp_path: Path) -> None:
+    from voziris.ui.transcripcion import TranscripcionCancelada
+
+    zip_ = _paquete(tmp_path, extra={"voziris/_internal/grande.bin": os.urandom(3 * 2**20)})
+    base = tmp_path / "descargas"
+
+    def cancelar(mensaje: str, fraccion: float | None) -> None:
+        if mensaje.startswith("Descargando"):
+            raise TranscripcionCancelada("cancelado por el usuario")
+
+    with pytest.raises(TranscripcionCancelada):
+        act.descargar(_novedad(), cancelar, base=base, transporte=GitHubFalso(zip_).transporte)
+    assert not list(base.iterdir())
+
+
+def test_cancelar_mientras_comprueba_los_archivos_tambien_cancela(tmp_path: Path) -> None:
+    """La comprobación del manifiesto tarda segundos sin avisar: el Cancelar pulsado ahí cuenta."""
+    from voziris.ui.transcripcion import TranscripcionCancelada
+
+    cancelado = [False]
+
+    def progreso(mensaje: str, fraccion: float | None) -> None:
+        if mensaje.startswith("Comprobando los archivos"):
+            cancelado[0] = True  # el usuario pulsa Cancelar durante la comprobación…
+        elif cancelado[0]:
+            raise TranscripcionCancelada("cancelado por el usuario")  # …y se atiende
+
+    base = tmp_path / "descargas"
+    with pytest.raises(TranscripcionCancelada):
+        act.descargar(_novedad(), progreso, base=base,
+                      transporte=GitHubFalso(_paquete(tmp_path)).transporte)
+    assert not list(base.iterdir())
+
+
+def test_descargar_no_borra_la_carpeta_de_una_instalacion_en_curso(tmp_path: Path) -> None:
+    """Un segundo «Actualizar» no puede llevarse la carpeta desde la que instala el primero."""
+    base = tmp_path / "descargas"
+    en_curso = base / "0.2.0-primera" / "voziris"
+    en_curso.mkdir(parents=True)
+    (en_curso / "voziris.exe").write_bytes(b"MZ")
+    vieja = base / "0.1.9-de-ayer"
+    vieja.mkdir()
+    ayer = time.time() - 86400
+    os.utime(vieja, (ayer, ayer))
+
+    exe = act.descargar(_novedad(), base=base,
+                        transporte=GitHubFalso(_paquete(tmp_path)).transporte)
+    assert (en_curso / "voziris.exe").is_file()
+    assert not vieja.exists()
+    assert exe.is_file()
+
+
+def test_una_release_sin_paquete_remite_a_la_pagina(tmp_path: Path) -> None:
+    with pytest.raises(act.ActualizacionFallida, match="Descárgala desde"):
+        act.descargar(act.Novedad("0.2.0"), base=tmp_path / "d")
+
+
+def test_un_paquete_desmesurado_ni_se_pide(tmp_path: Path) -> None:
+    def no_se_pide(peticion: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"no debería pedir {peticion.url}")
+
+    with pytest.raises(act.ActualizacionFallida, match="demasiado"):
+        act.descargar(_novedad(act.TAMANO_MAXIMO + 1), base=tmp_path / "d",
+                      transporte=httpx.MockTransport(no_se_pide))
+
+
+def test_limpiar_descargas_respeta_las_recientes(tmp_path: Path) -> None:
+    vieja, reciente = tmp_path / "0.1.9-a", tmp_path / "0.2.0-b"
+    for carpeta in (vieja, reciente):
+        (carpeta / "voziris").mkdir(parents=True)
+        (carpeta / "voziris" / "voziris.exe").write_bytes(b"MZ")
+    hace_dos_horas = time.time() - 7200
+    os.utime(vieja, (hace_dos_horas, hace_dos_horas))
+
+    act.limpiar_descargas(tmp_path, mas_viejas_que_s=3600)
+    assert not vieja.exists() and reciente.exists()
+
+    act.limpiar_descargas(tmp_path)
+    assert not tmp_path.exists()  # vacía: se quita también la carpeta
+
+
+# --- estado ---------------------------------------------------------------------------------
+
+
+def test_estado_que_no_esta_o_esta_roto(tmp_path: Path) -> None:
+    assert act.Estado.leer(tmp_path) == act.Estado()
+    (tmp_path / act.NOMBRE_ESTADO).write_text("{roto", encoding="utf-8")
+    assert act.Estado.leer(tmp_path) == act.Estado()
+    (tmp_path / act.NOMBRE_ESTADO).write_text("[1, 2]", encoding="utf-8")
+    assert act.Estado.leer(tmp_path) == act.Estado()
+
+
+def test_estado_ida_y_vuelta(tmp_path: Path) -> None:
+    e = act.Estado(comprobada=1_800_000_000.5, ultima="0.2.0", pagina=act.PAGINA, avisada="0.2.0")
+    e.guardar(tmp_path)
+    assert act.Estado.leer(tmp_path) == e
+    guardado = json.loads((tmp_path / act.NOMBRE_ESTADO).read_text(encoding="utf-8"))
+    assert guardado["ultima"] == "0.2.0"
+
+
+def test_toca_una_vez_al_dia() -> None:
+    dia = act.CADA_S
+    assert act.Estado().toca(1_800_000_000)  # nunca se ha mirado
+    assert not act.Estado(comprobada=1000.0).toca(1000.0 + dia - 1)
+    assert act.Estado(comprobada=1000.0).toca(1000.0 + dia)
+    assert act.Estado(comprobada=1000.0 + dia).toca(1000.0)  # reloj atrasado: se mira
+
+
+# --- el vigilante ---------------------------------------------------------------------------
+
+
+class Consultas:
+    def __init__(self, respuesta: act.Novedad | None | Exception) -> None:
+        self.respuesta = respuesta
+        self.veces = 0
+        self.hecha = threading.Event()
+
+    def __call__(self, _version: str) -> act.Novedad | None:
+        self.veces += 1
+        self.hecha.set()
+        if isinstance(self.respuesta, Exception):
+            raise self.respuesta
+        return self.respuesta
+
+
+def _vigilante(tmp_path: Path, consultas: Consultas, activa: bool = True,
+               avisos: list[act.Novedad] | None = None, reloj: float = 2e9) -> act.Vigilante:
+    return act.Vigilante(
+        tmp_path, lambda: activa, (avisos if avisos is not None else []).append,
+        version="0.1.1", consultar=consultas, reloj=lambda: reloj,
+        primera_espera_s=0, revisar_cada_s=0.02,
+    )
+
+
+def _esperar(condicion: Any, segundos: float = 3.0) -> None:
+    limite = time.monotonic() + segundos
+    while not condicion():
+        assert time.monotonic() < limite, "no ha pasado a tiempo"
+        time.sleep(0.01)
+
+
+def test_sin_permiso_no_consulta(tmp_path: Path) -> None:
+    consultas = Consultas(None)
+    v = _vigilante(tmp_path, consultas, activa=False)
+    v.arrancar()
+    time.sleep(0.2)
+    v.parar()
+    assert consultas.veces == 0
+    assert not (tmp_path / act.NOMBRE_ESTADO).exists()
+
+
+def test_avisa_una_vez_por_version(tmp_path: Path) -> None:
+    nueva = act.Novedad("0.2.0")
+    avisos: list[act.Novedad] = []
+    consultas = Consultas(nueva)
+    v = _vigilante(tmp_path, consultas, avisos=avisos)
+    v.arrancar()
+    _esperar(lambda: avisos)
+    time.sleep(0.15)  # varias vueltas del bucle: dentro del mismo día no se vuelve a mirar
+    v.parar()
+    assert consultas.veces == 1
+    assert avisos == [nueva]
+    assert v.novedad == nueva
+
+    # Al día siguiente vuelve a mirar; la misma versión no se avisa otra vez.
+    consultas2 = Consultas(nueva)
+    otra = _vigilante(tmp_path, consultas2, avisos=avisos, reloj=2e9 + act.CADA_S)
+    assert otra.novedad is not None and otra.novedad.version == "0.2.0"  # sin consultar
+    otra.arrancar()
+    _esperar(lambda: consultas2.veces)
+    time.sleep(0.05)
+    otra.parar()
+    assert avisos == [nueva]
+
+
+def test_una_consulta_fallida_se_reintenta(tmp_path: Path) -> None:
+    consultas = Consultas(act.ConsultaFallida("sin red"))
+    v = _vigilante(tmp_path, consultas)
+    v.arrancar()
+    _esperar(lambda: consultas.veces >= 3)  # no espera un día: lo vuelve a probar
+    v.parar()
+    assert act.Estado.leer(tmp_path).comprobada == 0.0
+
+
+def test_buscar_ahora_aunque_no_haya_permiso(tmp_path: Path) -> None:
+    consultas = Consultas(None)
+    v = _vigilante(tmp_path, consultas, activa=False)
+    assert v.buscar_ahora() is None
+    assert consultas.veces == 1
+    consultas.respuesta = act.ConsultaFallida("sin red")
+    with pytest.raises(act.ConsultaFallida):
+        v.buscar_ahora()
+
+
+def test_despues_de_actualizar_no_queda_novedad(tmp_path: Path) -> None:
+    act.Estado(comprobada=1.0, ultima="0.2.0", avisada="0.2.0").guardar(tmp_path)
+    v = act.Vigilante(tmp_path, lambda: True, lambda n: None, version="0.2.0")
+    assert v.novedad is None
+
+
+def test_despertar_mira_sin_esperar_la_hora(tmp_path: Path) -> None:
+    consultas = Consultas(None)
+    permiso = [False]
+    v = act.Vigilante(
+        tmp_path, lambda: permiso[0], lambda n: None, version="0.1.1", consultar=consultas,
+        primera_espera_s=0, revisar_cada_s=3600,
+    )
+    v.arrancar()
+    time.sleep(0.1)
+    assert consultas.veces == 0
+    permiso[0] = True  # el usuario acepta la pregunta
+    v.despertar()
+    assert consultas.hecha.wait(3)
+    v.parar()
+
+
+# --- la opción en config.toml ---------------------------------------------------------------
+
+
+def _config(tmp_path: Path, extra: str = "") -> cfg.Config:
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    (tmp_path / cfg.NOMBRE_ARCHIVO).write_text(ejemplo + extra, encoding="utf-8")
+    return cfg.cargar(tmp_path / cfg.NOMBRE_ARCHIVO)
+
+
+def test_por_defecto_se_pregunta(tmp_path: Path) -> None:
+    assert _config(tmp_path).actualizaciones.buscar == "preguntar"
+
+
+def test_si_sin_tilde_tambien_vale(tmp_path: Path) -> None:
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    texto = ejemplo.replace('buscar = "preguntar"', 'buscar = "si"')
+    (tmp_path / cfg.NOMBRE_ARCHIVO).write_text(texto, encoding="utf-8")
+    assert cfg.cargar(tmp_path / cfg.NOMBRE_ARCHIVO).actualizaciones.buscar == "sí"
+
+
+@pytest.mark.parametrize(("escrito", "queda"), [("true", "sí"), ("false", "no")])
+def test_true_y_false_tambien_valen(tmp_path: Path, escrito: str, queda: str) -> None:
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(ejemplo.replace('buscar = "preguntar"', f"buscar = {escrito}"),
+                    encoding="utf-8")
+    c = cfg.cargar(ruta)
+    assert c.actualizaciones.buscar == queda
+    c.general.motor = "local"  # cualquier guardado deja el valor escrito como texto
+    cfg.guardar(c, estricto=False)
+    assert f'buscar = "{queda}"' in ruta.read_text(encoding="utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+
+
+def test_un_valor_que_no_existe_es_error(tmp_path: Path) -> None:
+    from voziris.errores import ConfigInvalida
+
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    (tmp_path / cfg.NOMBRE_ARCHIVO).write_text(
+        ejemplo.replace('buscar = "preguntar"', 'buscar = "siempre"'), encoding="utf-8"
+    )
+    with pytest.raises(ConfigInvalida, match=re.escape("preguntar | sí | no")):
+        cfg.cargar(tmp_path / cfg.NOMBRE_ARCHIVO)
+
+
+def test_un_config_de_antes_gana_la_seccion_al_guardar(tmp_path: Path) -> None:
+    """La 0.1.1 no la tenía: al contestar la pregunta se añade, con su explicación."""
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    viejo = ejemplo.split("[actualizaciones]")[0]
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(viejo, encoding="utf-8")
+    c = cfg.cargar(ruta)
+    assert c.actualizaciones.buscar == "preguntar"
+    c.actualizaciones.buscar = "sí"
+    # La plantilla trae una carpeta de Markdown que no existe: desde la bandeja se guarda igual.
+    cfg.guardar(c, estricto=False)
+    texto = ruta.read_text(encoding="utf-8")
+    assert '[actualizaciones]\nbuscar = "sí"' in texto
+    assert "una vez al día" in texto
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+
+
+def test_el_panel_sigue_exigiendo_la_carpeta_del_markdown(tmp_path: Path) -> None:
+    from voziris.errores import ConfigInvalida
+
+    c = _config(tmp_path)
+    c.actualizaciones.buscar = "no"
+    with pytest.raises(ConfigInvalida, match="no existe"):
+        cfg.guardar(c)
+
+
+# --- bandeja --------------------------------------------------------------------------------
+
+
+def _bandeja(
+    version_nueva: str | None, etiqueta: str = "Actualizar a la {}…"
+) -> tuple[Any, list[str]]:
+    from voziris.ui.bandeja import AccionesBandeja, Bandeja
+
+    pulsadas: list[str] = []
+    acciones = AccionesBandeja(
+        dictar_ahora=lambda: None, dictar_markdown=lambda: None, alternar_corte=lambda: None,
+        abrir_ajustes=lambda: None, cambiar_motor=lambda m: None, reintentar=lambda i: None,
+        borrar_entrada=lambda i: None, salir=lambda: None,
+        buscar_actualizaciones=lambda: pulsadas.append("buscar"),
+        actualizar=lambda: pulsadas.append("actualizar"),
+        version_nueva=lambda: version_nueva,
+        etiqueta_actualizar=etiqueta,
+    )
+    return Bandeja(acciones), pulsadas
+
+
+def _visibles(bandeja: Any) -> dict[str, Any]:
+    return {str(i.text): i for i in bandeja.construir_menu().items if i.visible}
+
+
+def test_menu_sin_version_nueva() -> None:
+    bandeja, pulsadas = _bandeja(None)
+    items = _visibles(bandeja)
+    assert "Buscar actualizaciones" in items
+    assert not any(t.startswith("Actualizar") for t in items)
+    items["Buscar actualizaciones"](None)
+    assert pulsadas == ["buscar"]
+
+
+def test_menu_con_version_nueva() -> None:
+    bandeja, pulsadas = _bandeja("0.2.0")
+    items = _visibles(bandeja)
+    items["Actualizar a la 0.2.0…"](None)
+    assert pulsadas == ["actualizar"]
+    textos = list(items)
+    assert textos.index("Actualizar a la 0.2.0…") < textos.index("Acerca de Voziris")
+
+
+def test_menu_portable_descarga() -> None:
+    bandeja, _ = _bandeja("0.2.0", etiqueta="Descargar la {}…")
+    assert "Descargar la 0.2.0…" in _visibles(bandeja)
+
+
+def test_avisos() -> None:
+    n = act.Novedad("0.2.0")
+    assert "«Actualizar a la 0.2.0…»" in act.aviso_de(n, instalada=True)
+    assert "«Descargar la 0.2.0…»" in act.aviso_de(n, instalada=False)
+
+
+# --- panel de ajustes -----------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def raiz() -> Any:
+    import tkinter as tk
+
+    try:
+        r = tk.Tk()
+    except tk.TclError as e:
+        pytest.skip(f"sin Tk: {e}")
+    r.withdraw()
+    yield r
+    r.destroy()
+
+
+def _casilla(raiz: Any, c: cfg.Config) -> Any:
+    from voziris.ui.ajustes import Ajustes
+
+    a = Ajustes(raiz, c, lambda _c: [])
+    a.abrir()
+    raiz.update()
+    return a
+
+
+def test_panel_preguntar_sin_tocar_sigue_preguntando(raiz: Any, tmp_path: Path) -> None:
+    c = _config(tmp_path)
+    a = _casilla(raiz, c)
+    assert a._vars["actualizaciones.buscar"].get() is False
+    assert a.leer().actualizaciones.buscar == "preguntar"
+    a._vars["actualizaciones.buscar"].set(True)
+    assert a.leer().actualizaciones.buscar == "sí"
+    a.cerrar()
+
+
+def test_panel_desmarcar_es_no(raiz: Any, tmp_path: Path) -> None:
+    c = _config(tmp_path)
+    c.actualizaciones.buscar = "sí"
+    a = _casilla(raiz, c)
+    assert a._vars["actualizaciones.buscar"].get() is True
+    a._vars["actualizaciones.buscar"].set(False)
+    assert a.leer().actualizaciones.buscar == "no"
+    a.cerrar()
+
+
+def test_panel_marcar_guardar_desmarcar_guardar_es_no(raiz: Any, tmp_path: Path) -> None:
+    """Con el panel abierto entre los dos guardados: la casilla manda las dos veces."""
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    (tmp_path / "vault").mkdir()
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(
+        ejemplo.replace('ruta = "C:/Users/CAMBIAME/vault/entrada.md"',
+                        'ruta = "./vault/entrada.md"'),
+        encoding="utf-8",
+    )
+    a = _casilla(raiz, cfg.cargar(ruta))
+    casilla = a._vars["actualizaciones.buscar"]
+    casilla.set(True)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    casilla.set(False)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    casilla.set(True)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    a.cerrar()
+
+
+def test_la_pregunta_no_quita_el_foco_y_se_contesta_con_un_clic(raiz: Any) -> None:
+    from voziris import winapi
+    from voziris.ui.pregunta import Pregunta
+
+    respuestas: list[bool] = []
+    p = Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, respuestas.append)
+    raiz.update()
+    if winapi.ES_WINDOWS:
+        estilo = winapi.estilo_extendido(int(p.ventana.frame(), 16))
+        assert estilo & winapi.WS_EX_NOACTIVATE  # ninguna tecla la contesta
+        assert estilo & winapi.WS_EX_TOPMOST
+    assert str(p.boton_si.cget("takefocus")) == "0"
+    p.boton_si.invoke()
+    p._contestar(False)  # un segundo clic que llegara tarde: ya está contestada, no cuenta
+    assert respuestas == [True]
+    assert not p.ventana.winfo_exists()
+
+    otra = Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, respuestas.append)
+    otra.boton_no.invoke()
+    assert respuestas == [True, False]
+
+
+def test_panel_no_pisa_la_respuesta_dada_con_el_panel_abierto(raiz: Any, tmp_path: Path) -> None:
+    c = _config(tmp_path)
+    a = _casilla(raiz, c)
+    c.actualizaciones.buscar = "sí"  # contesta la pregunta del arranque con el panel abierto
+    assert a.leer().actualizaciones.buscar == "sí"
+    a.cerrar()
+
+
+# --- voziris --actualizar -------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
+    from voziris import __main__ as principal
+
+    hecho: dict[str, list[Any]] = {"mensajes": [], "errores": [], "lanzadas": [], "paginas": []}
+    monkeypatch.setattr(principal, "_mensaje", lambda t, x: hecho["mensajes"].append((t, x)))
+    monkeypatch.setattr(principal, "_error_fatal",
+                        lambda m, con_ventana, titulo="": hecho["errores"].append(m))
+    monkeypatch.setattr(principal, "_lanzar_desatendido",
+                        lambda orden, cwd=None: hecho["lanzadas"].append(orden))
+    monkeypatch.setattr(principal, "_abrir_pagina", hecho["paginas"].append)
+    monkeypatch.setattr(principal, "_esta_instalada", lambda: True)
+    monkeypatch.setattr(principal.winapi, "tomar_mutex", lambda nombre: True)
+    monkeypatch.setattr("voziris.ui.transcripcion.ejecutar_con_progreso",
+                        lambda titulo, detalle, trabajo, **k: trabajo(lambda m, f: None))
+    return hecho
+
+
+def test_dos_actualizaciones_a_la_vez_no(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "tomar_mutex", lambda nombre: False)
+    monkeypatch.setattr(act, "consultar", lambda: pytest.fail("no debería consultar"))
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
+    assert cli == {"mensajes": [], "errores": [], "lanzadas": [], "paginas": []}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="mutex de Windows")
+def test_tomar_mutex_no_toca_el_de_la_instancia() -> None:
+    import subprocess
+    import sys
+
+    from voziris import winapi
+
+    nombre = f"Local\\Voziris.pruebas-{os.getpid()}"
+    antes = winapi._mutex_instancia
+    assert winapi.tomar_mutex(nombre)
+    assert winapi.tomar_mutex(nombre)  # el mismo proceso, otra vez: sigue siendo suyo
+    assert winapi._mutex_instancia is antes
+    otro = subprocess.run(
+        [sys.executable, "-c",
+         f"from voziris import winapi; print(winapi.tomar_mutex({nombre!r}))"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "PYTHONPATH": str(RAIZ / "src")},
+    )
+    assert otro.stdout.strip() == "False", otro.stderr
+
+
+def test_actualizar_arranca_el_instalador_nuevo(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    exe = tmp_path / "0.2.0-x" / "voziris" / "voziris.exe"
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+    assert principal._actualizar_cli() == 0
+    # Con --config de la instalación: su registro no se queda en la carpeta temporal.
+    config_instalada = str(principal_instalacion() / cfg.NOMBRE_ARCHIVO)
+    assert cli["lanzadas"] == [[str(exe), "--config", config_instalada, "--instalar"]]
+    assert cli["errores"] == [] and cli["mensajes"] == []
+
+
+def principal_instalacion() -> Path:
+    from voziris import instalador
+
+    return instalador.carpeta_instalacion()
+
+
+def test_actualizar_al_dia(cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    from voziris import __main__ as principal
+
+    monkeypatch.setattr(act, "consultar", lambda: None)
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
+    assert cli["mensajes"][0][0] == "Voziris está al día"
+    assert cli["lanzadas"] == []
+
+
+def test_actualizar_una_version_sin_paquete_abre_su_pagina(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Una release sin el ZIP o sin SHA256SUMS.txt: se avisa, y el clic lleva a la página."""
+    from voziris import __main__ as principal
+
+    pagina = "https://github.com/alfonsosanzme/voziris/releases/tag/v0.2.0"
+    monkeypatch.setattr(act, "consultar", lambda: act.Novedad("0.2.0", pagina))
+    monkeypatch.setattr(act, "descargar", lambda n, p: pytest.fail("no debería descargar"))
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
+    assert cli["paginas"] == [pagina]
+    assert cli["errores"] == [] and cli["lanzadas"] == []
+
+
+def test_un_cancelar_tardio_no_instala_y_borra_la_descarga(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El Cancelar que Tk atiende cuando la descarga ya terminó: no se arranca el instalador."""
+    from voziris import __main__ as principal
+    from voziris.ui.transcripcion import TranscripcionCancelada
+
+    carpeta = tmp_path / "0.2.0-x"
+    exe = carpeta / "voziris" / "voziris.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+
+    def con_cancelar_tardio(titulo: str, detalle: str, trabajo: Any, **k: Any) -> Any:
+        assert k.get("cancelar_tarde") is True
+        raise TranscripcionCancelada("cancelado por el usuario", trabajo(lambda m, f: None))
+
+    monkeypatch.setattr("voziris.ui.transcripcion.ejecutar_con_progreso", con_cancelar_tardio)
+    assert principal._actualizar_cli() == 3
+    assert cli["lanzadas"] == []
+    assert cli["mensajes"] == [("Actualización cancelada", "No se ha cambiado nada.")]
+    assert not carpeta.exists()
+
+
+def test_actualizar_si_falla_no_instala_nada(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    def descargar(n: act.Novedad, progreso: Any) -> Path:
+        raise act.ActualizacionFallida("El paquete descargado no coincide con su SHA-256")
+
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", descargar)
+    assert principal._actualizar_cli() == 1
+    assert cli["errores"] == ["El paquete descargado no coincide con su SHA-256"]
+    assert cli["lanzadas"] == []
+
+
+def test_actualizar_bloqueado_por_windows(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    exe = tmp_path / "voziris" / "voziris.exe"
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+
+    def bloqueado(orden: list[str], cwd: Path | None = None) -> None:
+        raise OSError(22, "Una directiva de control de aplicaciones bloqueó este archivo",
+                      None, 4551)
+
+    monkeypatch.setattr(principal, "_lanzar_desatendido", bloqueado)
+    assert principal._actualizar_cli() == 1
+    assert "Control inteligente" in cli["errores"][0]
+    # El .cmd lanzaría el mismo .exe bloqueado: se remite al LÉEME, no a él. Y al que va
+    # dentro de la descarga, que es donde está: la página de la release no lo tiene.
+    assert "Instalar Voziris.cmd" not in cli["errores"][0]
+    assert "Si Windows lo bloquea" in cli["errores"][0]
+    assert principal.NOMBRE_GUIA in cli["errores"][0] and str(exe.parent) in cli["errores"][0]
+
+
+def test_si_el_instalador_no_arranca_por_otra_cosa_se_ofrece_el_cmd(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    exe = tmp_path / "voziris" / "voziris.exe"
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+
+    def falla(orden: list[str], cwd: Path | None = None) -> None:
+        raise OSError(2, "No se encuentra el archivo")
+
+    monkeypatch.setattr(principal, "_lanzar_desatendido", falla)
+    assert principal._actualizar_cli() == 1
+    assert "Instalar Voziris.cmd" in cli["errores"][0] and str(exe.parent) in cli["errores"][0]
+
+
+def test_actualizar_una_copia_portable_abre_la_pagina(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    monkeypatch.setattr(principal, "_esta_instalada", lambda: False)
+    monkeypatch.setattr(act, "consultar", lambda: pytest.fail("no debería consultar"))
+    assert principal._actualizar_cli() == 1
+    assert cli["paginas"] == [act.PAGINA]
+
+
+class _Proceso:
+    def __init__(self, codigo: int | None) -> None:
+        self.codigo = codigo
+
+    def poll(self) -> int | None:
+        return self.codigo
+
+
+def test_un_segundo_clic_no_lanza_otra_actualizacion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En marcha = --actualizar vivo, o el instalador nuevo con su mutex. Sin plazos fijos."""
+    from voziris import __main__ as principal
+
+    instalando = [False]
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex",
+                        lambda nombre: instalando[0] and nombre == principal.MUTEX_INSTALAR)
+    assert principal._actualizacion_en_marcha(_Proceso(None))  # descargando
+    instalando[0] = True
+    assert principal._actualizacion_en_marcha(_Proceso(0))  # salió y el instalador trabaja
+    instalando[0] = False
+    # El instalador terminó (bien, cancelado o con error), o «al día»: se puede reintentar ya.
+    for codigo in (0, 1, 2, 3):
+        assert not principal._actualizacion_en_marcha(_Proceso(codigo))
+    assert not principal._actualizacion_en_marcha(None)
+
+
+def test_actualizar_espera_a_que_el_instalador_tome_su_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si --actualizar saliera antes, un segundo clic caería en el hueco hasta que lo toma."""
+    from voziris import __main__ as principal
+
+    consultas = [0]
+
+    def existe(nombre: str) -> bool:
+        consultas[0] += 1
+        return consultas[0] >= 3  # el instalador tarda en arrancar (el antivirus mira el .exe)
+
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex", existe)
+    inicio = time.monotonic()
+    principal._esperar_al_instalador(_Proceso(None), 5.0)
+    assert consultas[0] == 3 and time.monotonic() - inicio < 2
+    # Si el instalador termina sin llegar a tomarlo (bloqueado, por ejemplo), no se espera más.
+    consultas[0] = -1000
+    inicio = time.monotonic()
+    principal._esperar_al_instalador(_Proceso(1), 5.0)
+    assert time.monotonic() - inicio < 1
+
+
+def test_dos_instalaciones_a_la_vez_no(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+    from voziris import instalador
+
+    monkeypatch.setattr(principal.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "tomar_mutex",
+                        lambda nombre: nombre != principal.MUTEX_INSTALAR)
+    monkeypatch.setattr(instalador, "instalar", lambda **k: pytest.fail("no debería instalar"))
+    assert principal._instalar_cli() == 0
+    assert cli["mensajes"] == [
+        ("Voziris ya se está instalando", "Hay otra instalación en marcha: espera a que termine.")
+    ]
+
+
+def test_instalar_encima_de_otra_version_dice_actualizado(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+    from voziris import __version__, instalador
+
+    monkeypatch.setattr(instalador, "version_instalada", lambda: "0.0.9")
+    monkeypatch.setattr(instalador, "instalar", lambda **k: tmp_path)
+    monkeypatch.setattr(principal, "_abrir_la_instalada", lambda destino: None)
+    assert principal._instalar_cli() == 0
+    titulo, texto = cli["mensajes"][-1]
+    assert titulo == "Voziris actualizado"
+    assert f"la versión {__version__} (antes, la 0.0.9)" in texto
+
+    monkeypatch.setattr(instalador, "version_instalada", lambda: None)
+    assert principal._instalar_cli() == 0
+    assert cli["mensajes"][-1][0] == "Voziris instalado"
+
+
+# --- lo que encontró la segunda revisión ----------------------------------------------------
+
+
+def _plantilla(tmp_path: Path, buscar: str | None = None) -> Path:
+    """config.toml copiado de la plantilla, tal cual: con la ruta del Markdown CAMBIAME."""
+    texto = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    if buscar is not None:
+        texto = texto.replace('buscar = "preguntar"', f'buscar = "{buscar}"')
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(texto, encoding="utf-8")
+    return ruta
+
+
+def test_un_no_escrito_a_mano_con_voziris_abierta_no_vuelve_a_si(tmp_path: Path) -> None:
+    ruta = _plantilla(tmp_path, "sí")
+    c = cfg.cargar(ruta)  # la bandeja arranca con «sí»
+    texto = ruta.read_text(encoding="utf-8").replace('buscar = "sí"', 'buscar = "no"')
+    ruta.write_text(texto, encoding="utf-8")  # el usuario lo cambia a mano
+    c.audio.al_dictar = "atenuar"  # y luego toca algo desde la bandeja
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    assert c.actualizaciones.buscar == "no"  # la memoria baja también
+
+
+def test_un_cambio_hecho_en_la_sesion_si_se_escribe(tmp_path: Path) -> None:
+    """Al revés: si lo cambia la tarjeta o el panel, se guarda aunque el archivo diga otra cosa."""
+    ruta = _plantilla(tmp_path, "no")
+    c = cfg.cargar(ruta)
+    c.actualizaciones.buscar = "sí"
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    c.general.motor = "local"  # otro guardado después no lo deshace
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+
+
+@pytest.mark.parametrize(("memoria", "archivo", "puede"), [
+    ("preguntar", "preguntar", False),
+    ("no", "no", False),
+    ("sí", "sí", True),
+    ("sí", "no", False),  # un «no» escrito a mano vale desde ya
+    ("sí", "preguntar", False),  # y un «preguntar», también
+    ("sí", None, True),  # un config.toml sin la sección (de la 0.1.1)
+])
+def test_solo_se_mira_con_un_si(tmp_path: Path, memoria: str, archivo: str | None,
+                                puede: bool) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path, archivo)
+    if archivo is None:
+        ruta.write_text(ruta.read_text(encoding="utf-8").split("[actualizaciones]")[0],
+                        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    c.actualizaciones.buscar = memoria
+    assert principal._puede_mirar_versiones(c) is puede
+
+
+def test_la_respuesta_a_la_tarjeta_se_guarda_con_la_plantilla_de_serie(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    assert principal._guardar_respuesta(c, True) is None
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    assert principal._guardar_respuesta(c, False) is None
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+def test_el_panel_guarda_con_la_plantilla_de_serie(raiz: Any, tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    """Antes, con la ruta CAMBIAME, el panel no guardaba nada: ni la clave de Groq."""
+    from voziris.ui import ajustes as mod
+
+    errores: list[str] = []
+    monkeypatch.setattr(mod.messagebox, "showerror", lambda t, m, **k: errores.append(m))
+    ruta = _plantilla(tmp_path, "sí")
+    a = _casilla(raiz, cfg.cargar(ruta))
+    a._vars["motor.api.clave"].set("gsk_de_prueba_no_real")
+    a._vars["actualizaciones.buscar"].set(False)
+    assert a.guardar(), errores
+    guardada = cfg.cargar(ruta)
+    assert guardada.motor.api.clave == "gsk_de_prueba_no_real"
+    assert guardada.actualizaciones.buscar == "no"
+    # Si se cambia la ruta del Markdown a una carpeta que no existe, eso sí se dice.
+    a._vars["destino.markdown.ruta"].set(str(tmp_path / "no-existe" / "entrada.md"))
+    assert not a.guardar()
+    assert errores and "no existe" in errores[-1]
+    a.cerrar()
+
+
+def test_la_casilla_refleja_la_tarjeta_contestada_con_el_panel_abierto(
+    raiz: Any, tmp_path: Path
+) -> None:
+    from voziris import __main__ as principal
+
+    (tmp_path / "vault").mkdir()
+    ruta = _plantilla(tmp_path)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'ruta = "C:/Users/CAMBIAME/vault/entrada.md"', 'ruta = "./vault/entrada.md"'),
+        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    a = _casilla(raiz, c)
+    casilla = a._vars["actualizaciones.buscar"]
+    assert casilla.get() is False
+    principal._guardar_respuesta(c, True)  # la tarjeta, con el panel abierto…
+    a.reflejar_buscar(c.actualizaciones.buscar)  # …y lo que hace la bandeja después
+    assert casilla.get() is True
+    casilla.set(False)  # desmarcarla vuelve a significar «no»
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    a.cerrar()
+
+
+@pytest.mark.parametrize("contenido", [
+    '{"comprobada": 1' + "0" * 400 + '}',  # un número que no cabe en un float
+    "[" * 50000 + "]" * 50000,  # JSON anidado hasta reventar la recursión
+    '{"ultima": {"x": 1}, "pagina": [1, 2], "avisada": 3}',
+], ids=["numero-enorme", "anidado", "tipos-raros"])
+def test_un_estado_roto_no_impide_arrancar(tmp_path: Path, contenido: str) -> None:
+    (tmp_path / act.NOMBRE_ESTADO).write_text(contenido, encoding="utf-8")
+    estado = act.Estado.leer(tmp_path)
+    assert isinstance(estado.comprobada, float)
+    act.Vigilante(tmp_path, lambda: False, lambda n: None, version="0.1.1")
+
+
+def test_la_tarjeta_se_ensena_sin_activarla(raiz: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Que no quita el foco: se muestra con SetWindowPos sin activar, nunca con deiconify."""
+    from voziris import winapi
+    from voziris.ui import pregunta as mod
+
+    colocadas: list[tuple[int, ...]] = []
+    monkeypatch.setattr(mod.winapi, "colocar_sin_activar",
+                        lambda *a: colocadas.append(a) if winapi.ES_WINDOWS else None)
+    monkeypatch.setattr(tk_toplevel(), "deiconify",
+                        lambda self, *a: pytest.fail("deiconify activa la ventana"))
+    p = mod.Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, lambda si: None)
+    if winapi.ES_WINDOWS:
+        assert len(colocadas) == 1
+    assert str(p.boton_no.cget("takefocus")) == "0"
+    assert str(p.boton_si.cget("takefocus")) == "0"
+    p.cerrar()
+
+
+def tk_toplevel() -> Any:
+    import tkinter as tk
+
+    return tk.Toplevel
+
+
+PRUEBA_CANCELAR_TARDIO = """
+from voziris.ui import transcripcion as tr
+
+ventanas = []
+original = tr.VentanaProgreso
+
+
+class Espia(original):
+    def __init__(self, *a):
+        super().__init__(*a)
+        ventanas.append(self)
+
+
+tr.VentanaProgreso = Espia
+
+
+def trabajo(progreso):
+    progreso("Ultimo paso", 1.0)
+    # El clic en Cancelar llega a Tk justo después de la última mirada del trabajo,
+    # antes que el quit que pide el hilo al terminar.
+    ventanas[-1]._raiz.after(0, ventanas[-1].cancelar)
+    return "hecho"
+
+
+try:
+    tr.ejecutar_con_progreso("t", "d", trabajo, cancelar_tarde=True)
+    print("DEVUELTO")
+except tr.TranscripcionCancelada as e:
+    print("CANCELADO", e.resultado)
+print("SIN-LA-OPCION", tr.ejecutar_con_progreso("t", "d", trabajo))
+"""
+
+
+def test_ejecutar_con_progreso_atiende_el_cancelar_tardio(tmp_path: Path) -> None:
+    """En su propio proceso: cada ventana de progreso es un intérprete de Tk nuevo."""
+    import subprocess
+    import sys
+
+    guion = tmp_path / "cancelar_tardio.py"
+    guion.write_text(PRUEBA_CANCELAR_TARDIO, encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(guion)], capture_output=True, text=True, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(RAIZ / "src")},
+    )
+    if "usable tk.tcl" in r.stderr:
+        pytest.skip("sin Tk en este proceso")
+    assert "CANCELADO hecho" in r.stdout, r.stdout + r.stderr
+    # Sin la opción (la transcripción), se devuelve: el .md ya está escrito.
+    assert "SIN-LA-OPCION hecho" in r.stdout, r.stdout + r.stderr
+
+
+# --- lo que encontró la tercera revisión ----------------------------------------------------
+
+
+def test_un_guardado_fallido_no_hace_perder_un_no_escrito_despues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris.errores import ConfigInvalida
+
+    ruta = _plantilla(tmp_path, "no")
+    c = cfg.cargar(ruta)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace('buscar = "no"', 'buscar = "sí"'),
+                    encoding="utf-8")  # «sí» a mano…
+    real = cfg.os.replace
+
+    def bloqueado(origen: Any, destino: Any) -> None:
+        raise PermissionError(32, "en uso")
+
+    monkeypatch.setattr(cfg.os, "replace", bloqueado)
+    c.general.motor = "local"  # …un cambio desde la bandeja que no llega a escribirse…
+    with pytest.raises(ConfigInvalida):
+        cfg.guardar(c, estricto=False)
+    monkeypatch.setattr(cfg.os, "replace", real)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace('buscar = "sí"', 'buscar = "no"'),
+                    encoding="utf-8")  # …y se arrepiente: «no» a mano
+    c.audio.al_dictar = "atenuar"
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+@pytest.mark.parametrize(("en_el_panel", "a_mano", "queda"), [
+    ("no", "sí", "no"),  # los dos cambian: gana lo más restrictivo
+    ("sí", "no", "no"),
+    ("sí", "preguntar", "preguntar"),
+])
+def test_un_cambio_en_el_panel_y_otro_a_mano_gana_lo_mas_restrictivo(
+    tmp_path: Path, en_el_panel: str, a_mano: str, queda: str
+) -> None:
+    inicial = "preguntar" if "preguntar" not in (en_el_panel, a_mano) else "no"
+    ruta = _plantilla(tmp_path, inicial)
+    c = cfg.cargar(ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    ruta.write_text(texto.replace(f'buscar = "{inicial}"', f'buscar = "{a_mano}"'),
+                    encoding="utf-8")
+    c.actualizaciones.buscar = en_el_panel  # lo que hace Ajustes.leer al tocar la casilla
+    c.buscar_tocado = True
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+    assert c.actualizaciones.buscar == queda
+
+
+def test_la_respuesta_a_la_tarjeta_no_deshace_otras_ediciones_a_mano(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    assert 'nivel = "limpio"' in texto
+    ruta.write_text(texto.replace('nivel = "limpio"', 'nivel = "literal"'), encoding="utf-8")
+    assert principal._guardar_respuesta(c, True) is None  # en memoria sigue «limpio»
+    final = cfg.cargar(ruta)
+    assert final.actualizaciones.buscar == "sí"
+    assert final.proceso.nivel.value == "literal"  # lo editado a mano se queda
+
+
+def test_la_respuesta_conserva_los_finales_de_linea_y_crea_la_seccion(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    viejo = ruta.read_text(encoding="utf-8").split("[actualizaciones]")[0]
+    ruta.write_bytes(viejo.replace("\n", "\r\n").encode("utf-8"))  # un config.toml de la 0.1.1
+    c = cfg.cargar(ruta)
+    assert principal._guardar_respuesta(c, False) is None
+    datos = ruta.read_bytes()
+    assert b"\r\n" in datos and b"\n" not in datos.replace(b"\r\n", b"")
+    assert "una vez al día" in datos.decode("utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+@pytest.mark.parametrize(("escrito", "queda"), [("No", "no"), (" SÍ ", "sí"), ("Si", "sí")])
+def test_mayusculas_y_espacios_tambien_valen(tmp_path: Path, escrito: str, queda: str) -> None:
+    ruta = _plantilla(tmp_path)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'buscar = "preguntar"', f'buscar = "{escrito}"'), encoding="utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+    assert cfg.leer_buscar(ruta) == queda
+
+
+@pytest.mark.parametrize("buscar", ["preguntar", "no"])
+def test_sin_un_si_el_vigilante_de_la_bandeja_no_consulta_nunca(
+    tmp_path: Path, buscar: str
+) -> None:
+    """El permiso tal como lo cablea la bandeja (`_crear_vigilante`), no una copia."""
+    from voziris import __main__ as principal
+
+    c = cfg.cargar(_plantilla(tmp_path, buscar))
+    consultas = Consultas(None)
+    v = principal._crear_vigilante(lambda: c, lambda n: None, version="0.1.1",
+                                   consultar=consultas, primera_espera_s=0, revisar_cada_s=0.01)
+    v.arrancar()
+    v.despertar()
+    time.sleep(0.2)
+    v.parar()
+    assert consultas.veces == 0
+
+
+def test_con_un_si_el_vigilante_de_la_bandeja_consulta(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    actual = [cfg.cargar(_plantilla(tmp_path, "preguntar"))]
+    consultas = Consultas(None)
+    v = principal._crear_vigilante(lambda: actual[0], lambda n: None, version="0.1.1",
+                                   consultar=consultas, primera_espera_s=0, revisar_cada_s=3600)
+    v.arrancar()
+    time.sleep(0.1)
+    assert consultas.veces == 0
+    principal._guardar_respuesta(actual[0], True)  # la tarjeta: «Sí»
+    v.despertar()
+    assert consultas.hecha.wait(3)
+    v.parar()
+
+
+def test_main_despacha_actualizar_e_instalar_con_su_registro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+
+    registros: list[str | None] = []
+    monkeypatch.setattr(principal, "configurar_log",
+                        lambda carpeta, depurar, a_consola, nombre=None: registros.append(nombre))
+    monkeypatch.setattr(principal, "activar_faulthandler", lambda carpeta: None)
+    monkeypatch.setattr(principal, "anotar_arranque_en_fallos", lambda modo="bandeja": None)
+    monkeypatch.setattr(principal, "_actualizar_cli", lambda: 42)
+    monkeypatch.setattr(principal, "_instalar_cli", lambda: 43)
+    config = str(tmp_path / cfg.NOMBRE_ARCHIVO)
+    assert principal.main(["--config", config, "--actualizar"]) == 42
+    assert principal.main(["--config", config, "--instalar"]) == 43
+    assert registros == [principal.NOMBRE_LOG_ACTUALIZAR, principal.NOMBRE_LOG_INSTALAR]
+
+
+@pytest.mark.parametrize("location", ["https://[zz]/x", "https://[::1/x"])
+def test_una_redireccion_que_no_se_entiende_da_el_error_de_siempre(
+    tmp_path: Path, location: str
+) -> None:
+    def a_ninguna_parte(peticion: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": location})
+
+    with pytest.raises(act.ConsultaFallida, match="no se entiende"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(a_ninguna_parte))
+    with pytest.raises(act.ActualizacionFallida, match="no se entiende"):
+        act.descargar(_novedad(), base=tmp_path / "d",
+                      transporte=httpx.MockTransport(a_ninguna_parte))
+
+
+def test_una_actualizacion_lanzada_antes_de_reiniciar_la_bandeja_tambien_cuenta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from voziris import __main__ as principal
+
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex",
+                        lambda nombre: nombre == principal.MUTEX_ACTUALIZAR)
+    assert principal._actualizacion_en_marcha(None)
+
+
+def test_volver_a_una_version_anterior_no_dice_actualizado(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+    from voziris import instalador
+
+    monkeypatch.setattr(instalador, "version_instalada", lambda: "99.0.0")
+    monkeypatch.setattr(instalador, "instalar", lambda **k: tmp_path)
+    monkeypatch.setattr(principal, "_abrir_la_instalada", lambda destino: None)
+    assert principal._instalar_cli() == 0
+    titulo, texto = cli["mensajes"][-1]
+    assert titulo == "Voziris instalado" and "(antes, la 99.0.0)" in texto
+
+
+def test_el_diagnostico_recoge_los_registros_de_actualizar_e_instalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import diagnostico
+
+    for nombre in ("eventos_windows", "bloqueos_de_codigo"):
+        monkeypatch.setattr(diagnostico, nombre, lambda dias=30: "(ninguno)")
+    monkeypatch.setattr(diagnostico, "informes_wer", lambda: [])
+    monkeypatch.setattr(diagnostico, "comprobacion_del_paquete", lambda espera_s=120.0: "ok")
+    (tmp_path / "voziris-actualizar.log").write_text("linea de actualizar\n", encoding="utf-8")
+    (tmp_path / "voziris-instalar.log").write_text("linea de instalar\n", encoding="utf-8")
+    texto = diagnostico.generar(tmp_path).read_text(encoding="utf-8")
+    assert "linea de actualizar" in texto and "linea de instalar" in texto
+
+
+# --- lo que encontró la cuarta revisión -----------------------------------------------------
+
+
+def test_un_guardado_desde_la_bandeja_no_deshace_lo_desmarcado_sin_guardar(
+    raiz: Any, tmp_path: Path
+) -> None:
+    """Desmarcar en Ajustes, cambiar el motor desde la bandeja y luego Guardar: queda «no»."""
+    from voziris import __main__ as principal
+
+    (tmp_path / "vault").mkdir()
+    ruta = _plantilla(tmp_path, "sí")
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'ruta = "C:/Users/CAMBIAME/vault/entrada.md"', 'ruta = "./vault/entrada.md"'),
+        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    a = _casilla(raiz, c)
+    casilla = a._vars["actualizaciones.buscar"]
+    casilla.set(False)  # el clic, aún sin guardar
+    c.general.motor = "local"  # lo que hace cambiar_motor desde la bandeja…
+    cfg.guardar(c, estricto=False)
+    a.reflejar_buscar(c.actualizaciones.buscar, forzar=False)  # …y su reflejo en el panel
+    assert casilla.get() is False
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    assert not principal._puede_mirar_versiones(cfg.cargar(ruta))
+    a.cerrar()
+
+
+def test_el_reflejo_sin_cambio_pendiente_pone_la_casilla_al_dia(raiz: Any, tmp_path: Path) -> None:
+    c = cfg.cargar(_plantilla(tmp_path, "sí"))
+    a = _casilla(raiz, c)
+    a.reflejar_buscar("no", forzar=False)  # «no» adoptado del archivo, sin nada pendiente
+    assert a._vars["actualizaciones.buscar"].get() is False
+    a.cerrar()
+
+
+@pytest.mark.parametrize("codificacion", ["cp1252", "utf-16"])
+def test_un_config_que_no_esta_en_utf8_da_un_error_claro(
+    tmp_path: Path, codificacion: str
+) -> None:
+    from voziris import __main__ as principal
+    from voziris.errores import ConfigInvalida
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    ruta.write_bytes(ruta.read_text(encoding="utf-8").encode(codificacion))
+    error = principal._guardar_respuesta(c, False)  # la respuesta no se pierde sin más
+    assert error is not None and "UTF-8" in error
+    assert c.actualizaciones.buscar == "no"  # vale hasta reiniciar
+    with pytest.raises(ConfigInvalida, match="UTF-8"):
+        cfg.cargar(ruta)
+
+
+def test_el_cmd_del_zip_manda_al_registro_del_instalador() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("empaquetar", RAIZ / "tools" / "empaquetar.py")
+    assert spec is not None and spec.loader is not None
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    assert "voziris-instalar.log" in modulo.INSTALAR_CMD
+    assert " voziris.log" not in modulo.INSTALAR_CMD

@@ -13,6 +13,7 @@ dist/
 config.toml
 modelos/
 historial/
+actualizaciones.json
 *.wav
 banco/
 resultados-h0*.md
@@ -27,4 +28,6 @@ voziris.log*
 # Trabajo temporal de PyInstaller
 build/work/
 voziris-fallos.log
+voziris-transcribir.log*
+voziris-actualizar.log*
 diagnostico.txt

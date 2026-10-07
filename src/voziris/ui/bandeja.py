@@ -110,6 +110,14 @@ class AccionesBandeja:
     """Vuelve a transcribir la grabación guardada de una entrada del historial (VOZ-80)."""
     copiar_anterior: Callable[[int], None] | None = None
     """Copia el texto que había antes de volver a transcribir (VOZ-80)."""
+    buscar_actualizaciones: Callable[[], None] | None = None
+    """Pregunta ahora a GitHub si hay versión nueva (VOZ-82). Si falta, la entrada no aparece."""
+    actualizar: Callable[[], None] | None = None
+    """Instala la versión nueva, o abre su página si se corre portable (VOZ-82)."""
+    version_nueva: Callable[[], str | None] = lambda: None
+    """La versión nueva conocida. «Actualizar a la…» solo se ve si hay una."""
+    etiqueta_actualizar: str = "Actualizar a la {}…"
+    """Portable: «Descargar la {}…», porque abre la página en vez de instalar."""
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -279,6 +287,7 @@ class Bandeja:
             ),
             Item("Ajustes…", lambda: self._acciones.abrir_ajustes()),
             *self._items_opcionales(),
+            *self._items_actualizacion(),
             Item("Acerca de Voziris", lambda: self._acerca_de()),
             pystray.Menu.SEPARATOR,
             Item("Salir", lambda: self._acciones.salir()),
@@ -337,6 +346,25 @@ class Bandeja:
         if a.instalar is not None:
             inst = a.instalar
             elementos.append(Item("Instalar en este equipo…", lambda: inst()))
+        return elementos
+
+    def _items_actualizacion(self) -> list[Any]:
+        """«Buscar actualizaciones» y, si hay versión nueva, «Actualizar a la X…» (VOZ-82)."""
+        import pystray
+
+        Item = pystray.MenuItem
+        elementos: list[Any] = []
+        a = self._acciones
+        if a.buscar_actualizaciones is not None:
+            buscar = a.buscar_actualizaciones
+            elementos.append(Item("Buscar actualizaciones", lambda: buscar()))
+        if a.actualizar is not None:
+            actualizar = a.actualizar
+            elementos.append(Item(
+                lambda _item: a.etiqueta_actualizar.format(a.version_nueva() or ""),
+                lambda: actualizar(),
+                visible=lambda _item: bool(a.version_nueva()),
+            ))
         return elementos
 
     def _ultimas_seguro(self) -> list[EntradaHistorial]:
