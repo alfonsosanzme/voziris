@@ -717,7 +717,7 @@ def test_cada_arranque_y_cada_atasco_dejan_fecha_en_el_archivo_de_fallos(
         if principal._archivo_fallos is not None:
             principal._archivo_fallos.close()
     texto = (tmp_path / "voziris-fallos.log").read_text(encoding="utf-8")
-    assert "· arranque de Voziris 0.1.0: bandeja (pid " in texto
+    assert f"· arranque de Voziris {principal.__version__}: bandeja (pid " in texto
     assert "· dictado atascado (pegando en la ventana activa) (el proceso sigue vivo) ===" in texto
     assert "Thread 0x" in texto or "Current thread 0x" in texto  # el volcado de verdad
     assert "test_cada_arranque_y_cada_atasco" in texto  # con la línea de Python de cada hilo
