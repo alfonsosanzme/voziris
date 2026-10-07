@@ -529,32 +529,6 @@ def pedir_salida(nombre: str = NOMBRE_EVENTO_SALIDA) -> bool:
         _kernel32.CloseHandle(manejador)
 
 
-# --- preguntas ------------------------------------------------------------------
-
-MB_YESNO = 0x04
-MB_ICONQUESTION = 0x20
-MB_SETFOREGROUND = 0x10000
-MB_TOPMOST = 0x40000
-IDYES = 6
-
-
-def preguntar_si_no(titulo: str, texto: str) -> bool:
-    """Un «Sí / No» de Windows por encima de todo. Bloquea el hilo que lo llama.
-
-    Para preguntar sin que nadie haya hecho clic en Voziris (al arrancar): el
-    `messagebox` de Tk, con la raíz oculta, puede quedarse detrás de la
-    ventana activa y no verse. Este va encima y se lleva el foco. Llamarlo
-    desde un hilo de trabajo, nunca desde el de Tk: lo dejaría sin bombear.
-    """
-    _solo_windows()
-    _user32.MessageBoxW.argtypes = (
-        wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT,
-    )
-    _user32.MessageBoxW.restype = ctypes.c_int
-    estilo = MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST
-    return int(_user32.MessageBoxW(None, texto, titulo, estilo)) == IDYES
-
-
 # --- portapapeles -------------------------------------------------------------
 
 INTENTOS_PORTAPAPELES = 10

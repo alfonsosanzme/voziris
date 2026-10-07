@@ -611,6 +611,28 @@ def test_panel_desmarcar_es_no(raiz: Any, tmp_path: Path) -> None:
     a.cerrar()
 
 
+def test_la_pregunta_no_quita_el_foco_y_se_contesta_con_un_clic(raiz: Any) -> None:
+    from voziris import winapi
+    from voziris.ui.pregunta import Pregunta
+
+    respuestas: list[bool] = []
+    p = Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, respuestas.append)
+    raiz.update()
+    if winapi.ES_WINDOWS:
+        estilo = winapi.estilo_extendido(int(p.ventana.frame(), 16))
+        assert estilo & winapi.WS_EX_NOACTIVATE  # ninguna tecla la contesta
+        assert estilo & winapi.WS_EX_TOPMOST
+    assert str(p.boton_si.cget("takefocus")) == "0"
+    p.boton_si.invoke()
+    p._contestar(False)  # un segundo clic que llegara tarde: ya está contestada, no cuenta
+    assert respuestas == [True]
+    assert not p.ventana.winfo_exists()
+
+    otra = Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, respuestas.append)
+    otra.boton_no.invoke()
+    assert respuestas == [True, False]
+
+
 def test_panel_no_pisa_la_respuesta_dada_con_el_panel_abierto(raiz: Any, tmp_path: Path) -> None:
     c = _config(tmp_path)
     a = _casilla(raiz, c)

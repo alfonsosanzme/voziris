@@ -980,20 +980,19 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             vigilante.despertar()
 
     def preguntar_por_versiones() -> None:
-        """La primera vez: ¿mirar una vez al día si hay versión nueva? Sin un sí, nada sale."""
-        import threading
-        import time
+        """La primera vez: ¿mirar una vez al día si hay versión nueva? Sin un sí, nada sale.
 
-        def trabajo() -> None:
-            time.sleep(PREGUNTA_TRAS_S)
-            while orq.en_curso():  # que no salte en mitad de un dictado
-                time.sleep(5)
-            if configuracion.actualizaciones.buscar != "preguntar":
-                return  # contestada en los ajustes mientras tanto
-            si = winapi.preguntar_si_no(actualizaciones.TITULO_PREGUNTA, actualizaciones.PREGUNTA)
-            en_hilo_tk(lambda: guardar_respuesta(si))
+        En el hilo de Tk. Una tarjeta que no quita el foco (`ui/pregunta.py`):
+        solo se contesta con un clic, nunca con una tecla pulsada escribiendo.
+        """
+        if configuracion.actualizaciones.buscar != "preguntar":
+            return  # contestada en los ajustes mientras tanto
+        if orq.en_curso():  # que no salte en mitad de un dictado
+            raiz.after(5000, preguntar_por_versiones)
+            return
+        from voziris.ui.pregunta import Pregunta
 
-        threading.Thread(target=trabajo, name="voziris-pregunta-versiones", daemon=True).start()
+        Pregunta(raiz, actualizaciones.TITULO_PREGUNTA, actualizaciones.PREGUNTA, guardar_respuesta)
 
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
@@ -1064,8 +1063,8 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         _ajustar_arranque_con_windows(configuracion, avisar)
         _revisar_paquete(avisar)
         vigilante.arrancar()
-        if configuracion.actualizaciones.buscar == "preguntar" and winapi.ES_WINDOWS:
-            preguntar_por_versiones()
+        if configuracion.actualizaciones.buscar == "preguntar":
+            raiz.after(PREGUNTA_TRAS_S * 1000, preguntar_por_versiones)
         _limpiar_descargas_viejas()
         for limpiar in (pendientes.limpiar, historial.limpiar_audio):
             try:
