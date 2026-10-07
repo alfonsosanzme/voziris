@@ -35,7 +35,7 @@ la clave de Groq y qué sale de tu equipo en cada modo.
 
 ```
 SHA-256  voziris-0.1.0-win64.zip
-5777fed88b087c84a667392906690d2629029cbbccc4a70d52f4ef9db11e31c4
+9d5ea53fa4160cde49b8b3cf8a21d47157e1c8f1ac5a72c3cb1edd3f19850e57
 ```
 
 Un `.exe` de PyInstaller con un hook global de teclado es una firma clásica

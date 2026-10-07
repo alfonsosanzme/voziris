@@ -110,8 +110,28 @@ class MotorLocal:
                 self._error = None
                 log.info("modelo local %s (%s) cargado", self._modelo_id, self._cuantizacion)
             except Exception as e:  # noqa: BLE001 — no debe lanzar: el selector mira disponible()
-                self._error = f"No se pudo cargar el modelo local: {e}"
+                self._error = self._por_que_no_carga(e)
                 log.exception("fallo al cargar el modelo local")
+
+    def _por_que_no_carga(self, error: Exception) -> str:
+        """Lo que se le cuenta al usuario: el error crudo está en inglés y no dice qué hacer.
+
+        Los dos casos que se vieron en un equipo nuevo (VOZ-81): sin red en el
+        primer arranque, huggingface_hub dice «LocalEntryNotFoundError … check
+        your internet connection»; y si falta o se bloquea una DLL, onnxruntime
+        no importa.
+        """
+        from voziris.integridad import es_bloqueo_de_windows, explicar_fallo_de_carga
+
+        if isinstance(error, ImportError) or es_bloqueo_de_windows(error):
+            return explicar_fallo_de_carga("el motor de voz (onnxruntime)", error)
+        if _sin_conexion(error) and not self._completa(self.carpeta_modelo):
+            mb = TAMANO_APROX_MB.get(self._cuantizacion, 640)
+            return (
+                f"No hay conexión para descargar el modelo de voz (unos {mb} MB), que hace "
+                "falta la primera vez. Conéctate a internet y vuelve a intentarlo."
+            )
+        return f"No se pudo cargar el modelo local: {error}"
 
     def _cargar(self) -> Any:
         carpeta = self.carpeta_modelo
@@ -223,6 +243,20 @@ class MotorLocal:
             ms_proceso=ms,
             duracion_audio_s=audio.duracion_s,
         )
+
+
+def _sin_conexion(error: BaseException) -> bool:
+    """¿Falló por no poder llegar a Hugging Face? Se mira toda la cadena de causas."""
+    visto: BaseException | None = error
+    for _ in range(6):
+        if visto is None:
+            return False
+        if isinstance(visto, ConnectionError) or type(visto).__name__ in (
+            "LocalEntryNotFoundError", "ConnectError", "ConnectTimeout", "ConnectionError",
+        ):
+            return True
+        visto = visto.__cause__ or visto.__context__
+    return False
 
 
 class _Observador(threading.Thread):

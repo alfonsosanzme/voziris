@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instalar Voziris</title>
+<style>
+  :root {
+    --fondo: #fbfaf7; --texto: #1f1d1a; --suave: #5f5a52; --linea: #e4e0d8;
+    --caja: #f2efe8; --acento: #3d5a80; --aviso: #fff4d6; --aviso-borde: #e0b84c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #1b1a18; --texto: #ece8e1; --suave: #a8a298; --linea: #36332e;
+      --caja: #26241f; --acento: #8fb3e0; --aviso: #3a3220; --aviso-borde: #b8913a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font: 17px/1.6 "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--linea); }
+  h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+  .sub { color: var(--suave); margin: 0 0 24px; }
+  a { color: var(--acento); }
+  kbd {
+    font: 600 0.85em "Segoe UI", sans-serif; background: var(--caja);
+    border: 1px solid var(--linea); border-bottom-width: 2px; border-radius: 5px;
+    padding: 1px 6px; white-space: nowrap;
+  }
+  code { font-family: Consolas, monospace; font-size: 0.9em; background: var(--caja); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--caja); padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+  pre code { background: none; padding: 0; }
+  ol.pasos { padding-left: 0; list-style: none; counter-reset: paso; }
+  ol.pasos > li {
+    counter-increment: paso; position: relative; padding: 14px 16px 14px 58px;
+    margin: 10px 0; background: var(--caja); border-radius: 10px;
+  }
+  ol.pasos > li::before {
+    content: counter(paso); position: absolute; left: 16px; top: 13px;
+    width: 28px; height: 28px; border-radius: 50%; background: var(--acento);
+    color: var(--fondo); font-weight: 700; text-align: center; line-height: 28px;
+  }
+  .aviso {
+    background: var(--aviso); border-left: 4px solid var(--aviso-borde);
+    padding: 10px 14px; border-radius: 6px; margin: 14px 0;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  th { color: var(--suave); font-weight: 600; font-size: 0.9em; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .indice { background: var(--caja); border-radius: 10px; padding: 12px 18px; }
+  .indice a { text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Voziris</h1>
+<p class="sub">Dictado por voz para Windows. Mantienes un atajo, hablas, sueltas, y el texto aparece donde tengas el cursor.</p>
+
+<div class="indice">
+  <a href="#instalar">1. Instalarlo</a> ·
+  <a href="#usar">2. Usarlo</a> ·
+  <a href="#api">3. Conectar la API de Groq (opcional)</a> ·
+  <a href="#problemas">4. Si algo falla</a> ·
+  <a href="#quitar">5. Desinstalar</a>
+</div>
+
+<p>Necesitas <strong>Windows 10 (versión 1903 o posterior) u 11, de 64 bits</strong>, un micrófono, alrededor de 1 GB libre y <strong>conexión a internet la primera vez</strong>, para descargar el modelo de voz. No hace falta ser administrador, ni instalar Python, ni crear ninguna cuenta.</p>
+
+<h2 id="instalar">1. Instalarlo</h2>
+
+<ol class="pasos">
+  <li><strong>Desbloquea el ZIP antes de abrirlo.</strong> Clic derecho sobre el archivo <code>voziris-…-win64.zip</code> → <em>Propiedades</em> → abajo, marca <strong>Desbloquear</strong> → <em>Aceptar</em>. Así Windows no te preguntará por cada archivo al ejecutarlo.<br>
+  <span class="sub">Si no aparece la casilla, no pasa nada: sigue.</span></li>
+
+  <li><strong>Extráelo entero.</strong> Clic derecho sobre el ZIP → <strong>Extraer todo…</strong> y elige una carpeta (Documentos, por ejemplo). No lo ejecutes desde dentro del ZIP sin extraer. Son unos mil archivos: <strong>espera a que termine</strong> la extracción antes de seguir.
+    <div class="aviso">Si Windows dice que <strong>una ruta es demasiado larga</strong>, no pulses <em>Omitir</em>: te dejaría el programa a medias sin avisar. Pulsa <em>Cancelar</em> y extrae en una carpeta más corta, como Documentos.</div>
+  </li>
+
+  <li><strong>Doble clic en <code>Instalar Voziris.cmd</code></strong>, dentro de la carpeta <code>voziris</code> que se ha creado. Se instala solo para tu usuario, sin pedir permisos, y queda en el menú Inicio: escribe «Voziris» en la búsqueda de Windows para abrirlo cuando quieras. Antes de instalar, comprueba que no falte ningún archivo y que la copia arranca; si algo va mal, no cambia nada y te dice qué pasa.
+    <div class="aviso">Si sale una pantalla azul que dice <strong>«Windows protegió su PC»</strong>: pulsa <strong>Más información</strong> y luego <strong>Ejecutar de todas formas</strong>. Sale porque el programa no está firmado con un certificado de pago, no porque haga nada raro. Si tu antivirus lo pone en cuarentena, es un falso positivo típico de programas que escuchan atajos de teclado: restáuralo o añade una excepción. Si lo que sale es <strong>«Control inteligente de aplicaciones ha bloqueado…»</strong>, mira <a href="#bloqueo">Si Windows lo bloquea</a>.</div>
+  </li>
+
+  <li><strong>Primer arranque: espera a que baje el modelo de voz.</strong> Aparece un icono de micrófono en la bandeja del sistema, junto al reloj (si no lo ves, está escondido bajo la flechita <kbd>^</kbd>). La primera vez descarga el modelo de reconocimiento, unos 640 MB, una sola vez: con una conexión normal tarda de uno a tres minutos, y la bandeja avisa del progreso.</li>
+
+  <li><strong>Pruébalo.</strong> Pon el cursor en cualquier sitio donde se escriba (un correo, un documento, el navegador), mantén <kbd>Ctrl</kbd>+<kbd>Win</kbd>, habla, y suelta.</li>
+</ol>
+
+<p>Voziris se abre solo al encender el equipo. Si no lo quieres así, se cambia en <em>Ajustes</em>.</p>
+
+<h2 id="usar">2. Usarlo</h2>
+
+<h3>Los atajos</h3>
+<table>
+  <tr><th>Atajo</th><th>Qué hace</th></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Win</kbd> (mantener)</td><td>Graba mientras lo mantienes pulsado. Al soltar, escribe el texto donde está el cursor.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Espacio</kbd></td><td>Deja el micrófono abierto sin mantener nada. Se cierra al volver a pulsar o al quedarte callado un par de segundos.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> (mantener)</td><td>Igual, pero el texto va a un archivo de notas Markdown en vez de a la ventana.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></td><td>Lo mismo al archivo de notas, con el micrófono abierto.</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Cancela el dictado en curso.</td></tr>
+</table>
+<p>Los atajos se cambian en <em>Ajustes → Atajos</em>, pulsando la combinación que quieras. Mientras dictas, la música o el vídeo que esté sonando se silencia y vuelve al terminar.</p>
+
+<h3>El menú de la bandeja (clic derecho en el icono)</h3>
+<ul>
+  <li><strong>Copiar el último dictado</strong>: si dictaste sin tener el cursor en un campo de texto, aquí lo recuperas a un clic y lo pegas con <kbd>Ctrl</kbd>+<kbd>V</kbd>.</li>
+  <li><strong>Últimos dictados</strong>: los diez más recientes. Cada uno se puede copiar, volver a pegar, borrar o <strong>volver a transcribir</strong> desde su grabación, que se guarda unos días por si el texto salió mal.</li>
+  <li><strong>Dictados sin transcribir</strong>: solo aparece si algo falló a mitad. La grabación no se pierde: desde ahí se transcribe y se copia.</li>
+  <li><strong>Motor</strong>: local (sin internet, gratis), API (en la nube, ver abajo) o automático.</li>
+  <li><strong>Ajustes…</strong>, <em>Ver registro</em>, <em>Guardar diagnóstico…</em> y <em>Salir</em>.</li>
+</ul>
+
+<h3>Transcribir grabaciones y vídeos</h3>
+<p>Clic derecho sobre un audio o un vídeo (m4a, mp3, wav, mp4, mov…) → <strong>Transcribir con Voziris</strong>. En Windows 11 está dentro de <em>Mostrar más opciones</em>. Puedes elegir si habla una persona o varias; con varias, las distingue. El resultado se guarda como un archivo <code>.md</code> junto a la grabación y se abre al terminar. También está en el menú de la bandeja: <em>Transcribir grabación o vídeo…</em></p>
+
+<h2 id="api">3. Conectar la API de Groq (opcional)</h2>
+
+<p>No hace falta para nada: el motor local funciona sin internet y es gratis. La API da algo más de precisión, sobre todo con nombres propios y jerga, y permite limpiar el texto con una IA (quitar muletillas, corregir «el martes, no, el jueves»). La clave es <strong>personal</strong>: cada uno usa la suya.</p>
+
+<h3>Conseguir la clave (cinco minutos)</h3>
+<ol class="pasos">
+  <li>Entra en <a href="https://console.groq.com">console.groq.com</a> y crea una cuenta (vale la de Google). El plan gratuito no pide tarjeta.</li>
+  <li>En el menú de la izquierda: <strong>API Keys</strong> → <strong>Create API Key</strong>. Ponle un nombre, por ejemplo «Voziris».</li>
+  <li>Copia la clave que aparece. Empieza por <code>gsk_</code> y <strong>solo se enseña una vez</strong>. Guárdala en un sitio seguro y no la mandes por chat ni en capturas: quien la tenga puede usar tu cuenta.</li>
+</ol>
+
+<h3>Ponerla en Voziris</h3>
+<ol class="pasos">
+  <li>Menú de la bandeja → <strong>Ajustes</strong> → pestaña <strong>Motor</strong>.</li>
+  <li>Pega la clave en el campo <strong>Clave</strong> y pulsa <strong>Probar la clave y ver modelos</strong>. Tiene que salir <em>«✓ La clave es válida»</em>.</li>
+  <li>En <strong>Modelo de transcripción</strong>, elige <code>whisper-large-v3</code> (el más preciso; en el plan gratuito cuesta lo mismo que el otro: nada).</li>
+  <li>Arriba, elige el motor <strong>Automático</strong>: usa la API cuando hay internet y el local cuando no. Pulsa <strong>Guardar</strong>.</li>
+  <li>Opcional: en la pestaña <strong>Texto</strong> puedes elegir el nivel de limpieza y el modelo de IA que la hace (<code>openai/gpt-oss-120b</code> es el que mejor va en castellano).</li>
+</ol>
+
+<h3>Lo que conviene saber</h3>
+<ul>
+  <li><strong>El plan gratuito sobra para dictar</strong>: 20 peticiones por minuto, 2 000 al día y 8 horas de audio al día. Dictando media hora diaria se usa un 6 %.</li>
+  <li>Para <strong>grabaciones largas</strong> (una reunión de una hora), el límite de 20 peticiones por minuto se nota. Pon el motor en <strong>Local</strong> antes de transcribirlas: va igual de bien y sin esperas.</li>
+  <li>Para saber si se está usando la API de verdad: en <a href="https://console.groq.com/dashboard/usage">console.groq.com/dashboard/usage</a>, pestaña <strong>Activity</strong> (en <em>Cost</em> el plan gratuito siempre marca cero). Tarda hasta quince minutos en actualizarse.</li>
+  <li>La clave se guarda en el archivo <code>config.toml</code> de la carpeta del programa, en tu equipo. Solo viaja a Groq, y no aparece en el registro ni en los mensajes de error.</li>
+</ul>
+
+<h3>Qué sale de tu equipo</h3>
+<p>Con el motor <strong>local</strong>, nada: ni siquiera se comprueba si hay internet. Con la <strong>API</strong>, el audio de cada dictado va a Groq para transcribirlo, y el texto al modelo de IA si activas la limpieza. Las grabaciones y el historial se quedan en tu disco, en la carpeta del programa.</p>
+
+<h2 id="problemas">4. Si algo falla</h2>
+<ul>
+  <li><strong>Diagnóstico</strong>: menú de la bandeja → <em>Guardar diagnóstico…</em>. Genera un archivo de texto con lo necesario para ver qué pasó (sin la clave de la API). Mándaselo a quien te pasó el programa.</li>
+  <li><strong>No escribe en una ventana concreta</strong>: si esa aplicación está abierta como administrador, Windows no deja que otros programas le escriban. El texto queda igualmente en <em>Últimos dictados</em> y en el portapapeles.</li>
+  <li><strong>Sale «No module named…» al abrirlo</strong>: la extracción del ZIP no había terminado. Espera y vuelve a abrirlo.</li>
+  <li><strong>Sale «No se pudo cargar PyAV… Falta <code>_internal\…</code>»</strong> (o lo mismo con otro archivo): falta ese archivo del programa. Casi siempre es el antivirus, que lo ha puesto en cuarentena. Restáuralo desde el antivirus (o añade una excepción para la carpeta de Voziris), vuelve a extraer el ZIP entero e instala otra vez.</li>
+  <li><strong>Sale «No hay conexión para descargar el modelo de voz»</strong>: la primera vez Voziris necesita internet para bajar unos 640 MB. Conéctate y vuelve a abrirlo; después ya funciona sin conexión.</li>
+  <li><strong>El icono lleva una cruz roja</strong>: algo ha fallado. El aviso de Windows dice qué (normalmente, que no encuentra el micrófono); pasa el ratón por el icono o abre el menú.</li>
+  <li><strong>Al copiar algo antes de dictar</strong>: Voziris lo guarda y lo devuelve al portapapeles al terminar, pero solo si era texto. Una imagen copiada se pierde al dictar.</li>
+</ul>
+
+<h3 id="bloqueo">Si Windows lo bloquea («Control inteligente de aplicaciones»)</h3>
+<p>Algunos equipos con Windows 11 tienen activado <strong>Control inteligente de aplicaciones</strong>, que bloquea los programas sin firma digital que Microsoft todavía no conoce. Voziris no está firmado, así que puede tocarle. Lo reconocerás por el aviso «Control inteligente de aplicaciones ha bloqueado un archivo que podría no ser seguro». Ese aviso no tiene botón para saltárselo. Lo decide archivo por archivo: puede dejar abrir el programa desde la carpeta extraída y bloquearlo en la instalada.</p>
+<ol>
+  <li><strong>Usa la copia que funciona.</strong> Abre <code>voziris.exe</code> desde la carpeta donde extrajiste el ZIP y, para tenerlo a mano, clic derecho sobre él → <strong>Anclar a Inicio</strong>. Deja esa carpeta donde está: es tu Voziris.</li>
+  <li><strong>O quita la marca de «descargado de Internet»</strong> a la instalada. Abre PowerShell (sin administrador) y pega:
+    <pre><code>Get-ChildItem "$env:LOCALAPPDATA\Programs\Voziris" -Recurse | Unblock-File
+Unblock-File "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Voziris.lnk"</code></pre>
+    Si después sigue bloqueado, vuelve a la opción 1.</li>
+  <li><strong>Desactivarlo</strong> (<em>Seguridad de Windows → Control de aplicaciones y navegador → Configuración de Control inteligente de aplicaciones</em>) también lo resuelve, pero rebaja la protección de todo el equipo: es decisión tuya. En Windows 11 25H2 se puede volver a activar; en versiones anteriores, una vez desactivado, no.</li>
+</ol>
+<p>Si le pasa a alguien, el <em>diagnóstico</em> (menú de la bandeja) recoge qué archivos ha bloqueado Windows: mándalo junto con la captura del aviso.</p>
+
+<h2 id="quitar">5. Desinstalar</h2>
+<p><em>Configuración de Windows → Aplicaciones → Aplicaciones instaladas → Voziris → Desinstalar</em>. Se borra la carpeta entera, incluido el modelo descargado. Después puedes borrar también la carpeta donde extrajiste el ZIP.</p>
+
+</main>
+</body>
+</html>

@@ -62,10 +62,20 @@ def generar(carpeta: Path, ruta_log: Path | None = None, version: str = __versio
         f"Ejecutable: {sys.executable}",
         f"Congelado: {bool(getattr(sys, 'frozen', False))}",
         f"Python: {platform.python_version()} · {platform.platform()}",
+        f"Windows: {_version_de_windows()} · {platform.machine()}",
         f"Carpeta de datos: {carpeta}",
+        "",
+        "== Comprobación del paquete (voziris.exe --comprobar) ==",
+        comprobacion_del_paquete(),
+        "",
+        "== Control de aplicaciones de Windows ==",
+        control_de_aplicaciones(),
         "",
         "== Últimas líneas del registro (voziris.log) ==",
         _cola_del_log(ruta_log or carpeta / "voziris.log"),
+        "",
+        "== Últimas transcripciones de archivos (voziris-transcribir.log) ==",
+        _cola_del_log(carpeta / "voziris-transcribir.log", lineas=60),
         "",
         "== Fallos nativos (voziris-fallos.log) ==",
         _fallos_nativos(carpeta / "voziris-fallos.log"),
@@ -91,6 +101,92 @@ def _ahora() -> str:
     import time
 
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _version_de_windows() -> str:
+    if sys.platform != "win32":
+        return "(no es Windows)"
+    v = sys.getwindowsversion()
+    return f"{platform.release()} (compilación {v.build})"
+
+
+def comprobacion_del_paquete(espera_s: float = 120.0) -> str:
+    """Lo que dice `voziris.exe --comprobar`, en otro proceso (VOZ-81).
+
+    En otro proceso para no cargar PyAV y compañía en la bandeja, que vive
+    todo el día, y porque lo que se quiere saber es si un arranque nuevo lo
+    carga todo.
+    """
+    from voziris import integridad
+
+    congelado = getattr(sys, "frozen", False)
+    orden = [sys.executable] if congelado else [sys.executable, "-m", "voziris"]
+    try:
+        informe = integridad.comprobar_en_otro_proceso(orden, espera_s)
+    except Exception as e:  # noqa: BLE001 — el diagnóstico nunca lanza
+        return f"(no se pudo comprobar: {e})"
+    estado = "todo carga" if informe.get("ok") else "HAY PROBLEMAS"
+    return f"{estado}\n{integridad.informe_a_texto(informe)}"
+
+
+def control_de_aplicaciones() -> str:
+    """Control inteligente de aplicaciones, la marca de Internet y lo que Windows bloqueó.
+
+    Control inteligente de aplicaciones (Windows 11) bloquea código sin firma
+    que Microsoft no conoce, archivo por archivo. Los bloqueos quedan en el
+    registro CodeIntegrity/Operational, que se lee sin administrador.
+    """
+    from voziris import integridad
+
+    estado = integridad.control_inteligente() or "no se sabe (¿no es Windows 11?)"
+    lineas = [f"Control inteligente de aplicaciones: {estado}"]
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable)
+        marca = "sí" if integridad.tiene_marca_de_internet(exe) else "no"
+        lineas.append(f"voziris.exe con la marca de «descargado de Internet»: {marca}")
+    lineas += ["", "Bloqueos anotados por Windows (CodeIntegrity, últimos 30 días):",
+               bloqueos_de_codigo()]
+    return "\n".join(lineas)
+
+
+def bloqueos_de_codigo(dias: int = 30) -> str:
+    """Eventos 3033/3034/3076/3077 del registro CodeIntegrity que mencionan voziris."""
+    if sys.platform != "win32":
+        return "(solo en Windows)"
+    consulta = (
+        "*[System[(EventID=3033 or EventID=3034 or EventID=3076 or EventID=3077) and "
+        f"TimeCreated[timediff(@SystemTime) <= {dias * 86_400_000}]]]"
+    )
+    salida = _wevtutil("Microsoft-Windows-CodeIntegrity/Operational", consulta, 400)
+    if salida.startswith("("):
+        return salida
+    bloques = [b for b in salida.split("\n\nEvent[") if "voziris" in b.lower()]
+    if not bloques:
+        return "(ninguno)"
+    return "\n\nEvent[".join(bloques[:15])[:8_000]
+
+
+def _wevtutil(registro: str, consulta: str, cuantos: int) -> str:
+    """El texto de wevtutil, o «(…)» si no se pudo.
+
+    Escribe en la página de códigos ANSI («mbcs»), no en UTF-8: con UTF-8 un
+    usuario «AlfonsoSanzLópez» salía como «AlfonsoSanzL�pez». Y con finales de
+    línea CRLF, que se pasan a LF: si no, partir por evento no parte nada y el
+    filtro por «voziris» deja pasar los eventos de todos los programas.
+    """
+    try:
+        salida = subprocess.run(
+            ["wevtutil", "qe", registro, f"/q:{consulta}", "/rd:true", "/f:text", f"/c:{cuantos}"],
+            capture_output=True, timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"(no se pudo consultar el visor de eventos: {e})"
+    texto = salida.stdout.decode("mbcs", errors="replace").replace("\r\n", "\n")
+    if salida.returncode != 0:
+        error = salida.stderr.decode("mbcs", errors="replace").strip()[:200]
+        return f"(wevtutil devolvió {salida.returncode}: {error})"
+    return texto
 
 
 def _es_marca(linea: str) -> bool:

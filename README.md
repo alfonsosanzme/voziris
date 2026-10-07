@@ -408,15 +408,27 @@ archivo es lo que hay que enviar cuando algo se cierra solo.
 
 ## Desarrollo
 
-Requiere Python 3.11–3.13 y Windows 10 (1903+) o 11, 64 bits.
+Requiere Python 3.11–3.13 y Windows 10 (1903+) o 11, 64 bits. Con Python
+3.14, que es el `python` por defecto en muchos equipos, pip se niega a
+instalar: hay que pedir la versión con el lanzador `py`.
+
+En cmd:
+
+```bat
+git clone https://github.com/alfonsosanzme/voziris && cd voziris
+py -3.13 -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev,banco,vad]"
+copy config.ejemplo.toml config.toml
+```
+
+Solo para usarlo, sin las herramientas de desarrollo, basta con
+`pip install -e .`. **Después de cada `git pull`, vuelve a ejecutar
+`pip install -e .`**: una instalación editable no recoge las dependencias
+nuevas por su cuenta, y es una de las formas de quedarse sin PyAV
+(«No se pudo cargar PyAV…» al transcribir una grabación, VOZ-81).
 
 ```bash
-git clone https://github.com/alfonsosanzme/voziris && cd voziris
-python -m venv .venv && .venv\Scripts\activate
-pip install -e ".[dev,banco,vad]"
-
-copy config.ejemplo.toml config.toml    # y editar la ruta del Markdown
-
 pytest                                  # tests (los marcados win roban el foco un instante)
 ruff check src tests tools              # linter
 mypy                                    # tipos (estricto)
@@ -424,6 +436,7 @@ python -m voziris                       # arrancar
 python -m voziris --archivo x.wav       # modo consola: transcribe un WAV y sale
 python -m voziris --transcribir r.m4a --hablantes auto   # grabación entera a r.md
 python -m voziris --salir               # cierra la instancia abierta
+python -m voziris --comprobar           # ¿carga todo? (PyAV, onnxruntime, sherpa-onnx…)
 ```
 
 Antes de tocar el motor local, el hito 0 mide si aguanta en el equipo real:
@@ -443,10 +456,20 @@ python tools/empaquetar.py
 ```
 
 El primero produce `build/dist/voziris/`; el segundo añade
-`Instalar Voziris.cmd`, lo comprime sin los datos del usuario y calcula el
-SHA-256. La carpeta es portable tal cual. El modelo (~640 MB) no va dentro, se descarga en el primer
+`Instalar Voziris.cmd` y la guía (`docs/LEEME-instalar.html`), escribe el
+manifiesto del paquete (tamaño y sha256 de cada archivo), arranca el
+ejecutable con `--comprobar` para ver que carga todo, y solo entonces lo
+comprime sin los datos del usuario y calcula el SHA-256. Si falta un runtime
+de Visual C++, una ruta es demasiado larga para «Extraer todo» o algo no
+carga, no hay ZIP. La carpeta es portable tal cual. El modelo (~640 MB) no va dentro, se descarga en el primer
 arranque. Dentro sí van ffmpeg (PyAV, para abrir las grabaciones) y
 sherpa-onnx (separación de hablantes): son la mayor parte del peso del ZIP.
+
+Con el manifiesto, el instalador se niega a instalar una carpeta a la que le
+falte algo (la cuarentena de un antivirus, una extracción a medias), copia a
+una carpeta aparte, la arranca con `--comprobar` y solo entonces sustituye la
+versión anterior. El programa, al arrancar y al fallar un import, dice el
+archivo concreto que falta. Ver `src/voziris/integridad.py`.
 Ver `docs/RELEASE.md` para la lista de verificación y los pasos de la
 release.
 
@@ -460,6 +483,7 @@ release.
 | `docs/PLAN.md` | El plan de desarrollo: comportamiento, hilos, fallos, pruebas |
 | `docs/H0.md` | Veredicto del hito 0: medidas del motor local en el equipo real |
 | `docs/RELEASE.md` | Cómo verificar el paquete y publicar una versión |
+| `docs/LEEME-instalar.html` | La guía que viaja en el ZIP, para quien lo instala |
 | `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
 ## Licencia

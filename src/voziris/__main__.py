@@ -48,23 +48,34 @@ import logging.handlers
 import os
 import queue
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from voziris import __version__, red, winapi
-from voziris import config as cfg
-from voziris.errores import (
+from voziris import integridad
+
+if __name__ == "__main__" and "--comprobar" in sys.argv[1:]:
+    # Antes de importar nada con código nativo (numpy entra con config). Si
+    # faltara una DLL de numpy, el ejecutable sin consola enseñaría el cuadro
+    # de error de PyInstaller y se quedaría esperando a que alguien lo cerrara,
+    # y quien lanzó la comprobación, esperando con él (VOZ-81).
+    raise SystemExit(integridad.comprobar_desde_argv(sys.argv[1:]))
+
+from voziris import __version__, red, winapi  # noqa: E402
+from voziris import config as cfg  # noqa: E402
+from voziris.errores import (  # noqa: E402
     AtajosNoDisponibles,
     ConfigInvalida,
     MicrofonoNoDisponible,
     VozirisError,
 )
-from voziris.tipos import Modo, Nivel
+from voziris.tipos import Modo, Nivel  # noqa: E402
 
 log = logging.getLogger("voziris")
 
 NOMBRE_LOG = "voziris.log"
+NOMBRE_LOG_TRANSCRIBIR = "voziris-transcribir.log"
+"""El de los procesos `--transcribir`. Ver `configurar_log`."""
 
 
 # --- registro ---------------------------------------------------------------------
@@ -173,27 +184,77 @@ def volcar_hilos(motivo: str) -> None:
         log.warning("no se pudo volcar dónde estaba cada hilo: %s", e)
 
 
-def configurar_log(carpeta: Path, depurar: bool, a_consola: bool) -> None:
+@contextlib.contextmanager
+def volcados_en_pausa() -> Iterator[None]:
+    """faulthandler apagado mientras dura el bloque. Para las llamadas COM.
+
+    Al crear un acceso directo, COM provoca violaciones de acceso que él mismo
+    resuelve. faulthandler las ve antes que nadie y las anota en
+    voziris-fallos.log como «Windows fatal exception: access violation», y
+    luego el diagnóstico las enseña como fallos graves (visto en VOZ-81, en una
+    instalación que terminó bien).
+    """
+    import faulthandler
+
+    activo = _archivo_fallos is not None and faulthandler.is_enabled()
+    if activo:
+        faulthandler.disable()
+    try:
+        yield
+    finally:
+        if activo:
+            with contextlib.suppress(OSError, ValueError, RuntimeError):
+                faulthandler.enable(_archivo_fallos, all_threads=True)
+
+
+def configurar_log(
+    carpeta: Path, depurar: bool, a_consola: bool, nombre: str | None = NOMBRE_LOG
+) -> None:
+    """El log de la bandeja rota a 1 MB; el de los procesos sueltos, solo al arrancar.
+
+    `--transcribir` corre en un proceso aparte mientras la bandeja tiene
+    voziris.log abierto. Si le tocaba rotarlo, Windows no le dejaba renombrar
+    un archivo abierto (WinError 32) y se perdía TODO su registro, justo el
+    del proceso que más falla (VOZ-81). Por eso escribe en el suyo. Con
+    `nombre` None no se escribe a archivo (`--comprobar`).
+    """
     raiz = logging.getLogger()
     raiz.setLevel(logging.DEBUG if depurar else logging.INFO)
     for ruidoso in ("httpx", "httpcore", "huggingface_hub", "urllib3", "filelock"):
         logging.getLogger(ruidoso).setLevel(logging.WARNING)
     formato = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    try:
-        archivo = logging.handlers.RotatingFileHandler(
-            carpeta / NOMBRE_LOG, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
-        )
-        archivo.setFormatter(formato)
-        raiz.addHandler(archivo)
-    except OSError as e:
-        print(f"No se puede escribir el log en {carpeta}: {e}", file=sys.stderr)
+    if nombre is not None:
+        try:
+            archivo: logging.Handler
+            if nombre == NOMBRE_LOG:
+                archivo = logging.handlers.RotatingFileHandler(
+                    carpeta / nombre, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+                )
+            else:
+                _rotar_si_crecio(carpeta / nombre)
+                archivo = logging.FileHandler(carpeta / nombre, encoding="utf-8")
+            archivo.setFormatter(formato)
+            raiz.addHandler(archivo)
+        except OSError as e:
+            print(f"No se puede escribir el log en {carpeta}: {e}", file=sys.stderr)
     if a_consola:
         consola = logging.StreamHandler(sys.stderr)
         consola.setFormatter(formato)
         raiz.addHandler(consola)
 
 
-def _error_fatal(mensaje: str, con_ventana: bool) -> None:
+def _rotar_si_crecio(ruta: Path, limite: int = 1_000_000) -> None:
+    """Si pasa de `limite`, se aparta como .1. Si otro proceso lo tiene abierto, se sigue igual."""
+    try:
+        if ruta.stat().st_size > limite:
+            os.replace(ruta, ruta.with_name(ruta.name + ".1"))
+    except OSError:
+        pass
+
+
+def _error_fatal(
+    mensaje: str, con_ventana: bool, titulo: str = "Voziris no puede arrancar"
+) -> None:
     log.error(mensaje)
     print(mensaje, file=sys.stderr)
     if con_ventana:
@@ -203,7 +264,7 @@ def _error_fatal(mensaje: str, con_ventana: bool) -> None:
 
             raiz = tk.Tk()
             raiz.withdraw()
-            messagebox.showerror("Voziris no puede arrancar", mensaje)
+            messagebox.showerror(titulo, mensaje)
             raiz.destroy()
         except Exception:  # noqa: BLE001 — sin Tk, ya está en el log y en stderr
             pass
@@ -240,6 +301,13 @@ def _construir(
 
 def _motor(configuracion: cfg.Config, al_progresar: Callable[[str, float | None], None]) -> Any:
     """El selector con sus dos motores, tal como lo usa el dictado y la transcripción."""
+    return _motores(configuracion, al_progresar)[0]
+
+
+def _motores(
+    configuracion: cfg.Config, al_progresar: Callable[[str, float | None], None]
+) -> tuple[Any, Any]:
+    """(el selector, el motor local). El local, para contar por qué no está disponible."""
     from voziris.motores.api import MotorAPI
     from voziris.motores.local import MotorLocal
     from voziris.motores.selector import Selector
@@ -251,7 +319,7 @@ def _motor(configuracion: cfg.Config, al_progresar: Callable[[str, float | None]
         ma.base_url, ma.modelo, ma.clave, ma.timeout_s,
         vocabulario=configuracion.proceso.diccionario,
     )
-    return Selector(configuracion.general.motor, local, api)
+    return Selector(configuracion.general.motor, local, api), local
 
 
 def _postprocesos(configuracion: cfg.Config) -> list[Any]:
@@ -355,17 +423,24 @@ def _transcribir_grabacion(
     pista: int | str = "auto",
 ) -> int:
     """VOZ-72: de un archivo de audio a un .md al lado, con ventana de progreso o consola."""
-    from voziris import grabaciones
+    from voziris import archivos, grabaciones
     from voziris.archivos import ArchivoNoLegible
+    from voziris.errores import MotorNoDisponible
     from voziris.hablantes import SeparadorHablantes
     from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
 
     Progreso = Callable[[str, float | None], None]
 
     def trabajo(progreso: Progreso) -> tuple[grabaciones.Resultado, Path]:
-        motor = _motor(configuracion, progreso)
+        # El archivo (y PyAV) antes que el modelo: si algo de eso falla, que se
+        # sepa ya y no después de cargar, o descargar, 640 MB (VOZ-81).
+        progreso("Abriendo el archivo…", None)
+        archivos.pistas(ruta)
+        motor, local = _motores(configuracion, progreso)
         progreso("Cargando el motor…", None)
         motor.precalentar()
+        if not motor.disponible():
+            raise MotorNoDisponible(local.error or "el motor de voz no está disponible")
         separador: SeparadorHablantes | None = None
         if hablantes != "1":
             separador = SeparadorHablantes(configuracion.motor.local.carpeta, progreso)
@@ -392,8 +467,11 @@ def _transcribir_grabacion(
         log.info("transcripción de %s cancelada", ruta.name)
         return 3
     except (ArchivoNoLegible, VozirisError, OSError) as e:
-        log.error("transcripción de %s: %s", ruta.name, e)
-        _error_fatal(f"No se pudo transcribir {ruta.name}: {e}", con_ventana)
+        log.error("transcripción de %s: %s", ruta.name, e, exc_info=True)
+        _error_fatal(
+            f"No se pudo transcribir {ruta.name}: {e}", con_ventana,
+            titulo="Voziris no pudo transcribir",
+        )
         return 1
     log.info(
         "transcripción: %s → %s · %.0f s de audio · %d líneas · %d hablantes · motor %s · %d ms",
@@ -831,6 +909,11 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         if bandeja is not None:
             bandeja.actualizar_menu()
 
+    def guardar_diagnostico() -> None:
+        # Desde VOZ-81 arranca voziris.exe --comprobar: son unos segundos sin nada en pantalla.
+        avisar("Preparando el diagnóstico: tarda unos segundos")
+        _abrir_con_windows(_generar_diagnostico(configuracion.carpeta))
+
     acciones = AccionesBandeja(
         dictar_ahora=lambda: orq.alternar_clavar(),
         dictar_markdown=lambda: orq.alternar_clavar("markdown"),
@@ -852,7 +935,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         copiar_anterior=copiar_anterior,
         salir=lambda: en_hilo_tk(raiz.quit),
         ver_registro=lambda: _abrir_con_windows(configuracion.carpeta / NOMBRE_LOG),
-        diagnostico=lambda: _abrir_con_windows(_generar_diagnostico(configuracion.carpeta)),
+        diagnostico=guardar_diagnostico,
         instalar=_accion_instalar(),
         acerca_de=lambda: en_hilo_tk(
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
@@ -894,6 +977,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             avisar(f"{e}. Puedes dictar desde el menú de la bandeja")
             bandeja.estado("error")
         _ajustar_arranque_con_windows(configuracion, avisar)
+        _revisar_paquete(avisar)
         for limpiar in (pendientes.limpiar, historial.limpiar_audio):
             try:
                 limpiar()
@@ -974,6 +1058,37 @@ def _accion_instalar() -> Callable[[], None] | None:
     return instalar
 
 
+def _revisar_paquete(avisar: Callable[[str], None]) -> None:
+    """Si al paquete le falta un archivo, decirlo al arrancar y no al primer archivo transcrito.
+
+    PyAV solo se carga al transcribir: sin esto, una DLL en cuarentena no se
+    nota hasta días después, con un mensaje que no dice cuál (VOZ-81). Solo
+    se miran tamaños, en un hilo: unos milisegundos.
+    """
+    import threading
+
+    carpeta = integridad.carpeta_del_paquete()
+    if carpeta is None:
+        return
+
+    def revisar() -> None:
+        if integridad.ruta_demasiado_larga(carpeta):
+            log.warning("ruta demasiado larga: %s (%d caracteres)", carpeta, len(str(carpeta)))
+            avisar(integridad.aviso_de_ruta_larga(carpeta))
+        resultado = integridad.comprobar(carpeta)
+        if resultado.sin_manifiesto:
+            return
+        if resultado.ok:
+            log.info("paquete completo: %d archivos", resultado.comprobados)
+            return
+        log.error("al paquete le faltan archivos: faltan %s · dañados %s",
+                  resultado.faltan[:20], resultado.distintos[:20])
+        avisar(f"A Voziris le faltan archivos ({resultado.resumen(1)}). "
+               "Vuelve a extraer el ZIP e instálalo; ¿lo ha retirado el antivirus?")
+
+    threading.Thread(target=revisar, name="voziris-paquete", daemon=True).start()
+
+
 def _ajustar_arranque_con_windows(configuracion: cfg.Config, avisar: Callable[[str], None]) -> None:
     """C-4: el acceso directo se crea o borra solo cuando el valor cambia respecto al real."""
     from voziris.ui.bandeja import Bandeja
@@ -1044,23 +1159,111 @@ def _cerrar_la_abierta() -> None:
 
 
 def _instalar_cli() -> int:
+    """Instala con una ventana de progreso. Si algo falla, no se cambia nada y se dice qué."""
     from voziris import instalador
+    from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
 
-    _cerrar_la_abierta()
+    titulo_error = "Voziris no se ha instalado"
+
+    def trabajo(progreso: Callable[[str, float | None], None]) -> Path:
+        return instalador.instalar(
+            comprobar_copia=(
+                instalador.comprobar_arrancando if getattr(sys, "frozen", False) else None
+            ),
+            # La Voziris abierta se cierra justo antes de cambiar el programa, no al
+            # empezar: si la instalación no sigue, el usuario no se queda sin ella.
+            antes_de_sustituir=_cerrar_la_abierta,
+            al_progresar=progreso,
+            pausar_volcados=volcados_en_pausa,
+        )
+
     try:
-        destino = instalador.instalar()
-    except (FileNotFoundError, OSError) as e:
-        _error_fatal(f"No se pudo instalar Voziris: {e}", con_ventana=True)
+        destino = ejecutar_con_progreso(
+            "Instalando Voziris", f"En {instalador.carpeta_instalacion()}", trabajo
+        )
+    except TranscripcionCancelada:
+        log.info("instalación cancelada")
+        _mensaje("Instalación cancelada", "No se ha cambiado nada.")
+        return 3
+    except instalador.InstalacionFallida as e:
+        _error_fatal(str(e), con_ventana=True, titulo=titulo_error)
+        return 1
+    except Exception as e:  # noqa: BLE001 — sin esto, el cuadro de PyInstaller con la traza
+        log.exception("instalación fallida")
+        _error_fatal(f"No se pudo instalar Voziris: {e}", con_ventana=True, titulo=titulo_error)
         return 1
     log.info("instalado en %s", destino)
-    _lanzar_desatendido([str(destino / "voziris.exe")], cwd=destino)
+    aviso = _abrir_la_instalada(destino)
     _mensaje(
         "Voziris instalado",
         "Ya puedes escribir «Voziris» en la búsqueda de Windows.\n\n"
         f"Carpeta: {destino}\n"
-        "Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar.",
+        "Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar."
+        + (f"\n\n{aviso}" if aviso else ""),
     )
     return 0
+
+
+def _abrir_la_instalada(destino: Path) -> str | None:
+    """Arranca la copia instalada por su acceso del menú Inicio, como lo hará el usuario.
+
+    Por el acceso directo y no por el .exe: Control inteligente de
+    aplicaciones puede bloquear un acceso directo que considere «de
+    Internet» aunque el programa arranque bien (VOZ-81). Si el acceso no la
+    arranca, se arranca el .exe y se devuelve el aviso para el usuario.
+
+    No basta con que `os.startfile` no lance: cuando Windows bloquea, puede
+    enseñar su aviso y dar la llamada por buena. Lo que cuenta es que aparezca
+    el mutex de la instancia.
+    """
+    from voziris import instalador
+
+    acceso = instalador.carpeta_menu_inicio() / instalador.ACCESO_MENU
+    try:
+        os.startfile(str(acceso))
+    except OSError as e:
+        log.warning("no se pudo abrir el acceso del menú Inicio (%s): %s", acceso, e)
+    else:
+        if not winapi.ES_WINDOWS or _espera_a_la_instancia(ESPERA_ARRANQUE_S):
+            return None
+        log.warning("la instalada no arrancó por su acceso del menú Inicio en %d s",
+                    ESPERA_ARRANQUE_S)
+    if winapi.ES_WINDOWS and winapi.hay_instancia_abierta():
+        return None
+    try:
+        _lanzar_desatendido([str(destino / "voziris.exe")], cwd=destino)
+    except OSError as e:
+        log.warning("tampoco arranca el .exe instalado: %s", e)
+        if integridad.es_bloqueo_de_windows(e):
+            return integridad.explicacion_de_bloqueo("Voziris")
+        return f"Voziris está instalado, pero no se ha podido abrir: {e}"
+    # En «evaluación» Control inteligente de aplicaciones solo observa: no bloquea.
+    if integridad.control_inteligente() == "activado":
+        return (
+            "Windows no ha dejado abrir el acceso directo del menú Inicio (lo bloquea "
+            "«Control inteligente de aplicaciones»). Voziris funciona: ve a la carpeta de "
+            "arriba, botón derecho en voziris.exe → Anclar a Inicio."
+        )
+    return (
+        "No se pudo abrir el acceso directo del menú Inicio; se ha abierto Voziris "
+        "directamente. Si no aparece en la búsqueda, ve a la carpeta de arriba y usa "
+        "botón derecho en voziris.exe → Anclar a Inicio."
+    )
+
+
+ESPERA_ARRANQUE_S = 30
+"""Lo que puede tardar el primer arranque, con el antivirus mirando cada DLL nueva."""
+
+
+def _espera_a_la_instancia(segundos: float) -> bool:
+    import time
+
+    limite = time.monotonic() + segundos
+    while time.monotonic() < limite:
+        if winapi.hay_instancia_abierta():
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def _desinstalar_cli() -> int:
@@ -1154,9 +1357,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sin-menu-contextual", action="store_true", help="quita ese menú contextual"
     )
+    # Ocultas: para el instalador, el empaquetado y el diagnóstico (VOZ-81).
+    parser.add_argument("--comprobar", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--informe", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"voziris {__version__}")
     _sin_consola()
     args = parser.parse_args(argv)
+
+    if args.comprobar:
+        # Desde `python -m voziris` y los tests; el .exe ni llega aquí (ver arriba).
+        return integridad.ejecutar_comprobacion(args.informe)
 
     if args.salir:
         if winapi.ES_WINDOWS and winapi.pedir_salida():
@@ -1174,7 +1384,8 @@ def main(argv: list[str] | None = None) -> int:
     con_ventana = transcribir and (args.ventana or bool(getattr(sys, "frozen", False)))
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
     configurar_log(
-        carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug
+        carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug,
+        nombre=NOMBRE_LOG_TRANSCRIBIR if transcribir else NOMBRE_LOG,
     )
     activar_faulthandler(carpeta)
     anotar_arranque_en_fallos(
