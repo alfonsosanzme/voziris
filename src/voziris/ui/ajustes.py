@@ -626,6 +626,19 @@ class Ajustes:
 
     # --- guardar -------------------------------------------------------------------------------
 
+    def reflejar_buscar(self, valor: str) -> None:
+        """Pone la casilla de las versiones nuevas como está de verdad (VOZ-82).
+
+        Al contestar la tarjeta del arranque con el panel abierto, la casilla
+        seguía como al abrirlo: con «sí» activo se veía vacía, y desmarcarla no
+        lo apagaba. Con el panel cerrado no hace nada: al abrirlo se lee.
+        """
+        si = valor == "sí"
+        self._buscar_al_abrir = si
+        variable = self._vars.get("actualizaciones.buscar")
+        if variable is not None and self._ventana is not None:
+            variable.set(si)
+
     def _valor(self, clave: str) -> Any:
         """El valor de una variable de Tk. `Variable.get` no lleva tipos en typeshed."""
         return self._vars[clave].get()  # type: ignore[no-untyped-call]
@@ -685,18 +698,25 @@ class Ajustes:
         return nueva
 
     def guardar(self) -> bool:
-        """Valida, escribe el TOML y aplica. Devuelve True si se guardó."""
+        """Valida, escribe el TOML y aplica. Devuelve True si se guardó.
+
+        La carpeta del Markdown solo se exige si se ha cambiado su ruta aquí. La
+        plantilla trae una que no existe (C:/Users/CAMBIAME/vault), y exigirla
+        siempre impedía guardar cualquier cosa, también la clave de Groq, a
+        quien no usa el destino Markdown.
+        """
         try:
             nueva = self.leer()
-            cfg.guardar(nueva)
+            cfg.guardar(
+                nueva, estricto=nueva.destino.markdown.ruta != self._config.destino.markdown.ruta
+            )
         except ConfigInvalida as e:
             messagebox.showerror("No se puede guardar", str(e), parent=self._ventana or self._raiz)
             return False
         self._config = nueva
-        if "actualizaciones.buscar" in self._vars:
-            # Lo guardado es ahora el punto de partida. Si no, con el panel abierto,
-            # marcar, guardar, desmarcar y guardar dejaba «sí» (VOZ-82).
-            self._buscar_al_abrir = bool(self._valor("actualizaciones.buscar"))
+        # Lo guardado es ahora el punto de partida de la casilla. Si no, con el panel
+        # abierto, marcar, guardar, desmarcar y guardar dejaba «sí» (VOZ-82).
+        self.reflejar_buscar(nueva.actualizaciones.buscar)
         try:
             pendientes = self._aplicar(nueva)
         except Exception as e:  # noqa: BLE001 — guardado sí; aplicar en caliente, no

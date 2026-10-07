@@ -256,8 +256,46 @@ def test_sin_el_hash_del_zip_no_se_descarga(tmp_path: Path) -> None:
 
 def test_una_redireccion_fuera_de_https_se_rechaza(tmp_path: Path) -> None:
     github = GitHubFalso(_paquete(tmp_path), almacen="http://almacen.inseguro/")
-    with pytest.raises(act.ActualizacionFallida, match="HTTPS"):
+    with pytest.raises(act.ActualizacionFallida, match="no es seguro"):
         act.descargar(_novedad(), base=tmp_path / "d", transporte=github.transporte)
+
+
+@pytest.mark.parametrize("salto", [
+    "http://release-assets.githubusercontent.com/intermedio",  # un salto en claro…
+    "https://ejemplo.com/otra-cosa",  # …o fuera de GitHub, aunque sea HTTPS
+])
+def test_cada_salto_de_la_redireccion_se_vigila(tmp_path: Path, salto: str) -> None:
+    """No basta con que el último salto sea HTTPS: desde uno en claro se podría ir a otro sitio."""
+    zip_ = _paquete(tmp_path)
+    pedidas: list[str] = []
+
+    def responder(peticion: httpx.Request) -> httpx.Response:
+        url = str(peticion.url)
+        pedidas.append(url)
+        if url.endswith("SHA256SUMS.txt"):
+            return httpx.Response(
+                200, text=f"{hashlib.sha256(zip_).hexdigest()}  voziris-0.2.0-win64.zip"
+            )
+        if url == DESCARGA + "voziris-0.2.0-win64.zip":
+            return httpx.Response(302, headers={"Location": salto})
+        if url == salto:
+            return httpx.Response(302, headers={"Location": ALMACEN + "zip"})
+        return httpx.Response(200, content=zip_)
+
+    with pytest.raises(act.ActualizacionFallida, match="no es seguro"):
+        act.descargar(_novedad(), base=tmp_path / "d",
+                      transporte=httpx.MockTransport(responder))
+    assert salto not in pedidas  # ni siquiera se pide
+
+
+def test_la_consulta_tampoco_sigue_redirecciones_fuera_de_github() -> None:
+    def responder(peticion: httpx.Request) -> httpx.Response:
+        if str(peticion.url) == act.URL_ULTIMA:
+            return httpx.Response(301, headers={"Location": "http://api.github.com/otra"})
+        return httpx.Response(200, json=_release())
+
+    with pytest.raises(act.ConsultaFallida, match="no es seguro"):
+        act.consultar("0.1.1", transporte=httpx.MockTransport(responder))
 
 
 @pytest.mark.parametrize("ruta", ["voziris/../../fuera.txt", "otra-cosa/leeme.txt"])
@@ -733,7 +771,7 @@ def cli(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     monkeypatch.setattr(principal, "_esta_instalada", lambda: True)
     monkeypatch.setattr(principal.winapi, "tomar_mutex", lambda nombre: True)
     monkeypatch.setattr("voziris.ui.transcripcion.ejecutar_con_progreso",
-                        lambda titulo, detalle, trabajo: trabajo(lambda m, f: None))
+                        lambda titulo, detalle, trabajo, **k: trabajo(lambda m, f: None))
     return hecho
 
 
@@ -745,7 +783,7 @@ def test_dos_actualizaciones_a_la_vez_no(
     monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
     monkeypatch.setattr(principal.winapi, "tomar_mutex", lambda nombre: False)
     monkeypatch.setattr(act, "consultar", lambda: pytest.fail("no debería consultar"))
-    assert principal._actualizar_cli() == 0
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
     assert cli == {"mensajes": [], "errores": [], "lanzadas": [], "paginas": []}
 
 
@@ -776,7 +814,7 @@ def test_actualizar_arranca_el_instalador_nuevo(
     from voziris import __main__ as principal
 
     exe = tmp_path / "0.2.0-x" / "voziris" / "voziris.exe"
-    monkeypatch.setattr(act, "consultar", lambda: act.Novedad("0.2.0"))
+    monkeypatch.setattr(act, "consultar", _novedad)
     monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
     assert principal._actualizar_cli() == 0
     assert cli["lanzadas"] == [[str(exe), "--instalar"]]
@@ -787,9 +825,48 @@ def test_actualizar_al_dia(cli: dict[str, list[Any]], monkeypatch: pytest.Monkey
     from voziris import __main__ as principal
 
     monkeypatch.setattr(act, "consultar", lambda: None)
-    assert principal._actualizar_cli() == 0
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
     assert cli["mensajes"][0][0] == "Voziris está al día"
     assert cli["lanzadas"] == []
+
+
+def test_actualizar_una_version_sin_paquete_abre_su_pagina(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Una release sin el ZIP o sin SHA256SUMS.txt: se avisa, y el clic lleva a la página."""
+    from voziris import __main__ as principal
+
+    pagina = "https://github.com/alfonsosanzme/voziris/releases/tag/v0.2.0"
+    monkeypatch.setattr(act, "consultar", lambda: act.Novedad("0.2.0", pagina))
+    monkeypatch.setattr(act, "descargar", lambda n, p: pytest.fail("no debería descargar"))
+    assert principal._actualizar_cli() == principal.SALIDA_NADA_QUE_INSTALAR
+    assert cli["paginas"] == [pagina]
+    assert cli["errores"] == [] and cli["lanzadas"] == []
+
+
+def test_un_cancelar_tardio_no_instala_y_borra_la_descarga(
+    cli: dict[str, list[Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El Cancelar que Tk atiende cuando la descarga ya terminó: no se arranca el instalador."""
+    from voziris import __main__ as principal
+    from voziris.ui.transcripcion import TranscripcionCancelada
+
+    carpeta = tmp_path / "0.2.0-x"
+    exe = carpeta / "voziris" / "voziris.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(act, "consultar", _novedad)
+    monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
+
+    def con_cancelar_tardio(titulo: str, detalle: str, trabajo: Any, **k: Any) -> Any:
+        assert k.get("cancelar_tarde") is True
+        raise TranscripcionCancelada("cancelado por el usuario", trabajo(lambda m, f: None))
+
+    monkeypatch.setattr("voziris.ui.transcripcion.ejecutar_con_progreso", con_cancelar_tardio)
+    assert principal._actualizar_cli() == 3
+    assert cli["lanzadas"] == []
+    assert cli["mensajes"] == [("Actualización cancelada", "No se ha cambiado nada.")]
+    assert not carpeta.exists()
 
 
 def test_actualizar_si_falla_no_instala_nada(
@@ -800,7 +877,7 @@ def test_actualizar_si_falla_no_instala_nada(
     def descargar(n: act.Novedad, progreso: Any) -> Path:
         raise act.ActualizacionFallida("El paquete descargado no coincide con su SHA-256")
 
-    monkeypatch.setattr(act, "consultar", lambda: act.Novedad("0.2.0"))
+    monkeypatch.setattr(act, "consultar", _novedad)
     monkeypatch.setattr(act, "descargar", descargar)
     assert principal._actualizar_cli() == 1
     assert cli["errores"] == ["El paquete descargado no coincide con su SHA-256"]
@@ -813,7 +890,7 @@ def test_actualizar_bloqueado_por_windows(
     from voziris import __main__ as principal
 
     exe = tmp_path / "voziris" / "voziris.exe"
-    monkeypatch.setattr(act, "consultar", lambda: act.Novedad("0.2.0"))
+    monkeypatch.setattr(act, "consultar", _novedad)
     monkeypatch.setattr(act, "descargar", lambda n, progreso: exe)
 
     def bloqueado(orden: list[str], cwd: Path | None = None) -> None:
@@ -845,17 +922,46 @@ class _Proceso:
         return self.codigo
 
 
-def test_un_segundo_clic_no_lanza_otra_actualizacion() -> None:
+def test_un_segundo_clic_no_lanza_otra_actualizacion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En marcha = --actualizar vivo, o el instalador nuevo con su mutex. Sin plazos fijos."""
     from voziris import __main__ as principal
 
-    espera = principal.ESPERA_INSTALADOR_S
-    assert principal._actualizacion_en_marcha(_Proceso(None), 0.0, 9999.0)  # descargando
-    # Arrancó el instalador: se le deja trabajar un rato…
-    assert principal._actualizacion_en_marcha(_Proceso(0), 100.0, 100.0 + espera - 1)
-    assert not principal._actualizacion_en_marcha(_Proceso(0), 100.0, 100.0 + espera)
-    # …pero si falló o se canceló, se puede volver a intentar ya.
-    assert not principal._actualizacion_en_marcha(_Proceso(1), 100.0, 101.0)
-    assert not principal._actualizacion_en_marcha(_Proceso(3), 100.0, 101.0)
+    instalando = [False]
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex",
+                        lambda nombre: instalando[0] and nombre == principal.MUTEX_INSTALAR)
+    assert principal._actualizacion_en_marcha(_Proceso(None))  # descargando
+    instalando[0] = True
+    assert principal._actualizacion_en_marcha(_Proceso(0))  # salió y el instalador trabaja
+    instalando[0] = False
+    # El instalador terminó (bien, cancelado o con error), o «al día»: se puede reintentar ya.
+    for codigo in (0, 1, 2, 3):
+        assert not principal._actualizacion_en_marcha(_Proceso(codigo))
+    assert not principal._actualizacion_en_marcha(None)
+
+
+def test_actualizar_espera_a_que_el_instalador_tome_su_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si --actualizar saliera antes, un segundo clic caería en el hueco hasta que lo toma."""
+    from voziris import __main__ as principal
+
+    consultas = [0]
+
+    def existe(nombre: str) -> bool:
+        consultas[0] += 1
+        return consultas[0] >= 3  # el instalador tarda en arrancar (el antivirus mira el .exe)
+
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "existe_mutex", existe)
+    inicio = time.monotonic()
+    principal._esperar_al_instalador(_Proceso(None), 5.0)
+    assert consultas[0] == 3 and time.monotonic() - inicio < 2
+    # Si el instalador termina sin llegar a tomarlo (bloqueado, por ejemplo), no se espera más.
+    consultas[0] = -1000
+    inicio = time.monotonic()
+    principal._esperar_al_instalador(_Proceso(1), 5.0)
+    assert time.monotonic() - inicio < 1
 
 
 def test_dos_instalaciones_a_la_vez_no(
@@ -892,3 +998,202 @@ def test_instalar_encima_de_otra_version_dice_actualizado(
     monkeypatch.setattr(instalador, "version_instalada", lambda: None)
     assert principal._instalar_cli() == 0
     assert cli["mensajes"][-1][0] == "Voziris instalado"
+
+
+# --- lo que encontró la segunda revisión ----------------------------------------------------
+
+
+def _plantilla(tmp_path: Path, buscar: str | None = None) -> Path:
+    """config.toml copiado de la plantilla, tal cual: con la ruta del Markdown CAMBIAME."""
+    texto = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    if buscar is not None:
+        texto = texto.replace('buscar = "preguntar"', f'buscar = "{buscar}"')
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(texto, encoding="utf-8")
+    return ruta
+
+
+def test_un_no_escrito_a_mano_con_voziris_abierta_no_vuelve_a_si(tmp_path: Path) -> None:
+    ruta = _plantilla(tmp_path, "sí")
+    c = cfg.cargar(ruta)  # la bandeja arranca con «sí»
+    texto = ruta.read_text(encoding="utf-8").replace('buscar = "sí"', 'buscar = "no"')
+    ruta.write_text(texto, encoding="utf-8")  # el usuario lo cambia a mano
+    c.audio.al_dictar = "atenuar"  # y luego toca algo desde la bandeja
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    assert c.actualizaciones.buscar == "no"  # la memoria baja también
+
+
+def test_un_cambio_hecho_en_la_sesion_si_se_escribe(tmp_path: Path) -> None:
+    """Al revés: si lo cambia la tarjeta o el panel, se guarda aunque el archivo diga otra cosa."""
+    ruta = _plantilla(tmp_path, "no")
+    c = cfg.cargar(ruta)
+    c.actualizaciones.buscar = "sí"
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    c.general.motor = "local"  # otro guardado después no lo deshace
+    cfg.guardar(c, estricto=False)
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+
+
+@pytest.mark.parametrize(("memoria", "archivo", "puede"), [
+    ("preguntar", "preguntar", False),
+    ("no", "no", False),
+    ("sí", "sí", True),
+    ("sí", "no", False),  # un «no» escrito a mano vale desde ya
+    ("sí", None, True),  # un config.toml sin la sección (de la 0.1.1)
+])
+def test_solo_se_mira_con_un_si(tmp_path: Path, memoria: str, archivo: str | None,
+                                puede: bool) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path, archivo)
+    if archivo is None:
+        ruta.write_text(ruta.read_text(encoding="utf-8").split("[actualizaciones]")[0],
+                        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    c.actualizaciones.buscar = memoria
+    assert principal._puede_mirar_versiones(c) is puede
+
+
+def test_la_respuesta_a_la_tarjeta_se_guarda_con_la_plantilla_de_serie(tmp_path: Path) -> None:
+    from voziris import __main__ as principal
+
+    ruta = _plantilla(tmp_path)
+    c = cfg.cargar(ruta)
+    assert principal._guardar_respuesta(c, True) is None
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    assert principal._guardar_respuesta(c, False) is None
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+
+
+def test_el_panel_guarda_con_la_plantilla_de_serie(raiz: Any, tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    """Antes, con la ruta CAMBIAME, el panel no guardaba nada: ni la clave de Groq."""
+    from voziris.ui import ajustes as mod
+
+    errores: list[str] = []
+    monkeypatch.setattr(mod.messagebox, "showerror", lambda t, m, **k: errores.append(m))
+    ruta = _plantilla(tmp_path, "sí")
+    a = _casilla(raiz, cfg.cargar(ruta))
+    a._vars["motor.api.clave"].set("gsk_de_prueba_no_real")
+    a._vars["actualizaciones.buscar"].set(False)
+    assert a.guardar(), errores
+    guardada = cfg.cargar(ruta)
+    assert guardada.motor.api.clave == "gsk_de_prueba_no_real"
+    assert guardada.actualizaciones.buscar == "no"
+    # Si se cambia la ruta del Markdown a una carpeta que no existe, eso sí se dice.
+    a._vars["destino.markdown.ruta"].set(str(tmp_path / "no-existe" / "entrada.md"))
+    assert not a.guardar()
+    assert errores and "no existe" in errores[-1]
+    a.cerrar()
+
+
+def test_la_casilla_refleja_la_tarjeta_contestada_con_el_panel_abierto(
+    raiz: Any, tmp_path: Path
+) -> None:
+    from voziris import __main__ as principal
+
+    (tmp_path / "vault").mkdir()
+    ruta = _plantilla(tmp_path)
+    ruta.write_text(ruta.read_text(encoding="utf-8").replace(
+        'ruta = "C:/Users/CAMBIAME/vault/entrada.md"', 'ruta = "./vault/entrada.md"'),
+        encoding="utf-8")
+    c = cfg.cargar(ruta)
+    a = _casilla(raiz, c)
+    casilla = a._vars["actualizaciones.buscar"]
+    assert casilla.get() is False
+    principal._guardar_respuesta(c, True)  # la tarjeta, con el panel abierto…
+    a.reflejar_buscar(c.actualizaciones.buscar)  # …y lo que hace la bandeja después
+    assert casilla.get() is True
+    casilla.set(False)  # desmarcarla vuelve a significar «no»
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    a.cerrar()
+
+
+@pytest.mark.parametrize("contenido", [
+    '{"comprobada": 1' + "0" * 400 + '}',  # un número que no cabe en un float
+    "[" * 50000 + "]" * 50000,  # JSON anidado hasta reventar la recursión
+    '{"ultima": {"x": 1}, "pagina": [1, 2], "avisada": 3}',
+], ids=["numero-enorme", "anidado", "tipos-raros"])
+def test_un_estado_roto_no_impide_arrancar(tmp_path: Path, contenido: str) -> None:
+    (tmp_path / act.NOMBRE_ESTADO).write_text(contenido, encoding="utf-8")
+    estado = act.Estado.leer(tmp_path)
+    assert isinstance(estado.comprobada, float)
+    act.Vigilante(tmp_path, lambda: False, lambda n: None, version="0.1.1")
+
+
+def test_la_tarjeta_se_ensena_sin_activarla(raiz: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Que no quita el foco: se muestra con SetWindowPos sin activar, nunca con deiconify."""
+    from voziris import winapi
+    from voziris.ui import pregunta as mod
+
+    colocadas: list[tuple[int, ...]] = []
+    monkeypatch.setattr(mod.winapi, "colocar_sin_activar",
+                        lambda *a: colocadas.append(a) if winapi.ES_WINDOWS else None)
+    monkeypatch.setattr(tk_toplevel(), "deiconify",
+                        lambda self, *a: pytest.fail("deiconify activa la ventana"))
+    p = mod.Pregunta(raiz, act.TITULO_PREGUNTA, act.PREGUNTA, lambda si: None)
+    if winapi.ES_WINDOWS:
+        assert len(colocadas) == 1
+    assert str(p.boton_no.cget("takefocus")) == "0"
+    assert str(p.boton_si.cget("takefocus")) == "0"
+    p.cerrar()
+
+
+def tk_toplevel() -> Any:
+    import tkinter as tk
+
+    return tk.Toplevel
+
+
+PRUEBA_CANCELAR_TARDIO = """
+from voziris.ui import transcripcion as tr
+
+ventanas = []
+original = tr.VentanaProgreso
+
+
+class Espia(original):
+    def __init__(self, *a):
+        super().__init__(*a)
+        ventanas.append(self)
+
+
+tr.VentanaProgreso = Espia
+
+
+def trabajo(progreso):
+    progreso("Ultimo paso", 1.0)
+    # El clic en Cancelar llega a Tk justo después de la última mirada del trabajo,
+    # antes que el quit que pide el hilo al terminar.
+    ventanas[-1]._raiz.after(0, ventanas[-1].cancelar)
+    return "hecho"
+
+
+try:
+    tr.ejecutar_con_progreso("t", "d", trabajo, cancelar_tarde=True)
+    print("DEVUELTO")
+except tr.TranscripcionCancelada as e:
+    print("CANCELADO", e.resultado)
+print("SIN-LA-OPCION", tr.ejecutar_con_progreso("t", "d", trabajo))
+"""
+
+
+def test_ejecutar_con_progreso_atiende_el_cancelar_tardio(tmp_path: Path) -> None:
+    """En su propio proceso: cada ventana de progreso es un intérprete de Tk nuevo."""
+    import subprocess
+    import sys
+
+    guion = tmp_path / "cancelar_tardio.py"
+    guion.write_text(PRUEBA_CANCELAR_TARDIO, encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(guion)], capture_output=True, text=True, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(RAIZ / "src")},
+    )
+    if "usable tk.tcl" in r.stderr:
+        pytest.skip("sin Tk en este proceso")
+    assert "CANCELADO hecho" in r.stdout, r.stdout + r.stderr
+    # Sin la opción (la transcripción), se devuelve: el .md ya está escrito.
+    assert "SIN-LA-OPCION hecho" in r.stdout, r.stdout + r.stderr

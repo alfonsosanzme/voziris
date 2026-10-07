@@ -316,8 +316,14 @@ aparece **«Actualizar a la X.Y.Z…»**. Al pulsarlo:
    `config.toml`, `modelos/` e `historial/` no se tocan.
 
 Si algo falla por el camino, no se cambia nada y la ventana dice qué ha
-pasado. «Buscar actualizaciones», en la bandeja, mira en ese momento, aunque
-la opción esté en `"no"`.
+pasado. Si la versión publicada no trae el paquete para instalarse sola, se
+abre su página para descargarla a mano. Mientras dura una actualización,
+volver a pulsar «Actualizar» no lanza otra. «Buscar actualizaciones», en la
+bandeja, mira en ese momento, aunque la opción esté en `"no"`.
+
+Un `"no"` escrito a mano en `config.toml` con Voziris abierta vale desde ese
+momento: no se vuelve a consultar, y no se pisa al cambiar algo desde la
+bandeja.
 
 Solo se actualiza sola la copia instalada. Si usas Voziris sin instalar, la
 entrada se llama «Descargar la X.Y.Z…» y abre la página de la versión.
@@ -401,11 +407,14 @@ Cuatro redes, de la más fina a la más gruesa:
 
 ## Si algo falla: el registro y el diagnóstico
 
-Junto al ejecutable hay dos archivos de registro:
+Junto al ejecutable hay estos archivos de registro:
 
 - `voziris.log`: lo que hace la aplicación, dictado a dictado, con qué motor
   entregó cada uno y cualquier error de Python. Se abre desde la bandeja →
   «Ver registro».
+- `voziris-transcribir.log` y `voziris-actualizar.log`: los de «Transcribir
+  grabación o vídeo…» y de «Actualizar a la X.Y.Z…», que corren en procesos
+  aparte mientras la bandeja tiene abierto `voziris.log`.
 - `voziris-fallos.log`: solo se escribe si el proceso muere por un fallo
   nativo del que Python aún pudo dejar rastro (una violación de acceso).
 

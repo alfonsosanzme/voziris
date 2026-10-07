@@ -76,6 +76,7 @@ log = logging.getLogger("voziris")
 
 NOMBRE_LOG = "voziris.log"
 NOMBRE_LOG_TRANSCRIBIR = "voziris-transcribir.log"
+NOMBRE_LOG_ACTUALIZAR = "voziris-actualizar.log"
 """El de los procesos `--transcribir`. Ver `configurar_log`."""
 
 
@@ -927,7 +928,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
     vigilante = actualizaciones.Vigilante(
         configuracion.carpeta,
-        activa=lambda: configuracion.actualizaciones.buscar == "sí",
+        activa=lambda: _puede_mirar_versiones(configuracion),
         al_encontrar=al_haber_version_nueva,
     )
 
@@ -954,16 +955,18 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
         threading.Thread(target=trabajo, name="voziris-buscar-version", daemon=True).start()
 
-    actualizacion: list[tuple[Any, float]] = []
-    """El `--actualizar` lanzado desde aquí y cuándo: para no lanzar otro encima."""
+    actualizacion: list[Any] = []
+    """El `--actualizar` lanzado desde aquí: para no lanzar otro encima."""
 
     def actualizar() -> None:
         """Instalada: `--actualizar` en otro proceso, con su ventana. Portable: la página."""
+        import threading
+
         if not instalada:
             novedad = vigilante.novedad
             _abrir_pagina(novedad.pagina if novedad else actualizaciones.PAGINA)
             return
-        if actualizacion and _actualizacion_en_marcha(*actualizacion[-1], time.monotonic()):
+        if _actualizacion_en_marcha(actualizacion[-1] if actualizacion else None):
             avisar("La actualización ya está en marcha: espera a que termine")
             return
         extra = ["--config", str(ruta_config)] if ruta_config else []
@@ -973,18 +976,28 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             log.warning("no se pudo lanzar --actualizar: %s", e)
             avisar(f"No se pudo empezar la actualización: {e}")
             return
-        actualizacion.append((proceso, time.monotonic()))
+        actualizacion.append(proceso)
         # La ventana tarda unos segundos en salir (el antivirus mira el .exe).
         avisar("Preparando la actualización: en unos segundos sale su ventana")
 
+        def al_terminar() -> None:
+            # «Ya está al día» (la versión se retiró, o ya se instaló por otro lado):
+            # que el menú deje de ofrecerla. El usuario acaba de pedirlo: consultar vale.
+            if proceso is None or proceso.wait() != SALIDA_NADA_QUE_INSTALAR:
+                return
+            with contextlib.suppress(Exception):
+                vigilante.buscar_ahora()
+            if bandeja is not None:
+                bandeja.actualizar_menu()
+
+        threading.Thread(target=al_terminar, name="voziris-tras-actualizar", daemon=True).start()
+
     def guardar_respuesta(si: bool) -> None:
         """En el hilo de Tk, como el panel de ajustes: no se pisan."""
-        configuracion.actualizaciones.buscar = "sí" if si else "no"
-        log.info("mirar si hay versión nueva: %s", configuracion.actualizaciones.buscar)
-        try:
-            cfg.guardar(configuracion, estricto=False)
-        except ConfigInvalida as e:
-            avisar(f"Respuesta aplicada hasta reiniciar; no se pudo guardar config.toml: {e}")
+        error = _guardar_respuesta(configuracion, si)
+        if error:
+            avisar(f"Respuesta aplicada hasta reiniciar; no se pudo guardar config.toml: {error}")
+        ajustes.reflejar_buscar(configuracion.actualizaciones.buscar)
         if si:
             vigilante.despertar()
 
@@ -1156,24 +1169,47 @@ def _accion_instalar() -> Callable[[], None] | None:
     return instalar
 
 
-ESPERA_INSTALADOR_S = 300
-"""Tras lanzar una actualización que arrancó su instalador, no se lanza otra en este tiempo."""
 PREGUNTA_TRAS_S = 20
 """La pregunta de las versiones nuevas espera a que pase el arranque y sus avisos."""
 
 
-def _actualizacion_en_marcha(proceso: Any, desde: float, ahora: float) -> bool:
-    """¿Sigue la actualización lanzada en `desde`? Descargando, o su instalador trabajando.
+def _puede_mirar_versiones(configuracion: cfg.Config) -> bool:
+    """¿Puede el Vigilante consultar GitHub por su cuenta? Solo con un «sí» (VOZ-82).
 
-    `--actualizar` termina en cuanto arranca el instalador (código 0), y el
-    instalador tarda en enseñar su ventana: un segundo clic en ese hueco
-    lanzaría otra descarga y otro instalador. Si terminó con error o se
-    canceló (código distinto de 0), se puede volver a intentar ya.
+    Además del valor en memoria, se mira config.toml: un «no» escrito a mano
+    con Voziris abierta vale desde ya, sin esperar a reiniciar.
     """
-    codigo = proceso.poll() if proceso is not None else 0
-    if codigo is None:
+    if configuracion.actualizaciones.buscar != "sí":
+        return False
+    return cfg.leer_buscar(configuracion.ruta_archivo) != "no"
+
+
+def _guardar_respuesta(configuracion: cfg.Config, si: bool) -> str | None:
+    """La respuesta a la tarjeta del arranque, en memoria y en config.toml. El error, si lo hay.
+
+    Sin exigir la carpeta del Markdown: con la plantilla de serie no existe, y
+    entonces la respuesta no se guardaría y la tarjeta saldría en cada arranque.
+    """
+    configuracion.actualizaciones.buscar = "sí" if si else "no"
+    log.info("mirar si hay versión nueva: %s", configuracion.actualizaciones.buscar)
+    try:
+        cfg.guardar(configuracion, estricto=False)
+    except ConfigInvalida as e:
+        return str(e)
+    return None
+
+
+def _actualizacion_en_marcha(proceso: Any) -> bool:
+    """¿Sigue la actualización de antes? Descargando, o su instalador trabajando.
+
+    `--actualizar` termina en cuanto el instalador nuevo ha tomado su mutex
+    (`MUTEX_INSTALAR`), así que entre los dos no queda hueco: un segundo clic
+    no lanza otra descarga ni otro instalador. Cuando el instalador termina,
+    bien, cancelado o con error, el mutex desaparece y se puede reintentar ya.
+    """
+    if proceso is not None and proceso.poll() is None:
         return True
-    return bool(codigo == 0 and ahora - desde < ESPERA_INSTALADOR_S)
+    return winapi.ES_WINDOWS and winapi.existe_mutex(MUTEX_INSTALAR)
 
 
 def _esta_instalada() -> bool:
@@ -1464,6 +1500,12 @@ MUTEX_INSTALAR = "Local\\Voziris.Instalar"
 """Una instalación a la vez."""
 MUTEX_ACTUALIZAR = "Local\\Voziris.Actualizar"
 """Una actualización a la vez: un segundo clic en el menú no lanza otra."""
+SALIDA_NADA_QUE_INSTALAR = 2
+"""`--actualizar` termina así cuando no arranca ningún instalador: ya está al día, ya hay
+otra en marcha, o la versión no trae paquete y se ha abierto su página. La bandeja lo usa
+para quitar del menú una versión que ya no se ofrece."""
+ESPERA_INSTALADOR_S = 60.0
+"""Lo que `--actualizar` espera, como mucho, a que el instalador nuevo tome su mutex."""
 
 
 def _actualizar_cli() -> int:
@@ -1475,6 +1517,8 @@ def _actualizar_cli() -> int:
     instalador va a sustituir. Del resto (comprobar la copia, cerrar la
     Voziris abierta, abrir la nueva) se encarga `--instalar`, como siempre.
     """
+    import shutil
+
     from voziris import actualizaciones
     from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
 
@@ -1490,23 +1534,28 @@ def _actualizar_cli() -> int:
     if winapi.ES_WINDOWS and not winapi.tomar_mutex(MUTEX_ACTUALIZAR):
         # Dos clics en el menú: la segunda borraría la descarga de la primera.
         log.info("ya hay una actualización en marcha")
-        return 0
+        return SALIDA_NADA_QUE_INSTALAR
 
     def trabajo(
         progreso: Callable[[str, float | None], None],
-    ) -> tuple[actualizaciones.Novedad, Path] | None:
+    ) -> tuple[actualizaciones.Novedad | None, Path | None]:
         progreso("Buscando la versión nueva…", None)
         novedad = actualizaciones.consultar()
-        if novedad is None:
-            return None
+        if novedad is None or not novedad.instalable:
+            return novedad, None
         return novedad, actualizaciones.descargar(novedad, progreso)
 
     try:
-        hecho = ejecutar_con_progreso(
-            "Actualizando Voziris", "Descargando la versión nueva de GitHub", trabajo
+        novedad, exe = ejecutar_con_progreso(
+            "Actualizando Voziris", "Descargando la versión nueva de GitHub", trabajo,
+            cancelar_tarde=True,
         )
-    except TranscripcionCancelada:
+    except TranscripcionCancelada as e:
         log.info("actualización cancelada")
+        tarde = e.resultado
+        if isinstance(tarde, tuple) and isinstance(tarde[1], Path):
+            # Cancelado con todo ya descargado: no se instala, y la descarga sobra.
+            shutil.rmtree(tarde[1].parent.parent, ignore_errors=True)
         _mensaje("Actualización cancelada", "No se ha cambiado nada.")
         return 3
     except actualizaciones.ConsultaFallida as e:
@@ -1520,13 +1569,21 @@ def _actualizar_cli() -> int:
         log.exception("actualización fallida")
         _error_fatal(f"No se pudo actualizar Voziris: {e}", con_ventana=True, titulo=titulo_error)
         return 1
-    if hecho is None:
+    if novedad is None:
         _mensaje("Voziris está al día", f"Ya tienes la última versión ({__version__}).")
-        return 0
-    novedad, exe = hecho
+        return SALIDA_NADA_QUE_INSTALAR
+    if exe is None:
+        # La release no trae el ZIP o su SHA256SUMS.txt con el nombre esperado.
+        _mensaje(
+            "Actualizar Voziris",
+            f"La versión {novedad.version} no trae el paquete para instalarse sola. "
+            "Se abre su página para descargarla.",
+        )
+        _abrir_pagina(novedad.pagina)
+        return SALIDA_NADA_QUE_INSTALAR
     log.info("arrancando el instalador de la %s: %s", novedad.version, exe)
     try:
-        _lanzar_desatendido([str(exe), "--instalar"], cwd=exe.parent)
+        instalador_nuevo = _lanzar_desatendido([str(exe), "--instalar"], cwd=exe.parent)
     except OSError as e:
         log.warning("no arranca el instalador de la versión nueva: %s", e)
         if integridad.es_bloqueo_de_windows(e):
@@ -1545,7 +1602,26 @@ def _actualizar_cli() -> int:
             con_ventana=True, titulo=titulo_error,
         )
         return 1
+    _esperar_al_instalador(instalador_nuevo, ESPERA_INSTALADOR_S)
     return 0
+
+
+def _esperar_al_instalador(proceso: Any, segundos: float) -> None:
+    """Hasta que el instalador nuevo tome su mutex, termine o pase `segundos`.
+
+    Así, cuando `--actualizar` termina, la bandeja ya ve la instalación en
+    marcha (`_actualizacion_en_marcha`) y un segundo clic no cae en el hueco
+    de unos segundos en que el antivirus mira el .exe nuevo. Mientras se
+    espera, este proceso no toca nada: el instalador tarda minutos en llegar
+    a sustituir `_internal`.
+    """
+    if proceso is None or not winapi.ES_WINDOWS:
+        return
+    limite = time.monotonic() + segundos
+    while time.monotonic() < limite and proceso.poll() is None:
+        if winapi.existe_mutex(MUTEX_INSTALAR):
+            return
+        time.sleep(0.25)
 
 
 def _desinstalar_cli() -> int:
@@ -1671,7 +1747,8 @@ def main(argv: list[str] | None = None) -> int:
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
     configurar_log(
         carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug,
-        nombre=NOMBRE_LOG_TRANSCRIBIR if transcribir else NOMBRE_LOG,
+        nombre=NOMBRE_LOG_TRANSCRIBIR if transcribir
+        else NOMBRE_LOG_ACTUALIZAR if args.actualizar else NOMBRE_LOG,
     )
     activar_faulthandler(carpeta)
     anotar_arranque_en_fallos(

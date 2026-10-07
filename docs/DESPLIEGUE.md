@@ -395,7 +395,7 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
 
    Después abre la instalada y avisa con «Voziris instalado». Desde la 0.1.2, si había otra versión instalada, el aviso es «Voziris actualizado».
 
-Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora.
+Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora. Lo que pasa queda en `voziris-actualizar.log`, junto al `voziris.log` de la instalación, y lo recoge el diagnóstico.
 
 No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
 

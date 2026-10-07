@@ -48,8 +48,9 @@ CUANTIZACIONES = ("int8", "fp32")
 METODOS = ("portapapeles", "tecleo")
 NIVELES = tuple(n.value for n in Nivel)
 AL_DICTAR = ("nada", "atenuar", "silenciar")
-BUSCAR_VERSIONES = ("preguntar", "sí", "no")
 """[audio].al_dictar — qué pasa con la música mientras se dicta. Ver audio/mezclador.py."""
+BUSCAR_VERSIONES = ("preguntar", "sí", "no")
+"""[actualizaciones].buscar — ¿mirar una vez al día si hay versión nueva? (VOZ-82)."""
 NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
 
@@ -229,6 +230,10 @@ class Config:
     """De dónde se cargó. `guardar()` escribe ahí por defecto."""
     avisos: list[str] = field(default_factory=list, compare=False, metadata={"toml": False})
     """Lo que no impidió cargar pero el usuario debe saber."""
+    buscar_leido: str = field(default="preguntar", compare=False, metadata={"toml": False})
+    """Lo que decía config.toml de `[actualizaciones] buscar` al leerlo o escribirlo por
+    última vez. Si al guardar el archivo dice otra cosa y aquí no ha cambiado, alguien
+    lo ha editado a mano con Voziris abierta: manda el archivo (ver `guardar`)."""
 
     @property
     def carpeta(self) -> Path:
@@ -565,12 +570,8 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
     )
 
     ac = _seccion(datos, "actualizaciones", errores)
-    # Sin tilde también vale, y true / false, que es lo natural para un sí o un no.
-    buscar = ac.get("buscar")
-    if buscar == "si" or buscar is True:
-        ac = {**ac, "buscar": "sí"}
-    elif buscar is False:
-        ac = {**ac, "buscar": "no"}
+    if "buscar" in ac:
+        ac = {**ac, "buscar": _normalizar_buscar(ac["buscar"])}
     actualizaciones = SeccionActualizaciones(
         buscar=_elegir(
             ac, "actualizaciones", "buscar", BUSCAR_VERSIONES,
@@ -592,7 +593,38 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         actualizaciones=actualizaciones,
         ruta_archivo=ruta,
         avisos=avisos,
+        buscar_leido=actualizaciones.buscar,
     )
+
+
+def _normalizar_buscar(valor: object) -> object:
+    """Sin tilde también vale, y true / false, que es lo natural para un sí o un no."""
+    if valor == "si" or valor is True:
+        return "sí"
+    if valor is False:
+        return "no"
+    return valor
+
+
+def _buscar_en(documento: Any) -> str | None:
+    """`[actualizaciones] buscar` tal como está en el archivo, o None si no está o no vale."""
+    try:
+        valor = _normalizar_buscar(_plano(documento["actualizaciones"]["buscar"]))
+    except (KeyError, TypeError):
+        return None
+    return valor if valor in BUSCAR_VERSIONES else None
+
+
+def leer_buscar(ruta: Path) -> str | None:
+    """`[actualizaciones] buscar` de config.toml ahora mismo. None si no se puede saber.
+
+    El Vigilante lo mira antes de cada consulta: un «no» escrito a mano con
+    Voziris abierta vale desde ya, sin reiniciar (VOZ-82).
+    """
+    try:
+        return _buscar_en(tomlkit.parse(ruta.read_text(encoding="utf-8")))
+    except (OSError, TOMLKitError, ValueError):
+        return None
 
 
 def _leer_documento(ruta: Path) -> tomlkit.TOMLDocument:
@@ -746,6 +778,15 @@ def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) 
     documento = _leer_documento(origen) if origen.exists() else tomlkit.document()
     base = ruta.parent
 
+    if origen == ruta:
+        en_archivo = _buscar_en(documento)
+        memoria = config.actualizaciones.buscar
+        if en_archivo is not None and en_archivo != memoria and memoria == config.buscar_leido:
+            # Editado a mano con Voziris abierta, y aquí no se ha tocado: manda el
+            # archivo. Si no, un «no» escrito a mano volvía a «sí» con el siguiente
+            # cambio desde la bandeja (VOZ-82).
+            config.actualizaciones.buscar = en_archivo
+
     nuevos = _valores_toml(config)
     clave = config.motor.api.clave
     if clave and clave == os.environ.get(VARIABLE_CLAVE) and not _clave_en(documento):
@@ -780,6 +821,7 @@ def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) 
         os.replace(temporal, ruta)
     except OSError as e:
         raise ConfigInvalida(f"No se puede escribir {ruta}: {e}") from e
+    config.buscar_leido = config.actualizaciones.buscar
 
 
 def _plano(item: Any) -> Any:

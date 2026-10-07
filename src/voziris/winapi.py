@@ -461,6 +461,18 @@ def hay_instancia_abierta(nombre: str = "Local\\Voziris") -> bool:
     return True
 
 
+def existe_mutex(nombre: str) -> bool:
+    """True si algún proceso (este también) tiene el mutex `nombre`, sin tomarlo."""
+    _solo_windows()
+    _kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.OpenMutexW.restype = wintypes.HANDLE
+    manejador = _kernel32.OpenMutexW(0x00100000, False, nombre)  # SYNCHRONIZE
+    if not manejador:
+        return False
+    _kernel32.CloseHandle(manejador)
+    return True
+
+
 _mutex_tareas: dict[str, int] = {}
 
 

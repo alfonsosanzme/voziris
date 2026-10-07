@@ -56,8 +56,6 @@ PREFIJO_DESCARGA = f"https://github.com/{REPOSITORIO}/releases/download/"
 PREFIJO_PAGINA = f"https://github.com/{REPOSITORIO}/"
 NOMBRE_SUMAS = "SHA256SUMS.txt"
 
-BUSCAR = ("preguntar", "sí", "no")
-"""Valores de `[actualizaciones] buscar`."""
 CADA_S = 24 * 3600
 TIMEOUT_S = 15.0
 LECTURA_DESCARGA_S = 60.0
@@ -143,6 +141,10 @@ def aviso_de(novedad: Novedad, instalada: bool) -> str:
 # --- consulta -----------------------------------------------------------------------------
 
 
+HOSTS_DE_GITHUB = ("github.com", "githubusercontent.com")
+"""Adónde puede llevar una redirección: GitHub y su almacén de descargas, y nada más."""
+
+
 def _cliente(transporte: Any, timeout_s: float) -> Any:
     import httpx
 
@@ -151,7 +153,30 @@ def _cliente(transporte: Any, timeout_s: float) -> Any:
         timeout=timeout_s,
         follow_redirects=True,
         headers={"User-Agent": f"Voziris/{__version__} (+https://kairis.es/blog/voziris.html)"},
+        event_hooks={"response": [_vigilar_redireccion]},
     )
+
+
+def _vigilar_redireccion(respuesta: Any) -> None:
+    """Cada salto de una redirección, no solo el último: por HTTPS y dentro de GitHub.
+
+    Un salto intermedio por HTTP saldría en claro, y desde ahí se podría
+    llevar la descarga (y su SHA256SUMS.txt) a cualquier otro sitio.
+    """
+    if not respuesta.has_redirect_location:
+        return
+    # httpx llama a los ganchos antes de construir la petición siguiente: el
+    # destino se calcula aquí, como lo hará él, desde la cabecera Location.
+    destino = respuesta.request.url.join(respuesta.headers["Location"])
+    host = (destino.host or "").lower()
+    seguro = destino.scheme == "https" and any(
+        host == h or host.endswith("." + h) for h in HOSTS_DE_GITHUB
+    )
+    if not seguro:
+        raise ActualizacionFallida(
+            f"GitHub ha redirigido a un sitio que no es suyo o no es seguro ({destino}): "
+            "no se sigue"
+        )
 
 
 def consultar(
@@ -173,6 +198,8 @@ def consultar(
         raise ConsultaFallida("GitHub no ha contestado a tiempo") from e
     except httpx.HTTPError as e:
         raise ConsultaFallida(f"no se pudo conectar con GitHub ({type(e).__name__})") from e
+    except ActualizacionFallida as e:  # una redirección fuera de GitHub
+        raise ConsultaFallida(str(e)) from e
     if r.status_code == 404:
         raise ConsultaFallida("no hay ninguna versión publicada en GitHub")
     if r.status_code in (403, 429):
@@ -473,17 +500,22 @@ class Estado:
 
     @classmethod
     def leer(cls, carpeta: Path) -> Estado:
+        """Lo guardado, o un estado vacío si no está o no se entiende. Nunca lanza.
+
+        Se lee al arrancar la bandeja: un archivo roto, aunque sea a mano (un
+        número de 400 cifras, un JSON anidado mil veces), no puede impedirlo.
+        """
         try:
             datos = json.loads((carpeta / NOMBRE_ESTADO).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            if not isinstance(datos, dict):
+                return cls()
+            comprobada = datos.get("comprobada")
+            return cls(
+                comprobada=float(comprobada) if isinstance(comprobada, int | float) else 0.0,
+                **{c: str(datos.get(c) or "")[:200] for c in ("ultima", "pagina", "avisada")},
+            )
+        except Exception:  # noqa: BLE001 — ver arriba
             return cls()
-        if not isinstance(datos, dict):
-            return cls()
-        comprobada = datos.get("comprobada")
-        return cls(
-            comprobada=float(comprobada) if isinstance(comprobada, int | float) else 0.0,
-            **{c: str(datos.get(c) or "") for c in ("ultima", "pagina", "avisada")},
-        )
 
     def guardar(self, carpeta: Path) -> None:
         ruta = carpeta / NOMBRE_ESTADO

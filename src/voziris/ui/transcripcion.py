@@ -48,6 +48,11 @@ OPCIONES_HABLANTES: tuple[tuple[str, str], ...] = (
 class TranscripcionCancelada(VozirisError):
     """El usuario pulsó «Cancelar» en la ventana de progreso."""
 
+    def __init__(self, mensaje: str = "cancelado por el usuario", resultado: object = None) -> None:
+        super().__init__(mensaje)
+        self.resultado = resultado
+        """Lo que el trabajo llegó a devolver, si el Cancelar llegó tarde (`cancelar_tarde`)."""
+
 
 # --- elegir ------------------------------------------------------------------------------
 
@@ -203,8 +208,18 @@ class VentanaProgreso:
         self._raiz.after(100, self._vaciar)
 
 
-def ejecutar_con_progreso(titulo: str, detalle: str, trabajo: Callable[[Progreso], T]) -> T:
+def ejecutar_con_progreso(
+    titulo: str, detalle: str, trabajo: Callable[[Progreso], T], *, cancelar_tarde: bool = False
+) -> T:
     """Abre la ventana, corre `trabajo(progreso)` en un hilo y devuelve lo que devuelva.
+
+    Args:
+        cancelar_tarde: un Cancelar que Tk atiende cuando el trabajo ya ha
+            terminado (entre su última llamada a `progreso` y el cierre de la
+            ventana) también cancela; la excepción lleva el resultado, para
+            deshacer lo que haga falta. Para `--actualizar`, donde lo que viene
+            después es arrancar el instalador (VOZ-82). Por defecto no: en la
+            transcripción, cuando el trabajo termina el .md ya está escrito.
 
     Raises:
         TranscripcionCancelada: se pulsó Cancelar (o se cerró la ventana).
@@ -234,6 +249,8 @@ def ejecutar_con_progreso(titulo: str, detalle: str, trabajo: Callable[[Progreso
             raise fallo[0].with_traceback(fallo[0].__traceback__)
         if not resultado:
             raise TranscripcionCancelada("cancelado por el usuario")
+        if cancelar_tarde and ventana.cancelado:
+            raise TranscripcionCancelada("cancelado por el usuario", resultado[0])
         return resultado[0]
     finally:
         _cerrar_raiz(raiz, ventana, fallo, resultado)
