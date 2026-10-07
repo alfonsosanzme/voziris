@@ -174,6 +174,7 @@ class Ajustes:
         self._combos_modelo: dict[str, ttk.Combobox] = {}
         self._ventana: tk.Toplevel | None = None
         self._vars: dict[str, tk.Variable] = {}
+        self._buscar_al_abrir = False
         self._textos: dict[str, tk.Text] = {}
         self._medidor: tk.Canvas | None = None
         self._temporizador: str | None = None
@@ -594,6 +595,13 @@ class Ajustes:
         ttk.Label(m, text=f"Voziris {self._version}", font=("Segoe UI", 12, "bold")).pack(
             anchor="w"
         )
+        # «preguntar» se ve sin marcar y sigue siendo «preguntar» si no se toca (VOZ-82).
+        self._buscar_al_abrir = self._config.actualizaciones.buscar == "sí"
+        ttk.Checkbutton(
+            m,
+            text="Avisar de las versiones nuevas (mira en GitHub una vez al día)",
+            variable=self._var("actualizaciones.buscar", self._buscar_al_abrir),
+        ).pack(anchor="w", pady=(6, 0))
         ttk.Label(m, text=texto_acerca_de(self._version), justify="left", wraplength=500).pack(
             anchor="w", pady=8
         )
@@ -630,6 +638,11 @@ class Ajustes:
             nueva.general.idioma = str(g("general.idioma")).strip()
             nueva.general.motor = str(g("general.motor"))
             nueva.general.arranque_con_windows = bool(g("general.arranque_con_windows"))
+            buscar = bool(g("actualizaciones.buscar"))
+            if buscar != self._buscar_al_abrir:
+                # Solo si se ha tocado: la respuesta a la pregunta del arranque, dada
+                # con el panel abierto, no se pisa con lo que la casilla enseñaba.
+                nueva.actualizaciones.buscar = "sí" if buscar else "no"
             for nombre in cfg.NOMBRES_ATAJOS:
                 setattr(nueva.atajos, nombre, str(g(f"atajos.{nombre}")).strip())
             dispositivo = str(g("audio.dispositivo"))

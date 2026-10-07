@@ -48,6 +48,7 @@ CUANTIZACIONES = ("int8", "fp32")
 METODOS = ("portapapeles", "tecleo")
 NIVELES = tuple(n.value for n in Nivel)
 AL_DICTAR = ("nada", "atenuar", "silenciar")
+BUSCAR_VERSIONES = ("preguntar", "sí", "no")
 """[audio].al_dictar — qué pasa con la música mientras se dicta. Ver audio/mezclador.py."""
 NOMBRES_ATAJOS = ("mantener", "clavar", "markdown", "clavar_markdown", "cancelar")
 
@@ -200,6 +201,12 @@ class SeccionHistorial:
 
 
 @dataclass
+class SeccionActualizaciones:
+    buscar: str = "preguntar"
+    """¿Mirar una vez al día si hay versión nueva? «preguntar» lo pregunta al arrancar (VOZ-82)."""
+
+
+@dataclass
 class Config:
     """Configuración completa, ya validada y con rutas absolutas.
 
@@ -214,6 +221,7 @@ class Config:
     proceso: SeccionProceso = field(default_factory=SeccionProceso)
     destino: SeccionDestino = field(default_factory=SeccionDestino)
     historial: SeccionHistorial = field(default_factory=SeccionHistorial)
+    actualizaciones: SeccionActualizaciones = field(default_factory=SeccionActualizaciones)
 
     ruta_archivo: Path = field(
         default=Path(NOMBRE_ARCHIVO), compare=False, metadata={"toml": False}
@@ -365,6 +373,7 @@ _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "destino.markdown": ("ruta", "formato", "sello", "separador"),
     "historial": ("entradas", "conservar_audio", "audio_dictados", "audio_dias",
                   "guardar_audio"),
+    "actualizaciones": ("buscar",),
 }
 
 
@@ -555,6 +564,16 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         guardar_audio=_leer(h, "historial", "guardar_audio", bool, dh.guardar_audio, errores),
     )
 
+    ac = _seccion(datos, "actualizaciones", errores)
+    if ac.get("buscar") == "si":
+        ac = {**ac, "buscar": "sí"}  # sin tilde también vale
+    actualizaciones = SeccionActualizaciones(
+        buscar=_elegir(
+            ac, "actualizaciones", "buscar", BUSCAR_VERSIONES,
+            SeccionActualizaciones().buscar, errores,
+        ),
+    )
+
     _desconocidas(datos, avisos)
     errores.lanzar_si_hay(ruta)
 
@@ -566,6 +585,7 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
         proceso=proceso,
         destino=SeccionDestino(app_activa=app_activa, markdown=markdown),
         historial=historial,
+        actualizaciones=actualizaciones,
         ruta_archivo=ruta,
         avisos=avisos,
     )
@@ -644,6 +664,7 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
         "destino.app_activa": _campos(config.destino.app_activa),
         "destino.markdown": _campos(config.destino.markdown),
         "historial": historial,
+        "actualizaciones": _campos(config.actualizaciones),
     }
 
 
@@ -681,6 +702,8 @@ def _mismo_valor(base: Path, actual: object, nuevo: object) -> bool:
 _COMENTARIOS_NUEVAS = {
     ("historial", "conservar_audio"): "grabación de los últimos dictados, para volver a "
                                       "transcribirlos; false para no guardarla",
+    ("actualizaciones", "buscar"): "¿mirar en GitHub una vez al día si hay versión "
+                                   "nueva? sí | no | preguntar",
 }
 """Opciones que un config.toml de antes no trae: al añadirlas, que se entienda qué son."""
 
@@ -697,16 +720,22 @@ def _jubilar_guardar_audio(documento: Any) -> None:
         del tabla["guardar_audio"]
 
 
-def guardar(config: Config, ruta: Path | None = None) -> None:
+def guardar(config: Config, ruta: Path | None = None, *, estricto: bool = True) -> None:
     """Reescribe el TOML conservando comentarios y orden. Lo usa VOZ-60.
 
     Solo toca las opciones cuyo valor cambia, así una ruta relativa sigue
     relativa y los comentarios de cada línea se quedan donde estaban. La clave
     de API que vino de la variable de entorno no se escribe.
 
+    Args:
+        estricto: una carpeta del Markdown que no existe es error (el panel de
+            ajustes, donde se acaba de escribir). Con False, como al arrancar,
+            no lo es: lo que se cambia desde la bandeja no tiene que ver con
+            esa ruta, y la plantilla trae una que no existe (C-1 del plan).
+
     Raises:
-        ConfigInvalida: la configuración no pasa la validación estricta (por
-            ejemplo, la carpeta del Markdown no existe).
+        ConfigInvalida: la configuración no pasa la validación (con `estricto`,
+            por ejemplo, porque la carpeta del Markdown no existe).
     """
     ruta = (ruta or config.ruta_archivo).resolve()
     origen = ruta if ruta.exists() else _ejemplo_junto_a(ruta.parent)
@@ -719,7 +748,7 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
         nuevos["motor.api"]["clave"] = ""
 
     # Validar ANTES de escribir, con lo que de verdad va a quedar en el archivo.
-    _construir(_a_dict(nuevos), ruta, estricto=True)
+    _construir(_a_dict(nuevos), ruta, estricto=estricto)
 
     for seccion, opciones in nuevos.items():
         tabla = _tabla(documento, seccion)

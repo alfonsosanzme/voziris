@@ -13,6 +13,7 @@ dist/
 config.toml
 modelos/
 historial/
+actualizaciones.json
 *.wav
 banco/
 resultados-h0*.md

@@ -10,12 +10,13 @@ Desplegar Voziris es llegar a tres sitios. Con el primero no basta.
 
 1. **La release `v<X.Y.Z>` de GitHub**, en `alfonsosanzme/voziris`, que es público. Lleva el ZIP, `SHA256SUMS.txt` y las notas. Todo lo demás enlaza aquí.
 2. **El blog de kairis.es.** El botón de descarga de https://kairis.es/blog/voziris.html apunta al ZIP de una release concreta. Mientras no se cambie, sigue ofreciendo la versión anterior.
-3. **Quien ya lo usa.** Voziris no busca versiones nuevas: con el motor local no se conecta a nada. Cada equipo se actualiza a mano, también el tuyo, y a los demás hay que avisarles. Para pasar el ZIP a mano está `voziris-entrega/compartir/`.
+3. **Quien ya lo usa.** Hasta la 0.1.1, Voziris no busca versiones nuevas: cada equipo se actualiza a mano y a los demás hay que avisarles. Para pasar el ZIP a mano está `voziris-entrega/compartir/`. Desde la 0.1.2 (VOZ-82), las copias cuyo usuario aceptó la pregunta del primer arranque consultan `releases/latest` una vez al día y avisan; la instalada se actualiza desde la bandeja, con «Actualizar a la X.Y.Z…».
 
 Hay reglas que no cambian:
 
 - **Nunca se sobrescribe un asset publicado ni se reutiliza un número de versión.** Si algo sale mal, se publica la versión siguiente. Con el mismo nombre de archivo, el hash publicado y las cachés dejarían de cuadrar.
 - **La release anterior se queda.** Es el camino de vuelta para quien lo necesite.
+- **Publicar como «Latest» es repartir.** Desde la 0.1.2, en menos de un día las Voziris con la comprobación activada avisan de la versión nueva. Lo que no esté probado no se publica como «Latest»: un borrador o una *prerelease* no se ofrece a nadie. Para que la puedan instalar desde la bandeja, la etiqueta es `v<X.Y.Z>` y los assets se llaman exactamente `voziris-<X.Y.Z>-win64.zip` y `SHA256SUMS.txt`. Con otros nombres, avisan pero mandan a la página.
 - **La web solo se despliega con el permiso explícito de Alfonso.** Tampoco se despliega si hay trabajo de otros sin subir (paso 10).
 - **Una sesión de Claude no cierra ni relanza la Voziris de la bandeja.** Tampoco toca `%LOCALAPPDATA%\Programs\Voziris`, el menú Inicio ni el registro. La excepción es el paso 12, y solo con el sí de Alfonso. Ojo: `voziris.exe --instalar` y `voziris.exe --salir` cierran la Voziris que esté abierta, sea cual sea.
 
@@ -269,6 +270,14 @@ gh release list -R alfonsosanzme/voziris                 # v<X.Y.Z> como «Lates
 
 `digest` es el SHA-256 que calcula GitHub del asset subido, y también tiene que coincidir.
 
+Comprueba también que Voziris la ve como la verán los equipos (VOZ-82). Desde el worktree, con `PYTHONPATH=src`:
+
+```bash
+PYTHONPATH=src "$PY" -c "from voziris import actualizaciones as a; n = a.consultar('$ANT'); print(n, n.instalable if n else '')"
+```
+
+Tiene que salir `Novedad(version='<X.Y.Z>', …)` con las URL de esta release, y `True`. Con `False`, a la release le falta el ZIP o `SHA256SUMS.txt` con su nombre exacto. **(Sin probar con una release nueva:** se comprobó contra la 0.1.1, preguntando desde la 0.1.0.)
+
 ### 10. La web: el enlace de kairis.es
 
 El cambio es pequeño: en `data/blog.json`, post `voziris`, objeto `descarga`, se cambian tres campos. El resto del post no se toca, salvo que Alfonso lo pida.
@@ -384,7 +393,9 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
    - el botón derecho «Transcribir con Voziris»;
    - la versión que aparece en «Aplicaciones instaladas».
 
-   Después abre la instalada y avisa con «Voziris instalado».
+   Después abre la instalada y avisa con «Voziris instalado». Desde la 0.1.2, si había otra versión instalada, el aviso es «Voziris actualizado».
+
+Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora.
 
 No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
 
@@ -414,7 +425,7 @@ Cuando hayas comprobado la descarga pública (paso 9), usa el ZIP de la release 
 
 ### El equipo de los demás
 
-No hay aviso automático. A quien sepas que lo usa, mándale algo como esto (el mensaje lo envías tú):
+Quien tenga la 0.1.2 o posterior y aceptara la comprobación recibe el aviso en menos de un día. Quien tenga la 0.1.1 o anterior, o dijera que no, no se entera solo. A quien sepas que lo usa, mándale algo como esto (el mensaje lo envías tú):
 
 > Hay versión nueva de Voziris, la <X.Y.Z>: <una línea con lo que trae>. Se descarga aquí: <URL de la release> (el SHA-256 está en las notas).
 >
@@ -443,6 +454,8 @@ Si falla `gh release create`, hay dos casos:
 2. `gh release edit "v$ANT" -R alfonsosanzme/voziris --latest`: la anterior vuelve a ser «Latest». El README manda a la página de releases.
 3. `gh release edit "v$V" -R alfonsosanzme/voziris --prerelease --notes-file <las notas con un aviso arriba>`. La release se marca, no se borra: hay quien ya la ha descargado y necesita el hash y las notas.
 4. **El arreglo sale como la versión siguiente.** Nunca se vuelve a subir el ZIP ni se mueve la etiqueta.
+
+Con las actualizaciones desde la bandeja (0.1.2 en adelante), los pasos 2 y 3 son además los que paran el reparto. `releases/latest` deja de dar la versión mala, así que nadie más la descarga. Si alguien ya había recibido el aviso, la entrada del menú le dura hasta la consulta del día siguiente. Si la pulsa antes, `--actualizar` vuelve a preguntar, ve la anterior y dice «Voziris está al día». A quien ya la instaló no se le baja de versión: tiene que instalar a mano el ZIP de la anterior (ver «En un equipo»).
 
 ### En la web
 

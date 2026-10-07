@@ -76,3 +76,11 @@ entradas = 50                    # D3
 conservar_audio = true
 audio_dictados = 20
 audio_dias = 7
+
+[actualizaciones]
+# ¿Mira Voziris una vez al día si hay una versión nueva? Solo pregunta a
+# GitHub cuál es la última publicada: no envía nada tuyo, y no descarga ni
+# instala nada hasta que se lo pidas desde la bandeja.
+#   "preguntar"  lo pregunta la primera vez que arranca
+#   "sí" | "no"
+buscar = "preguntar"

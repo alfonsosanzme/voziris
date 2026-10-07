@@ -698,6 +698,25 @@ def _registrar(
     log.info("registrado en Aplicaciones instaladas (%s)", clave)
 
 
+def version_instalada(raiz: int | None = None, clave: str = CLAVE_DESINSTALAR) -> str | None:
+    """La versión que dice «Aplicaciones instaladas», o None si no hay ninguna instalada.
+
+    Se lee antes de instalar: si había otra, el mensaje final dice
+    «actualizado» (VOZ-82).
+    """
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    raiz = winreg.HKEY_CURRENT_USER if raiz is None else raiz
+    try:
+        with winreg.OpenKey(raiz, clave) as k:
+            valor, tipo = winreg.QueryValueEx(k, "DisplayVersion")
+    except OSError:
+        return None
+    return valor if tipo == winreg.REG_SZ and isinstance(valor, str) and valor else None
+
+
 def _desregistrar(raiz: int | None, clave: str) -> None:
     if sys.platform != "win32":
         return

@@ -461,6 +461,31 @@ def hay_instancia_abierta(nombre: str = "Local\\Voziris") -> bool:
     return True
 
 
+_mutex_tareas: dict[str, int] = {}
+
+
+def tomar_mutex(nombre: str) -> bool:
+    """True si nadie más tiene el mutex `nombre`: queda tomado hasta que el proceso muera.
+
+    Para tareas que no deben correr dos a la vez (`--actualizar`, VOZ-82). No
+    toca el de la instancia: `hay_instancia_abierta()` sigue diciendo la verdad.
+    """
+    _solo_windows()
+    if nombre in _mutex_tareas:
+        return True
+    _kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    ctypes.set_last_error(0)
+    manejador = _kernel32.CreateMutexW(None, False, nombre)
+    if not manejador:
+        return True  # sin mutex no se puede saber: mejor seguir que no hacer nada
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+        _kernel32.CloseHandle(manejador)
+        return False
+    _mutex_tareas[nombre] = int(manejador)
+    return True
+
+
 NOMBRE_EVENTO_SALIDA = "Local\\Voziris.Salir"
 WAIT_OBJECT_0 = 0
 EVENT_MODIFY_STATE = 0x0002
@@ -502,6 +527,32 @@ def pedir_salida(nombre: str = NOMBRE_EVENTO_SALIDA) -> bool:
         return bool(_kernel32.SetEvent(manejador))
     finally:
         _kernel32.CloseHandle(manejador)
+
+
+# --- preguntas ------------------------------------------------------------------
+
+MB_YESNO = 0x04
+MB_ICONQUESTION = 0x20
+MB_SETFOREGROUND = 0x10000
+MB_TOPMOST = 0x40000
+IDYES = 6
+
+
+def preguntar_si_no(titulo: str, texto: str) -> bool:
+    """Un «Sí / No» de Windows por encima de todo. Bloquea el hilo que lo llama.
+
+    Para preguntar sin que nadie haya hecho clic en Voziris (al arrancar): el
+    `messagebox` de Tk, con la raíz oculta, puede quedarse detrás de la
+    ventana activa y no verse. Este va encima y se lleva el foco. Llamarlo
+    desde un hilo de trabajo, nunca desde el de Tk: lo dejaría sin bombear.
+    """
+    _solo_windows()
+    _user32.MessageBoxW.argtypes = (
+        wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT,
+    )
+    _user32.MessageBoxW.restype = ctypes.c_int
+    estilo = MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST
+    return int(_user32.MessageBoxW(None, texto, titulo, estilo)) == IDYES
 
 
 # --- portapapeles -------------------------------------------------------------
