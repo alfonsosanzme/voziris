@@ -13,7 +13,7 @@ dependencies = [
     "numpy>=1.26,<3",
     "httpx>=0.27",              # cliente de la API
     "tomlkit>=0.13",            # config.toml conservando comentarios
-    "pystray>=0.19",            # icono de bandeja
+    "pystray>=0.19.5,<0.20",    # icono de bandeja; VOZ-80 toca sus internos: fijada
     "pillow>=10",               # requerido por pystray
     "pywin32>=306; sys_platform == 'win32'",
     "av>=14",                   # decodificar grabaciones (m4a, mp3…): lleva ffmpeg dentro

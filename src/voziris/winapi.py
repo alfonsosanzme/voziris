@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from ctypes import wintypes
@@ -623,3 +624,33 @@ def escribir_portapapeles(texto: str) -> None:
             _user32.CloseClipboard()
         time.sleep(ESPERA_PORTAPAPELES_S)
     raise OSError(f"no se pudo escribir en el portapapeles: {ultimo}")
+
+
+cerrojo_portapapeles = threading.RLock()
+"""Lo toma quien usa el portapapeles en varios pasos (pegar: guardar lo que había,
+escribir, Ctrl+V, restaurar) y quien solo escribe en él. Sin esto, «Volver a
+transcribir» podía copiar su texto justo a mitad de un pegado: acababa pegado
+en la aplicación en lugar del dictado, o borrado por la restauración (VOZ-80)."""
+
+
+ESPERA_PEGADO_S = 0.5
+"""Lo que `copiar` espera a que termine un pegado. Un pegado normal dura ~170 ms."""
+
+
+def copiar(texto: str) -> None:
+    """Deja `texto` en el portapapeles sin pisar un pegado que esté a medias.
+
+    Espera como mucho `ESPERA_PEGADO_S`. Se llama desde el hilo de la bandeja,
+    y si el pegado se ha colgado (un dueño del portapapeles que no responde),
+    esperarlo sin límite congelaba la bandeja entera, «Salir» incluido.
+
+    Raises:
+        OSError: hay un pegado en curso que no termina, o el portapapeles no se
+            deja escribir.
+    """
+    if not cerrojo_portapapeles.acquire(timeout=ESPERA_PEGADO_S):
+        raise OSError("se está pegando un dictado; prueba en un momento")
+    try:
+        escribir_portapapeles(texto)
+    finally:
+        cerrojo_portapapeles.release()

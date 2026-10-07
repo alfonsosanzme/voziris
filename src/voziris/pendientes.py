@@ -30,6 +30,7 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -120,13 +121,18 @@ class Pendientes:
             log.warning("sin copia en disco del dictado: %s", e)
             return None
 
-    def listar(self, excepto: Path | None = None) -> list[Pendiente]:
-        """Del más reciente al más antiguo. `excepto`: el que se está grabando ahora."""
+    def listar(self, excepto: Path | Iterable[Path] | None = None) -> list[Pendiente]:
+        """Del más reciente al más antiguo.
+
+        `excepto`: los que no son «sin transcribir» aunque estén aquí: el que se
+        está grabando y el que se está transcribiendo ahora.
+        """
         if not self._carpeta.is_dir():
             return []
+        fuera = _conjunto(excepto)
         salida = []
         for ruta in self._carpeta.glob(f"*{EXTENSION}"):
-            if excepto is not None and ruta == excepto:
+            if ruta in fuera:
                 continue
             try:
                 info = ruta.stat()
@@ -149,15 +155,16 @@ class Pendientes:
         with contextlib.suppress(OSError):
             Path(ruta).unlink()
 
-    def limpiar(self, excepto: Path | None = None) -> int:
+    def limpiar(self, excepto: Path | Iterable[Path] | None = None) -> int:
         """Borra los viejos, los sobrantes y los que no llegan a un dictado. Devuelve cuántos."""
         if not self._carpeta.is_dir():
             return 0
         borrados = 0
         limite = datetime.now() - timedelta(days=self._dias)
         validos = {p.ruta for p in self.listar(excepto)}
+        fuera = _conjunto(excepto)
         for ruta in self._carpeta.glob(f"*{EXTENSION}"):
-            if ruta == excepto:
+            if ruta in fuera:
                 continue
             # Los demasiado cortos, solo si llevan un rato quietos: uno recién
             # abierto por otro dictado también pesa cero.
@@ -171,6 +178,14 @@ class Pendientes:
         if borrados:
             log.info("pendientes: %d archivo(s) de audio antiguos borrados", borrados)
         return borrados
+
+
+def _conjunto(excepto: Path | Iterable[Path] | None) -> set[Path]:
+    if excepto is None:
+        return set()
+    if isinstance(excepto, Path):
+        return {excepto}
+    return {Path(ruta) for ruta in excepto}
 
 
 def _momento_de(ruta: Path, mtime: float) -> datetime:

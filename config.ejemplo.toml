@@ -69,4 +69,10 @@ separador = ""                   # texto entre entradas; "---" para regla horizo
 
 [historial]
 entradas = 50                    # D3
-guardar_audio = false            # true solo para depurar: ocupa y es información sensible
+# La grabación de los últimos dictados, para volver a transcribirlos desde
+# «Últimos dictados» si el texto salió mal o se pegó donde no era. Es audio
+# tuyo en tu disco (historial/audio/). Se borra sola: la de los dictados que
+# pasen de este número o de estos días, y nunca más de 1 GB entre todas.
+conservar_audio = true
+audio_dictados = 20
+audio_dias = 7

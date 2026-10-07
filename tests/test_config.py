@@ -323,3 +323,35 @@ def test_cinco_atajos_y_corte_por_silencio(toml: Path) -> None:
     cfg = config.cargar(toml)
     assert cfg.atajos.clavar_markdown == "" and "clavar_markdown" not in cfg.atajos.combinaciones()
     assert cfg.audio.corte_por_silencio is False
+
+
+# --- VOZ-80: la grabación de los últimos dictados ---
+
+
+def test_conservar_audio_viene_puesto_y_se_puede_apagar(tmp_path: Path) -> None:
+    ruta = tmp_path / "config.toml"
+    md = (tmp_path / "entrada.md").as_posix()
+    ruta.write_text(f"[destino.markdown]\nruta = '{md}'\n", encoding="utf-8")
+    assert config.cargar(ruta).historial.conservar_audio is True
+    ruta.write_text(f"[destino.markdown]\nruta = '{md}'\n\n[historial]\n"
+                    "conservar_audio = false\nguardar_audio = true\n", encoding="utf-8")
+    # La antigua a true no pisa un «false» explícito de la nueva.
+    assert config.cargar(ruta).historial.conservar_audio is False
+
+
+def test_un_config_de_antes_no_queda_contradictorio_al_guardar(tmp_path: Path) -> None:
+    """La plantilla escribía guardar_audio = false en todas las instalaciones."""
+    ruta = tmp_path / "config.toml"
+    md = (tmp_path / "entrada.md").as_posix()
+    ruta.write_text(
+        f"[destino.markdown]\nruta = '{md}'\n\n[historial]\nentradas = 50\n"
+        "guardar_audio = false            # true solo para depurar\n",
+        encoding="utf-8",
+    )
+    configuracion = config.cargar(ruta)
+    config.guardar(configuracion, ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    assert "guardar_audio" not in texto
+    assert "conservar_audio = true" in texto
+    assert "volver a transcribirlos" in texto  # con su comentario, que se entienda qué es
+    assert config.cargar(ruta).historial.conservar_audio is True

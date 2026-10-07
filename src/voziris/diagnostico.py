@@ -68,7 +68,7 @@ def generar(carpeta: Path, ruta_log: Path | None = None, version: str = __versio
         _cola_del_log(ruta_log or carpeta / "voziris.log"),
         "",
         "== Fallos nativos (voziris-fallos.log) ==",
-        _cola_del_log(carpeta / "voziris-fallos.log", lineas=60),
+        _fallos_nativos(carpeta / "voziris-fallos.log"),
         "",
         "== Eventos de Windows sobre voziris.exe (últimos 30 días) ==",
         eventos_windows(),
@@ -91,6 +91,39 @@ def _ahora() -> str:
     import time
 
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _es_marca(linea: str) -> bool:
+    return linea.startswith("=== ") and linea.endswith(" ===")
+
+
+def _fallos_nativos(ruta: Path, lineas: int = 60) -> str:
+    """Los volcados de voziris-fallos.log, cada uno con la marca que lo fecha.
+
+    Desde VOZ-80 cada proceso deja una línea «=== fecha · arranque: modo (pid)
+    ===». Las marcas sin volcado detrás no se enseñan: con un arranque al día
+    llenarían la cola y echarían fuera de la vista un volcado de hace un mes.
+    Por eso se lee el archivo entero y no solo el final. Si no hay ningún
+    volcado, se dice que no hubo fallos.
+    """
+    if not ruta.exists():
+        return f"(no existe {ruta.name})"
+    try:
+        texto = ruta.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"(no se pudo leer {ruta.name}: {e})"
+    segmentos: list[list[str]] = [[]]
+    for linea in texto.splitlines():
+        if _es_marca(linea):
+            segmentos.append([linea])
+        else:
+            segmentos[-1].append(linea)
+    marcas = sum(1 for s in segmentos if s and _es_marca(s[0]))
+    con_volcado = [s for s in segmentos if any(ln.strip() and not _es_marca(ln) for ln in s)]
+    if not con_volcado:
+        return f"(sin fallos; {marcas} arranque(s) anotado(s))" if marcas else "(vacío)"
+    salida = [ln for s in con_volcado for ln in s if ln.strip()]
+    return _CLAVE.sub("gsk_***", "\n".join(salida[-lineas:]))
 
 
 def _cola_del_log(ruta: Path, lineas: int = LINEAS_DE_LOG) -> str:

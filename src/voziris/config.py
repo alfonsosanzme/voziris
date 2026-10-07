@@ -186,7 +186,17 @@ class SeccionDestino:
 @dataclass
 class SeccionHistorial:
     entradas: int = 50
+    conservar_audio: bool = True
+    """Quedarse con la grabación de los últimos dictados para volver a transcribirlos."""
+    audio_dictados: int = 20
+    """De cuántos dictados se conserva la grabación, como mucho."""
+    audio_dias: int = 7
+    """Y de cuántos días atrás, como mucho."""
     guardar_audio: bool = False
+    """Antigua (antes de VOZ-80, WAV para depurar). Ya no hace nada: la grabación
+    la decide `conservar_audio`. Se acepta para no dar error con un config.toml
+    viejo, y al guardar se quita si está a false, que es como la escribía la
+    plantilla en todas las instalaciones."""
 
 
 @dataclass
@@ -353,7 +363,8 @@ _CONOCIDAS: dict[str, tuple[str, ...]] = {
     "destino": (),
     "destino.app_activa": ("metodo", "restaurar_portapapeles", "auto_enter"),
     "destino.markdown": ("ruta", "formato", "sello", "separador"),
-    "historial": ("entradas", "guardar_audio"),
+    "historial": ("entradas", "conservar_audio", "audio_dictados", "audio_dias",
+                  "guardar_audio"),
 }
 
 
@@ -534,6 +545,13 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
     dh = SeccionHistorial()
     historial = SeccionHistorial(
         entradas=_rango(h, "historial", "entradas", int, 1, 10000, dh.entradas, errores),
+        conservar_audio=_leer(
+            h, "historial", "conservar_audio", bool, dh.conservar_audio, errores
+        ),
+        audio_dictados=_rango(
+            h, "historial", "audio_dictados", int, 1, 1000, dh.audio_dictados, errores
+        ),
+        audio_dias=_rango(h, "historial", "audio_dias", int, 1, 365, dh.audio_dias, errores),
         guardar_audio=_leer(h, "historial", "guardar_audio", bool, dh.guardar_audio, errores),
     )
 
@@ -610,6 +628,11 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
     """{"seccion.subseccion": {opcion: valor}} con los valores tal como van al TOML."""
     proceso = _campos(config.proceso)
     sustituciones = proceso.pop("sustituciones")
+    historial = _campos(config.historial)
+    if not historial["guardar_audio"]:
+        # La antigua: no se escribe si no está puesta. Así un config.toml
+        # nuevo no la estrena, y uno viejo la conserva tal cual (VOZ-80).
+        historial.pop("guardar_audio")
     return {
         "general": _campos(config.general),
         "atajos": _campos(config.atajos),
@@ -620,7 +643,7 @@ def _valores_toml(config: Config) -> dict[str, dict[str, Any]]:
         "proceso.sustituciones": dict(sustituciones),
         "destino.app_activa": _campos(config.destino.app_activa),
         "destino.markdown": _campos(config.destino.markdown),
-        "historial": _campos(config.historial),
+        "historial": historial,
     }
 
 
@@ -655,6 +678,25 @@ def _mismo_valor(base: Path, actual: object, nuevo: object) -> bool:
     return bool(actual == nuevo)
 
 
+_COMENTARIOS_NUEVAS = {
+    ("historial", "conservar_audio"): "grabación de los últimos dictados, para volver a "
+                                      "transcribirlos; false para no guardarla",
+}
+"""Opciones que un config.toml de antes no trae: al añadirlas, que se entienda qué son."""
+
+
+def _jubilar_guardar_audio(documento: Any) -> None:
+    """Quita `guardar_audio = false` de un config.toml de antes de VOZ-80.
+
+    La plantilla la escribía así en todas las instalaciones, y junto a
+    `conservar_audio = true` parecía decir lo contrario de lo que pasa. A
+    false no significa nada; a true la deja, porque alguien la puso a mano.
+    """
+    tabla = documento.get("historial")
+    if tabla is not None and tabla.get("guardar_audio") is False:
+        del tabla["guardar_audio"]
+
+
 def guardar(config: Config, ruta: Path | None = None) -> None:
     """Reescribe el TOML conservando comentarios y orden. Lo usa VOZ-60.
 
@@ -687,7 +729,13 @@ def guardar(config: Config, ruta: Path | None = None) -> None:
         for opcion, valor in opciones.items():
             if opcion in tabla and _mismo_valor(base, _plano(tabla[opcion]), valor):
                 continue
-            tabla[opcion] = valor
+            if opcion not in tabla and (seccion, opcion) in _COMENTARIOS_NUEVAS:
+                elemento = tomlkit.item(valor)
+                elemento.comment(_COMENTARIOS_NUEVAS[(seccion, opcion)])
+                tabla[opcion] = elemento
+            else:
+                tabla[opcion] = valor
+    _jubilar_guardar_audio(documento)
 
     texto = tomlkit.dumps(documento)
     if origen.exists() and b"\r\n" in origen.read_bytes():

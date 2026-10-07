@@ -264,7 +264,7 @@ de mensajes.
 - [ ] Un archivo corrupto o a medio escribir no impide arrancar: se ignoran las líneas ilegibles.
 - [ ] Los últimos 10 dictados aparecen en el menú de bandeja, con las primeras palabras de cada uno.
 - [ ] Reintentar reentrega **el texto ya procesado**, sin volver a transcribir ni a llamar al LLM.
-- [ ] Con `guardar_audio = true`, el WAV queda al lado. Por defecto, no se guarda nada de audio.
+- [ ] Con `guardar_audio = true`, el WAV queda al lado. Por defecto, no se guarda nada de audio. *(Superado por VOZ-80: `conservar_audio`, activado, guarda la grabación de los últimos dictados para volver a transcribirlos.)*
 - [ ] Los dictados con información sensible se pueden borrar desde el menú.
 
 ---
@@ -399,3 +399,43 @@ vídeo. Vídeos en mp4».
   - `normalizar` y el cálculo de energía trabajan por trozos, con salida idéntica bit a bit y el doble de rápidos (1,7 GB menos con 4 h);
   - la separación de hablantes pide unas 11 veces el audio de golpe (medido: 4,9 GB con 2 h), así que se comprueba contra la memoria libre y, si no cabe, se transcribe sin separar en lugar de morir a media hora de trabajo;
   - la ventana de progreso dice cuánto dura y cuánto va a tardar.
+
+### VOZ-80 · Ningún dictado se pierde, todos se ven, y se pueden volver a transcribir
+**Archivos:** `historial.py`, `orquestador.py`, `ui/bandeja.py`, `__main__.py`, `config.py`
+
+Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dictados.jsonl`, ninguno visible en «Últimos dictados»; ninguno con su grabación; y el texto se guardaba después de pegar.
+
+**Criterios de aceptación**
+- [x] «Últimos dictados» enseña el dictado de hace un momento. pystray en Windows construía el menú una vez y lo reutilizaba; tras un dictado nadie pedía rehacerlo. Ahora se rehace al abrirlo, en el hilo de la bandeja. Probado sobre el HMENU nativo, no sobre el menú de Python (que es donde miraba el test anterior, y por eso no lo vio).
+- [x] El texto entra en el historial ANTES de pegar, sin entregar, y se marca al pegar bien. Si el pegado se cuelga o el proceso muere a media entrega, lo dicho ya está a salvo.
+- [x] La grabación de los últimos dictados se conserva (`historial/audio/<indice>.f32`) moviendo el archivo que se escribía mientras se hablaba: sin copiar nada. Poda sola: 20 dictados, 7 días, 1 GB como mucho; la más reciente nunca.
+- [x] «Volver a transcribir la grabación» en cada dictado que la tenga. El texto nuevo sustituye al viejo y se deja copiado; si no sale nada, el de antes se queda.
+- [x] «Copiar el último dictado» a un clic, para cuando se pegó con el foco fuera del campo de texto.
+- [x] Opción nueva `conservar_audio` (activada). La antigua `guardar_audio` no la apaga: la plantilla la escribía a false en todas las instalaciones.
+- [x] Cada fase del dictado en el log (grabando, grabación cerrada, transcribiendo, entregando), sin lo dicho.
+- [x] Vigía: si un dictado pasa de 60 s más su duración procesándose, se vuelca dónde está cada hilo en `voziris-fallos.log` y se avisa. No corta nada.
+- [x] Cada arranque deja su fecha en `voziris-fallos.log`: los volcados de faulthandler no la llevan.
+- [x] Historial con cerrojo: el hilo de trabajo escribe mientras la bandeja lee y el usuario borra o copia.
+
+**Tras la revisión adversarial** (cuatro lentes, un escéptico por hallazgo que debía reproducirlo):
+- [x] «Recuperar» ya no borra un dictado largo si el motor vuelve a no sacar texto: el archivo se queda y se dice.
+- [x] Si la línea del historial no se puede escribir, la grabación vuelve a «Dictados sin transcribir» en vez de quedarse huérfana (regresión de la primera versión).
+- [x] Una línea cortada a medias (corte de luz) no se come el dictado siguiente; las ilegibles se apartan a `dictados.ilegibles.jsonl` al reescribir, en vez de perderse.
+- [x] Volver a transcribir conserva el texto de antes y dice sus avisos; no escribe encima de otro dictado que haya heredado el número.
+- [x] El menú se construye antes de destruir el viejo, y un segundo clic derecho con el menú abierto no lo destruye. Lee el historial una vez por apertura.
+- [x] El dictado que se está transcribiendo no sale como «sin transcribir».
+- [x] Pegar y copiar comparten un cerrojo del portapapeles.
+- [x] Un dictado largo sin texto pone el icono en error y avisa en la bandeja; Esc en una grabación larga la guarda.
+- [x] Poda después de pegar; con `conservar_audio = false` se borra lo ya guardado.
+- [x] Al guardar ajustes, un `guardar_audio = false` de la plantilla vieja se quita, y `conservar_audio` entra con su comentario.
+- [x] pystray fijada a 0.19.x: el enganche toca sus internos.
+
+**Tras la verificación de la segunda ronda** (los arreglos aguantan con el icono real, su bucle de mensajes real y la captura real; esto es lo que no):
+- [x] Copiar desde la bandeja espera como mucho 0,5 s a un pegado: sin límite, un pegado colgado congelaba la bandeja entera, «Salir» incluido (regresión de la segunda ronda).
+- [x] Una grabación que ninguna entrada nombra (la línea no llegó a disco) se rescata a «Dictados sin transcribir» en vez de borrarse; y si la línea no se escribe y el audio venía de memoria, va también ahí, nunca a la papelera.
+- [x] El historial se lee con BOM, y una línea JSON que no es una entrada no tumba la lectura.
+- [x] Volver a transcribir guarda el texto original, no solo el anterior: dos intentos malos no se llevan el bueno.
+- [x] «Copiar el último dictado» copia el que dice la etiqueta aunque entre otro con el menú abierto.
+- [x] El rehacer seguro vale también cuando pystray rehace el menú tras pulsar un elemento.
+- [x] Recuperar poda la grabación; el mismo audio no se recupera dos veces a la vez.
+- [x] Cada proceso (también «Transcribir» del Explorador) deja su marca en voziris-fallos.log, y el diagnóstico busca volcados en todo el archivo y solo enseña las marcas que tienen uno detrás.
