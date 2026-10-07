@@ -85,6 +85,20 @@ Lo último se puede repetir a mano sobre cualquier copia:
 `voziris.exe --comprobar` imprime una línea por prueba y sale con 0 si todo
 carga.
 
+Después, instala el ZIP en carpetas temporales con el instalador de este
+repositorio, desde cero y encima de la versión anterior:
+
+```bash
+python tools/probar_instalacion.py build/dist/voziris-<X.Y.Z>-win64.zip
+python tools/probar_instalacion.py build/dist/voziris-<X.Y.Z>-win64.zip --anterior voziris-<anterior>-win64.zip
+```
+
+No toca la instalación real, el menú Inicio ni el registro de verdad. Con
+`--anterior` comprueba que la configuración y el historial de la versión
+instalada siguen igual: es lo que pisaba el instalador hasta la 0.1.1, y no
+lo veía ningún otro test con el paquete real. Hay que lanzarlo con el `src` de
+este repositorio delante en el `PYTHONPATH`.
+
 El ZIP tiene que pesar menos de 200 MB (con ffmpeg y sherpa-onnx dentro; sin
 la transcripción de grabaciones eran 120). El hash va en las notas de la
 release y en `SHA256SUMS.txt`.
