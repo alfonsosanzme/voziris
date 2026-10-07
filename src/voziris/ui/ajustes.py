@@ -693,6 +693,10 @@ class Ajustes:
             messagebox.showerror("No se puede guardar", str(e), parent=self._ventana or self._raiz)
             return False
         self._config = nueva
+        if "actualizaciones.buscar" in self._vars:
+            # Lo guardado es ahora el punto de partida. Si no, con el panel abierto,
+            # marcar, guardar, desmarcar y guardar dejaba «sí» (VOZ-82).
+            self._buscar_al_abrir = bool(self._valor("actualizaciones.buscar"))
         try:
             pendientes = self._aplicar(nueva)
         except Exception as e:  # noqa: BLE001 — guardado sí; aplicar en caliente, no

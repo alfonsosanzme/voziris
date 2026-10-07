@@ -280,8 +280,8 @@ puede salir depende de dos opciones de `config.toml`, `general.motor` y
 
 | Modo | Sale del equipo |
 |---|---|
-| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. |
-| `[actualizaciones] buscar = "sí"` | una vez al día, una petición a la **API de GitHub** para saber cuál es la última versión publicada. No lleva nada tuyo: lo que ve GitHub es tu IP y la versión de Voziris. Con `"preguntar"` (de serie) o `"no"`, nada; ver [Versiones nuevas](#versiones-nuevas) |
+| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. La única excepción es la consulta de versiones nuevas, si la has aceptado (fila siguiente) |
+| `[actualizaciones] buscar = "sí"` | una vez al día (si falla, por ejemplo sin red, se reintenta cada hora hasta que sale), una petición a la **API de GitHub** para saber cuál es la última versión publicada. No lleva nada tuyo: lo que ve GitHub es tu IP y la versión de Voziris. Con `"preguntar"` (de serie) o `"no"`, nada; ver [Versiones nuevas](#versiones-nuevas) |
 | `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
 | `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
 | Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |

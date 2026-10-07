@@ -82,5 +82,5 @@ audio_dias = 7
 # GitHub cuál es la última publicada: no envía nada tuyo, y no descarga ni
 # instala nada hasta que se lo pidas desde la bandeja.
 #   "preguntar"  lo pregunta la primera vez que arranca
-#   "sí" | "no"
+#   "sí" | "no"     (también valen true / false)
 buscar = "preguntar"

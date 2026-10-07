@@ -68,6 +68,8 @@ ESPACIO_POR_MB = 4
 """Lo que hay que tener libre por cada MB del ZIP: el ZIP y lo descomprimido."""
 NOMBRE_ESTADO = "actualizaciones.json"
 CARPETA_DESCARGAS = "voziris-actualizacion"
+LIMPIAR_TRAS_S = 3600
+"""Lo descargado se borra pasada una hora: antes, su instalador puede seguir trabajando."""
 
 TITULO_PREGUNTA = "Versiones nuevas de Voziris"
 PREGUNTA = (
@@ -281,7 +283,9 @@ def descargar(
             "demasiado para ser Voziris. No se descarga."
         )
     base = base or carpeta_de_descargas()
-    limpiar_descargas(base)
+    # Solo lo viejo: una carpeta reciente puede ser de la que está instalando
+    # ahora mismo el instalador de una actualización anterior.
+    limpiar_descargas(base, mas_viejas_que_s=LIMPIAR_TRAS_S)
     try:
         base.mkdir(parents=True, exist_ok=True)
         carpeta = Path(tempfile.mkdtemp(prefix=f"{novedad.version}-", dir=base))
@@ -301,7 +305,10 @@ def descargar(
             )
         log.info("descargada la %s (%s), SHA-256 correcto", novedad.version, zip_.name)
         raiz = _descomprimir(zip_, carpeta, progreso)
-        zip_.unlink()
+        with contextlib.suppress(OSError):
+            # Si el antivirus aún lo tiene abierto, se queda: la carpeta entera se
+            # borra en el siguiente arranque. No es motivo para no actualizar.
+            zip_.unlink()
         progreso("Comprobando los archivos…", None)
         resultado = integridad.comprobar(raiz, hashes=True)
         if resultado.sin_manifiesto or not resultado.ok:
@@ -309,6 +316,9 @@ def descargar(
                 f"Al paquete descargado le faltan archivos ({resultado.resumen(3)}). "
                 "¿Los ha retirado el antivirus? No se ha cambiado nada."
             )
+        # La comprobación tarda unos segundos sin avisar de nada: un Cancelar
+        # pulsado durante ella se atiende aquí, antes de devolver el .exe.
+        progreso("Paquete comprobado", 1.0)
         return raiz / "voziris.exe"
     except BaseException:
         shutil.rmtree(carpeta, ignore_errors=True)

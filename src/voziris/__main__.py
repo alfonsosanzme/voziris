@@ -48,6 +48,7 @@ import logging.handlers
 import os
 import queue
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -953,20 +954,28 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
         threading.Thread(target=trabajo, name="voziris-buscar-version", daemon=True).start()
 
+    actualizacion: list[tuple[Any, float]] = []
+    """El `--actualizar` lanzado desde aquí y cuándo: para no lanzar otro encima."""
+
     def actualizar() -> None:
         """Instalada: `--actualizar` en otro proceso, con su ventana. Portable: la página."""
         if not instalada:
             novedad = vigilante.novedad
             _abrir_pagina(novedad.pagina if novedad else actualizaciones.PAGINA)
             return
+        if actualizacion and _actualizacion_en_marcha(*actualizacion[-1], time.monotonic()):
+            avisar("La actualización ya está en marcha: espera a que termine")
+            return
         extra = ["--config", str(ruta_config)] if ruta_config else []
         try:
-            _lanzar_desatendido(_comando_propio(*extra, "--actualizar"))
-            # La ventana tarda unos segundos en salir (el antivirus mira el .exe).
-            avisar("Preparando la actualización: en unos segundos sale su ventana")
+            proceso = _lanzar_desatendido(_comando_propio(*extra, "--actualizar"))
         except OSError as e:
             log.warning("no se pudo lanzar --actualizar: %s", e)
             avisar(f"No se pudo empezar la actualización: {e}")
+            return
+        actualizacion.append((proceso, time.monotonic()))
+        # La ventana tarda unos segundos en salir (el antivirus mira el .exe).
+        avisar("Preparando la actualización: en unos segundos sale su ventana")
 
     def guardar_respuesta(si: bool) -> None:
         """En el hilo de Tk, como el panel de ajustes: no se pisan."""
@@ -1147,8 +1156,24 @@ def _accion_instalar() -> Callable[[], None] | None:
     return instalar
 
 
+ESPERA_INSTALADOR_S = 300
+"""Tras lanzar una actualización que arrancó su instalador, no se lanza otra en este tiempo."""
 PREGUNTA_TRAS_S = 20
 """La pregunta de las versiones nuevas espera a que pase el arranque y sus avisos."""
+
+
+def _actualizacion_en_marcha(proceso: Any, desde: float, ahora: float) -> bool:
+    """¿Sigue la actualización lanzada en `desde`? Descargando, o su instalador trabajando.
+
+    `--actualizar` termina en cuanto arranca el instalador (código 0), y el
+    instalador tarda en enseñar su ventana: un segundo clic en ese hueco
+    lanzaría otra descarga y otro instalador. Si terminó con error o se
+    canceló (código distinto de 0), se puede volver a intentar ya.
+    """
+    codigo = proceso.poll() if proceso is not None else 0
+    if codigo is None:
+        return True
+    return bool(codigo == 0 and ahora - desde < ESPERA_INSTALADOR_S)
 
 
 def _esta_instalada() -> bool:
@@ -1239,10 +1264,11 @@ def _comando_propio(*argumentos: str) -> list[str]:
     return [sys.executable, "-m", "voziris", *argumentos]
 
 
-def _lanzar_desatendido(orden: list[str], cwd: Path | None = None) -> None:
+def _lanzar_desatendido(orden: list[str], cwd: Path | None = None) -> Any:
+    """Arranca `orden` sin atarla a este proceso. Devuelve el `Popen`, por si interesa su final."""
     import subprocess
 
-    subprocess.Popen(  # noqa: S603 — orden construida aquí, no por el usuario
+    return subprocess.Popen(  # noqa: S603 — orden construida aquí, no por el usuario
         orden,
         cwd=str(cwd) if cwd else None,
         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -1290,6 +1316,14 @@ def _instalar_cli() -> int:
     from voziris.ui.transcripcion import TranscripcionCancelada, ejecutar_con_progreso
 
     titulo_error = "Voziris no se ha instalado"
+    if getattr(sys, "frozen", False) and winapi.ES_WINDOWS and not winapi.tomar_mutex(
+        MUTEX_INSTALAR
+    ):
+        # Dos instaladores a la vez compartirían Voziris.nuevo (VOZ-82: un segundo
+        # clic en «Actualizar», o dos dobles clics en «Instalar Voziris.cmd»).
+        _mensaje("Voziris ya se está instalando",
+                 "Hay otra instalación en marcha: espera a que termine.")
+        return 0
     cerrada: list[bool] = []
     anterior = instalador.version_instalada()
 
@@ -1426,6 +1460,8 @@ def _espera_a_la_instancia(segundos: float) -> bool:
     return False
 
 
+MUTEX_INSTALAR = "Local\\Voziris.Instalar"
+"""Una instalación a la vez."""
 MUTEX_ACTUALIZAR = "Local\\Voziris.Actualizar"
 """Una actualización a la vez: un segundo clic en el menú no lanza otra."""
 

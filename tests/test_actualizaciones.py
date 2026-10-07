@@ -291,6 +291,43 @@ def test_cancelar_borra_lo_descargado(tmp_path: Path) -> None:
     assert not list(base.iterdir())
 
 
+def test_cancelar_mientras_comprueba_los_archivos_tambien_cancela(tmp_path: Path) -> None:
+    """La comprobación del manifiesto tarda segundos sin avisar: el Cancelar pulsado ahí cuenta."""
+    from voziris.ui.transcripcion import TranscripcionCancelada
+
+    cancelado = [False]
+
+    def progreso(mensaje: str, fraccion: float | None) -> None:
+        if mensaje.startswith("Comprobando los archivos"):
+            cancelado[0] = True  # el usuario pulsa Cancelar durante la comprobación…
+        elif cancelado[0]:
+            raise TranscripcionCancelada("cancelado por el usuario")  # …y se atiende
+
+    base = tmp_path / "descargas"
+    with pytest.raises(TranscripcionCancelada):
+        act.descargar(_novedad(), progreso, base=base,
+                      transporte=GitHubFalso(_paquete(tmp_path)).transporte)
+    assert not list(base.iterdir())
+
+
+def test_descargar_no_borra_la_carpeta_de_una_instalacion_en_curso(tmp_path: Path) -> None:
+    """Un segundo «Actualizar» no puede llevarse la carpeta desde la que instala el primero."""
+    base = tmp_path / "descargas"
+    en_curso = base / "0.2.0-primera" / "voziris"
+    en_curso.mkdir(parents=True)
+    (en_curso / "voziris.exe").write_bytes(b"MZ")
+    vieja = base / "0.1.9-de-ayer"
+    vieja.mkdir()
+    ayer = time.time() - 86400
+    os.utime(vieja, (ayer, ayer))
+
+    exe = act.descargar(_novedad(), base=base,
+                        transporte=GitHubFalso(_paquete(tmp_path)).transporte)
+    assert (en_curso / "voziris.exe").is_file()
+    assert not vieja.exists()
+    assert exe.is_file()
+
+
 def test_una_release_sin_paquete_remite_a_la_pagina(tmp_path: Path) -> None:
     with pytest.raises(act.ActualizacionFallida, match="Descárgala desde"):
         act.descargar(act.Novedad("0.2.0"), base=tmp_path / "d")
@@ -475,6 +512,20 @@ def test_si_sin_tilde_tambien_vale(tmp_path: Path) -> None:
     assert cfg.cargar(tmp_path / cfg.NOMBRE_ARCHIVO).actualizaciones.buscar == "sí"
 
 
+@pytest.mark.parametrize(("escrito", "queda"), [("true", "sí"), ("false", "no")])
+def test_true_y_false_tambien_valen(tmp_path: Path, escrito: str, queda: str) -> None:
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(ejemplo.replace('buscar = "preguntar"', f"buscar = {escrito}"),
+                    encoding="utf-8")
+    c = cfg.cargar(ruta)
+    assert c.actualizaciones.buscar == queda
+    c.general.motor = "local"  # cualquier guardado deja el valor escrito como texto
+    cfg.guardar(c, estricto=False)
+    assert f'buscar = "{queda}"' in ruta.read_text(encoding="utf-8")
+    assert cfg.cargar(ruta).actualizaciones.buscar == queda
+
+
 def test_un_valor_que_no_existe_es_error(tmp_path: Path) -> None:
     from voziris.errores import ConfigInvalida
 
@@ -608,6 +659,30 @@ def test_panel_desmarcar_es_no(raiz: Any, tmp_path: Path) -> None:
     assert a._vars["actualizaciones.buscar"].get() is True
     a._vars["actualizaciones.buscar"].set(False)
     assert a.leer().actualizaciones.buscar == "no"
+    a.cerrar()
+
+
+def test_panel_marcar_guardar_desmarcar_guardar_es_no(raiz: Any, tmp_path: Path) -> None:
+    """Con el panel abierto entre los dos guardados: la casilla manda las dos veces."""
+    ejemplo = (RAIZ / cfg.NOMBRE_EJEMPLO).read_text(encoding="utf-8")
+    (tmp_path / "vault").mkdir()
+    ruta = tmp_path / cfg.NOMBRE_ARCHIVO
+    ruta.write_text(
+        ejemplo.replace('ruta = "C:/Users/CAMBIAME/vault/entrada.md"',
+                        'ruta = "./vault/entrada.md"'),
+        encoding="utf-8",
+    )
+    a = _casilla(raiz, cfg.cargar(ruta))
+    casilla = a._vars["actualizaciones.buscar"]
+    casilla.set(True)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
+    casilla.set(False)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "no"
+    casilla.set(True)
+    assert a.guardar()
+    assert cfg.cargar(ruta).actualizaciones.buscar == "sí"
     a.cerrar()
 
 
@@ -760,6 +835,44 @@ def test_actualizar_una_copia_portable_abre_la_pagina(
     monkeypatch.setattr(act, "consultar", lambda: pytest.fail("no debería consultar"))
     assert principal._actualizar_cli() == 1
     assert cli["paginas"] == [act.PAGINA]
+
+
+class _Proceso:
+    def __init__(self, codigo: int | None) -> None:
+        self.codigo = codigo
+
+    def poll(self) -> int | None:
+        return self.codigo
+
+
+def test_un_segundo_clic_no_lanza_otra_actualizacion() -> None:
+    from voziris import __main__ as principal
+
+    espera = principal.ESPERA_INSTALADOR_S
+    assert principal._actualizacion_en_marcha(_Proceso(None), 0.0, 9999.0)  # descargando
+    # Arrancó el instalador: se le deja trabajar un rato…
+    assert principal._actualizacion_en_marcha(_Proceso(0), 100.0, 100.0 + espera - 1)
+    assert not principal._actualizacion_en_marcha(_Proceso(0), 100.0, 100.0 + espera)
+    # …pero si falló o se canceló, se puede volver a intentar ya.
+    assert not principal._actualizacion_en_marcha(_Proceso(1), 100.0, 101.0)
+    assert not principal._actualizacion_en_marcha(_Proceso(3), 100.0, 101.0)
+
+
+def test_dos_instalaciones_a_la_vez_no(
+    cli: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from voziris import __main__ as principal
+    from voziris import instalador
+
+    monkeypatch.setattr(principal.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
+    monkeypatch.setattr(principal.winapi, "tomar_mutex",
+                        lambda nombre: nombre != principal.MUTEX_INSTALAR)
+    monkeypatch.setattr(instalador, "instalar", lambda **k: pytest.fail("no debería instalar"))
+    assert principal._instalar_cli() == 0
+    assert cli["mensajes"] == [
+        ("Voziris ya se está instalando", "Hay otra instalación en marcha: espera a que termine.")
+    ]
 
 
 def test_instalar_encima_de_otra_version_dice_actualizado(

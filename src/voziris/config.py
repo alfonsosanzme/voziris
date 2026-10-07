@@ -565,8 +565,12 @@ def _construir(datos: dict[str, Any], ruta: Path, estricto: bool) -> Config:
     )
 
     ac = _seccion(datos, "actualizaciones", errores)
-    if ac.get("buscar") == "si":
-        ac = {**ac, "buscar": "sí"}  # sin tilde también vale
+    # Sin tilde también vale, y true / false, que es lo natural para un sí o un no.
+    buscar = ac.get("buscar")
+    if buscar == "si" or buscar is True:
+        ac = {**ac, "buscar": "sí"}
+    elif buscar is False:
+        ac = {**ac, "buscar": "no"}
     actualizaciones = SeccionActualizaciones(
         buscar=_elegir(
             ac, "actualizaciones", "buscar", BUSCAR_VERSIONES,
