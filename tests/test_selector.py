@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import numpy as np
 import pytest
 
-from voziris.errores import MotorNoDisponible, TranscripcionFallida
-from voziris.motores.selector import Selector
+from voziris.errores import LimiteDeTasa, MotorNoDisponible, TranscripcionFallida
+from voziris.motores.selector import MOTIVO_LIMITE, Selector
 from voziris.tipos import SAMPLE_RATE, Audio, Transcripcion
 
 AUDIO = Audio(muestras=np.zeros(SAMPLE_RATE, dtype=np.float32))
+AVISO_LIMITE = f"{MOTIVO_LIMITE}: transcrito en local"
 
 
 class MotorFalso:
@@ -24,6 +26,8 @@ class MotorFalso:
         self.llamadas = 0
         self.falla: Exception | None = None
         self.tarda_s = 0.0
+        self.tarda_transcribiendo_s = 0.0
+        """Para el trozo que sube tan despacio que la paciencia se agota antes."""
 
     def precalentar(self) -> None:
         time.sleep(self.tarda_s)
@@ -34,6 +38,7 @@ class MotorFalso:
 
     def transcribir(self, audio: Audio, idioma: str) -> Transcripcion:
         self.llamadas += 1
+        time.sleep(self.tarda_transcribiendo_s)
         if self.falla is not None:
             raise self.falla
         return Transcripcion(f"texto de {self.nombre}", idioma, self.nombre, 10, audio.duracion_s)
@@ -158,3 +163,131 @@ def test_el_aviso_dice_si_falta_la_clave() -> None:
     sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
     t = Selector("api", local, sin_clave).transcribir(AUDIO, "es")
     assert t.avisos == ["Sin clave de API: transcrito en local"]
+
+
+# --- cortacircuitos del 429 (VOZ-78) ------------------------------------------------------
+
+
+def test_dos_429_seguidos_cortan_y_dejan_de_llamar_a_la_api() -> None:
+    """El caso del vídeo de 105 minutos: 210 trozos y 210 subidas tiradas."""
+    local, api = _par()
+    api.falla = LimiteDeTasa("la API respondió 429 (límite de peticiones): rate limit")
+    s = Selector("api", local, api)
+
+    # El primero puede ser mala suerte: se intenta igual y se cae al local.
+    assert s.transcribir(AUDIO, "es").motor == "local"
+    assert api.llamadas == 1
+    # El segundo ya es el límite: se corta.
+    t = s.transcribir(AUDIO, "es")
+    assert t.motor == "local" and t.avisos == [AVISO_LIMITE]
+    assert api.llamadas == 2
+    # Y los trozos siguientes van directos al local, sin tocar la API.
+    for _ in range(20):
+        assert s.transcribir(AUDIO, "es").avisos == [AVISO_LIMITE]
+    assert api.llamadas == 2
+
+
+def test_un_429_con_retry_after_corta_al_primero() -> None:
+    """Si el servidor dice cuánto esperar, no hay nada que adivinar."""
+    local, api = _par()
+    api.falla = LimiteDeTasa("429", espera_s=5.0)
+    s = Selector("api", local, api)
+    assert s.transcribir(AUDIO, "es").motor == "local"
+    assert s.transcribir(AUDIO, "es").avisos == [AVISO_LIMITE]
+    assert api.llamadas == 1
+
+
+def test_el_corte_se_cierra_solo_y_se_vuelve_a_intentar() -> None:
+    local, api = _par()
+    api.falla = LimiteDeTasa("429", espera_s=0.05)
+    s = Selector("api", local, api)
+    s.transcribir(AUDIO, "es")
+    assert api.llamadas == 1
+    s.transcribir(AUDIO, "es")  # dentro del corte: ni se intenta
+    assert api.llamadas == 1
+    time.sleep(0.1)
+    api.falla = None
+    t = s.transcribir(AUDIO, "es")  # pasado el corte: la API vuelve
+    assert t.motor == "api:groq" and t.avisos == [] and api.llamadas == 2
+
+
+def test_un_acierto_borra_la_racha_de_429() -> None:
+    local, api = _par()
+    api.falla = LimiteDeTasa("429")
+    s = Selector("api", local, api)
+    s.transcribir(AUDIO, "es")  # racha: 1
+    api.falla = None
+    assert s.transcribir(AUDIO, "es").motor == "api:groq"  # racha a cero
+    api.falla = LimiteDeTasa("429")
+    s.transcribir(AUDIO, "es")  # vuelve a ser el primero: no corta
+    assert api.llamadas == 3
+    assert s.transcribir(AUDIO, "es").avisos == [AVISO_LIMITE]  # este sí
+    assert api.llamadas == 4
+
+
+def test_un_fallo_de_red_no_corta_nada() -> None:
+    """Sin red o sin clave el reintento es barato y no se arregla esperando: no se corta."""
+    local, api = _par()
+    api.falla = MotorNoDisponible("sin conexión con la API: getaddrinfo failed")
+    s = Selector("api", local, api)
+    for _ in range(5):
+        t = s.transcribir(AUDIO, "es")
+        assert t.motor == "local" and t.avisos != [AVISO_LIMITE]
+    assert api.llamadas == 5
+
+
+def test_el_429_que_llega_tarde_tambien_corta() -> None:
+    """El caso de verdad en grabaciones largas: subir el trozo tarda más que la paciencia.
+
+    La petición se da por perdida antes de que conteste, pero su hilo sigue
+    vivo y el 429 acaba llegando. Si se tirase, el corte no se abriría nunca.
+    """
+    local, api = _par()
+    api.falla = LimiteDeTasa("429", espera_s=5.0)
+    api.tarda_transcribiendo_s = 0.3
+    s = Selector("api", local, api, paciencia_base_s=0.02)  # paciencia: 0,12 s
+
+    t = s.transcribir(AUDIO, "es")
+    assert t.motor == "local"
+    assert t.avisos == ["La API falló (la API no contestó en 0 s): transcrito en local"]
+    assert api.llamadas == 1
+
+    time.sleep(0.4)  # lo que tarda el hilo huérfano en recibir su 429
+    assert s.transcribir(AUDIO, "es").avisos == [AVISO_LIMITE]
+    assert api.llamadas == 1  # el corte ya estaba abierto
+
+
+def test_el_corte_se_dice_una_vez_en_el_log_no_una_por_trozo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    local, api = _par()
+    api.falla = LimiteDeTasa("429", espera_s=5.0)
+    s = Selector("api", local, api)
+    with caplog.at_level(logging.WARNING, logger="voziris.motores.selector"):
+        for _ in range(30):
+            s.transcribir(AUDIO, "es")
+    avisos = [r for r in caplog.records if "límite de peticiones" in r.message]
+    assert len(avisos) == 1
+    assert "no se vuelve a intentar" in avisos[0].getMessage()
+
+
+def test_sin_local_al_que_caer_el_corte_no_se_aplica() -> None:
+    """Una espera larga es mejor que quedarse sin transcripción."""
+    local, api = _par(local_disponible=False)
+    api.falla = LimiteDeTasa("429", espera_s=5.0)
+    s = Selector("api", local, api)
+    for _ in range(3):
+        with pytest.raises(MotorNoDisponible, match="ni la API ni el motor local"):
+            s.transcribir(AUDIO, "es")
+    assert api.llamadas == 3
+
+
+def test_el_dictado_corto_no_pierde_el_respaldo_ni_se_frena() -> None:
+    """Con el corte cerrado, la ruta del dictado suelto es exactamente la de antes."""
+    local, api = _par()
+    s = Selector("api", local, api)
+    t0 = time.perf_counter()
+    for _ in range(50):
+        assert s.transcribir(AUDIO, "es").motor == "api:groq"
+    assert time.perf_counter() - t0 < 1.0  # mirar el reloj bajo un lock no cuesta nada
+    assert api.llamadas == 50 and local.llamadas == 0

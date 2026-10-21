@@ -12,6 +12,8 @@ import os
 import re
 import subprocess
 import wave
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,8 @@ import numpy as np
 import pytest
 
 from voziris import red
-from voziris.errores import MotorNoDisponible, TranscripcionFallida
-from voziris.motores.api import MotorAPI, _proveedor_de, a_wav
+from voziris.errores import LimiteDeTasa, MotorNoDisponible, TranscripcionFallida
+from voziris.motores.api import ESPERA_MAXIMA_CREIBLE_S, MotorAPI, _proveedor_de, a_wav
 from voziris.tipos import SAMPLE_RATE, Audio
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -330,3 +332,67 @@ def test_modelos_no_conversacionales_fuera_de_las_dos_listas() -> None:
     audio, chat = _motor(handler).listar_modelos()
     assert audio == ["whisper-large-v3"]
     assert chat == ["openai/gpt-oss-120b"]
+
+
+# --- límite de peticiones (VOZ-78) ---------------------------------------------
+
+
+def _con_429(cabeceras: dict[str, str] | None = None) -> MotorAPI:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers=cabeceras or {},
+            json={"error": {"message": f"Rate limit reached, clave {CLAVE}"}},
+        )
+
+    return _motor(handler)
+
+
+def test_el_429_sale_como_limite_de_tasa_con_la_espera_que_pide_groq() -> None:
+    """Groq manda «retry-after» con decimales. Es el número que usa el selector."""
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429({"retry-after": "7.66"}).transcribir(_audio(), "es")
+    assert info.value.espera_s == pytest.approx(7.66)
+    assert "429" in str(info.value) and "límite de peticiones" in str(info.value)
+    assert CLAVE not in str(info.value)
+    # Y sigue siendo un MotorNoDisponible: quien no distinga, cae al local igual.
+    assert isinstance(info.value, MotorNoDisponible)
+
+
+def test_el_429_sin_cabecera_no_se_inventa_la_espera() -> None:
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429().transcribir(_audio(), "es")
+    assert info.value.espera_s is None
+
+
+def test_retry_after_como_fecha_http() -> None:
+    dentro_de_medio_minuto = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429({"retry-after": dentro_de_medio_minuto}).transcribir(_audio(), "es")
+    assert info.value.espera_s == pytest.approx(30, abs=2)
+
+
+@pytest.mark.parametrize("cabecera", ["pronto", "", "  ", "nan", "inf", "7,66"])
+def test_retry_after_que_no_se_entiende_se_ignora(cabecera: str) -> None:
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429({"retry-after": cabecera}).transcribir(_audio(), "es")
+    assert info.value.espera_s is None
+
+
+def test_retry_after_disparatado_o_negativo_se_acota() -> None:
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429({"retry-after": "999999"}).transcribir(_audio(), "es")
+    assert info.value.espera_s == ESPERA_MAXIMA_CREIBLE_S
+    fecha_pasada = format_datetime(datetime.now(UTC) - timedelta(hours=2), usegmt=True)
+    with pytest.raises(LimiteDeTasa) as info:
+        _con_429({"retry-after": fecha_pasada}).transcribir(_audio(), "es")
+    assert info.value.espera_s == 0.0
+
+
+def test_los_demas_errores_http_no_son_limite_de_tasa() -> None:
+    """Un 401 o un 500 no se arreglan esperando: no deben abrir el corte del selector."""
+    for codigo in (401, 403, 500, 503):
+        motor = _motor(lambda _, c=codigo: httpx.Response(c, json={}))  # type: ignore[misc]
+        with pytest.raises(MotorNoDisponible) as info:
+            motor.transcribir(_audio(), "es")
+        assert not isinstance(info.value, LimiteDeTasa)

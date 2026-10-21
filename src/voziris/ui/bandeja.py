@@ -461,40 +461,55 @@ class Bandeja:
 def crear_acceso_directo(acceso: Path, ejecutable: str, argumentos: str, trabajo: str) -> None:
     """Un .lnk con WScript.Shell, que es lo que Windows entiende en Startup e Inicio."""
     import pythoncom
-    from win32com.client import Dispatch
 
     pythoncom.CoInitialize()  # el hilo de la bandeja o el de ajustes no lo tienen
     try:
-        shell = Dispatch("WScript.Shell")
-        atajo = shell.CreateShortcut(str(acceso))
-        atajo.TargetPath = ejecutable
-        atajo.Arguments = argumentos
-        atajo.WorkingDirectory = trabajo
-        atajo.Description = "Voziris — dictado por voz"
-        if getattr(sys, "frozen", False):
-            atajo.IconLocation = ejecutable  # el .exe lleva el icono dentro
-        else:
-            from voziris.config import carpeta_recursos
-
-            ico = carpeta_recursos() / "assets" / "voziris.ico"
-            if ico.exists():
-                atajo.IconLocation = str(ico)
-        atajo.Save()
+        _escribir_acceso_directo(acceso, ejecutable, argumentos, trabajo)
     finally:
+        # Los objetos COM mueren con el marco de _escribir_acceso_directo, o sea
+        # ANTES de cerrar el apartamento. Sueltos después, pywin32 escribe dos
+        # «Win32 exception occurred releasing IUnknown» en la consola del cliente
+        # al instalar: nada roto, pero parece grave (VOZ-79).
         pythoncom.CoUninitialize()
+
+
+def _escribir_acceso_directo(acceso: Path, ejecutable: str, argumentos: str, trabajo: str) -> None:
+    """El cuerpo, aparte para que `shell` y `atajo` no sobrevivan a CoUninitialize."""
+    from win32com.client import Dispatch
+
+    shell = Dispatch("WScript.Shell")
+    atajo = shell.CreateShortcut(str(acceso))
+    atajo.TargetPath = ejecutable
+    atajo.Arguments = argumentos
+    atajo.WorkingDirectory = trabajo
+    atajo.Description = "Voziris — dictado por voz"
+    if getattr(sys, "frozen", False):
+        atajo.IconLocation = ejecutable  # el .exe lleva el icono dentro
+    else:
+        from voziris.config import carpeta_recursos
+
+        ico = carpeta_recursos() / "assets" / "voziris.ico"
+        if ico.exists():
+            atajo.IconLocation = str(ico)
+    atajo.Save()
 
 
 def leer_acceso_directo(acceso: Path) -> tuple[str, str, str]:
     """(ejecutable, argumentos, carpeta de trabajo) de un .lnk. Para los tests y los ajustes."""
     import pythoncom
-    from win32com.client import Dispatch
 
     pythoncom.CoInitialize()
     try:
-        atajo = Dispatch("WScript.Shell").CreateShortcut(str(acceso))
-        return str(atajo.TargetPath), str(atajo.Arguments), str(atajo.WorkingDirectory)
+        return _leer_acceso_directo(acceso)
     finally:
-        pythoncom.CoUninitialize()
+        pythoncom.CoUninitialize()  # el objeto COM ya murió con el marco de dentro (VOZ-79)
+
+
+def _leer_acceso_directo(acceso: Path) -> tuple[str, str, str]:
+    from win32com.client import Dispatch
+
+    atajo = Dispatch("WScript.Shell").CreateShortcut(str(acceso))
+    return str(atajo.TargetPath), str(atajo.Arguments), str(atajo.WorkingDirectory)
 
 
 _crear_acceso_directo = crear_acceso_directo  # nombre anterior

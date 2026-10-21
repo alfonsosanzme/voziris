@@ -345,6 +345,17 @@ Tres redes, de la más fina a la más gruesa:
   los 3 s (más una décima por segundo de audio) no ha dicho nada, el dictado
   se transcribe en local y sigue su camino, en vez de quedarse 15 s en
   «procesando».
+- **Y deja de insistir cuando Groq dice que no.** Groq admite 20 peticiones
+  por minuto en transcripción, así que una grabación larga —que va por trozos
+  de 30 s— agota el límite y a partir de ahí cada trozo sube su audio para que
+  el servidor lo rechace. Al segundo rechazo (o al primero, si Groq dice
+  cuánto hay que esperar) se deja de llamar a la API un rato y se transcribe
+  en local directamente, con una línea en el registro en lugar de una por
+  trozo. La espera se va alargando mientras siga rechazando, hasta cinco
+  minutos, y se cierra sola: en cuanto la API vuelve a responder, se vuelve a
+  usar. En un vídeo de 105 minutos son 200 subidas inútiles menos, media hora
+  de reloj. Un fallo de red o una clave mal puesta no activan esto: esos no se
+  arreglan esperando.
 - **El historial.** «Últimos dictados» → cada entrada tiene **«Copiar al
   portapapeles»** y «Volver a entregar (en 3 s…)»: esos tres segundos son
   para hacer clic donde quieres el texto, porque abrir el menú de la bandeja

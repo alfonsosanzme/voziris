@@ -399,3 +399,26 @@ vídeo. Vídeos en mp4».
   - `normalizar` y el cálculo de energía trabajan por trozos, con salida idéntica bit a bit y el doble de rápidos (1,7 GB menos con 4 h);
   - la separación de hablantes pide unas 11 veces el audio de golpe (medido: 4,9 GB con 2 h), así que se comprueba contra la memoria libre y, si no cabe, se transcribe sin separar en lugar de morir a media hora de trabajo;
   - la ventana de progreso dice cuánto dura y cuánto va a tardar.
+
+## H11 · No pelearse con el límite de Groq — 0,25 jornadas
+
+Medido el 19 de septiembre de 2026 transcribiendo un .mp4 de 105 minutos: la
+API se reintentaba en cada trozo después de haber recibido un 429. Groq admite
+20 peticiones por minuto con `whisper-large-v3`, así que en un archivo largo
+troceado el límite se agota siempre y a partir de ahí cada trozo sube su WAV
+para que el servidor lo tire.
+
+### VOZ-78 · Cortacircuitos ante el límite de peticiones de la API
+**Archivos:** `errores.py`, `motores/api.py`, `motores/selector.py`
+
+**Criterios de aceptación**
+- [x] El 429 se distingue del resto de fallos: sale como `LimiteDeTasa`, que sigue siendo un `MotorNoDisponible` para quien no necesite la distinción.
+- [x] Se lee `Retry-After` en las dos formas del estándar (segundos con decimales, que es lo que manda Groq, y fecha HTTP). Lo que no se entienda se ignora en vez de inventar un número; lo disparatado se acota a una hora.
+- [x] El selector corta tras dos 429 seguidos, o ante el primero si trae `Retry-After`. Mientras el corte está abierto no se llama a la API: se transcribe en local directamente.
+- [x] El corte dura 30 s y se dobla en cada reintento fallido hasta 5 minutos; se respeta la espera del servidor si es más larga. Se cierra solo, y un acierto de la API borra la racha.
+- [x] Se dice una vez por corte en el registro, no una por trozo. Medido sobre 105 minutos troceados: 10 llamadas y 10 líneas en vez de 210.
+- [x] Un fallo de red o de clave NO abre el corte: son baratos de reintentar (la comprobación de red va cacheada) y no se arreglan esperando.
+- [x] El 429 que llega después de agotarse la paciencia también cuenta. Es el caso normal en grabaciones largas —subir el trozo tarda más que los 6 s de paciencia—, y si el hilo huérfano tirase su respuesta el corte no se abriría nunca.
+- [x] Sin motor local al que caer, el corte no se aplica: una espera larga es mejor que quedarse sin transcripción.
+- [x] El dictado corto no se frena ni pierde el respaldo: con el corte cerrado su camino es exactamente el de antes.
+- [x] Test con un motor de API falso que devuelve 429, y con `MotorAPI` real contra `httpx.MockTransport`.

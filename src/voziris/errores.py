@@ -24,6 +24,29 @@ class MotorNoDisponible(VozirisError):
     """
 
 
+class LimiteDeTasa(MotorNoDisponible):
+    """La API rechaza por límite de peticiones (HTTP 429). No es una avería: es «ahora no».
+
+    Se distingue del resto de `MotorNoDisponible` porque se comporta al revés
+    de como se comportan los demás fallos. Sin red o sin clave, cada trozo de
+    una grabación larga vuelve a fallar igual de barato: la comprobación de
+    red va cacheada y la falta de clave se ve sin salir del proceso. Un 429,
+    en cambio, se paga entero —subir el WAV del trozo para que el servidor lo
+    tire— y además se sabe de antemano que el siguiente trozo dará lo mismo
+    hasta que pase la ventana del límite. Por eso el selector deja de
+    intentarlo un rato (B3) en vez de reintentar trozo a trozo.
+
+    `espera_s` son los segundos que pide la cabecera `Retry-After`, si venía.
+
+    Hereda de `MotorNoDisponible` a propósito: quien solo quiera «la API no
+    puede, tira de local» no tiene que enterarse de esta distinción.
+    """
+
+    def __init__(self, mensaje: str, espera_s: float | None = None) -> None:
+        super().__init__(mensaje)
+        self.espera_s = espera_s
+
+
 class TranscripcionFallida(VozirisError):
     """El motor respondió pero no produjo texto utilizable."""
 

@@ -16,19 +16,26 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import time
 import wave
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import numpy as np
 
 from voziris import red
-from voziris.errores import MotorNoDisponible, TranscripcionFallida
+from voziris.errores import LimiteDeTasa, MotorNoDisponible, TranscripcionFallida
 from voziris.tipos import Audio, Transcripcion
 
 log = logging.getLogger(__name__)
 
 TIMEOUT_PRUEBA_S = 5.0
+LIMITE_DE_TASA = 429
+"""El código con el que Groq dice «vas demasiado deprisa». Ver `LimiteDeTasa`."""
+ESPERA_MAXIMA_CREIBLE_S = 3600.0
+"""Tope a lo que se le cree a `Retry-After`. Una hora ya es «vuelve mañana», no una espera."""
 
 
 def _proveedor_de(base_url: str) -> str:
@@ -133,7 +140,9 @@ class MotorAPI:
         Manda `language=idioma` para no pagar la detección automática (B4).
         Timeout, error HTTP y respuesta vacía se convierten en
         `MotorNoDisponible`, para que el selector caiga al motor local en vez
-        de perder el dictado. Nunca escapa una excepción de httpx.
+        de perder el dictado. Nunca escapa una excepción de httpx. El 429 sale
+        como `LimiteDeTasa`, que es un `MotorNoDisponible` con la espera que
+        pida el servidor: el selector la usa para dejar de insistir (B3).
         """
         if not self._clave:
             raise MotorNoDisponible("no hay clave de API: ponla en config.toml o en GROQ_API_KEY")
@@ -156,6 +165,12 @@ class MotorAPI:
             raise MotorNoDisponible(f"sin conexión con la API: {detalle}") from e
         ms = int((time.perf_counter() - t0) * 1000)
 
+        if respuesta.status_code == LIMITE_DE_TASA:
+            raise LimiteDeTasa(
+                f"la API respondió {LIMITE_DE_TASA} (límite de peticiones): "
+                f"{_limpiar(_resumen_error(respuesta), self._clave)}",
+                espera_s=_espera_pedida(respuesta),
+            )
         if respuesta.status_code != 200:
             raise MotorNoDisponible(
                 f"la API respondió {respuesta.status_code}: "
@@ -274,6 +289,32 @@ def _es_conversacional(identificador: str) -> bool:
     return not _es_de_audio(minusculas) and not any(
         marca in minusculas for marca in FAMILIAS_NO_CONVERSACIONALES
     )
+
+
+def _espera_pedida(respuesta: Any) -> float | None:
+    """Los segundos que pide `Retry-After`, o None si no venía o no se entiende.
+
+    Groq la manda con decimales («retry-after: 7.66»); el estándar admite
+    además una fecha HTTP, que alguna pasarela intermedia sí usa. Si no hay
+    cabecera o dice algo raro, `None`: el selector pondrá su propia espera en
+    vez de inventarse un número a partir de un valor que no ha entendido.
+    """
+    cabecera = str(respuesta.headers.get("retry-after", "")).strip()
+    if not cabecera:
+        return None
+    try:
+        segundos = float(cabecera)
+    except ValueError:
+        try:
+            cuando = parsedate_to_datetime(cabecera)
+        except (TypeError, ValueError):
+            return None
+        if cuando.tzinfo is None:  # fecha sin zona: el estándar dice que es UTC
+            cuando = cuando.replace(tzinfo=UTC)
+        segundos = (cuando - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(segundos):  # «nan» e «inf» son float() válidos
+        return None
+    return min(max(segundos, 0.0), ESPERA_MAXIMA_CREIBLE_S)
 
 
 def _resumen_error(respuesta: Any) -> str:
