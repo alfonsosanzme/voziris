@@ -274,13 +274,14 @@ en los mensajes de error.
 
 ## Qué sale de tu equipo
 
-Voziris no tiene telemetría de ningún tipo: ni anónima, ni opcional, ni
-comprobación de versiones. Lo único que puede salir depende de dos opciones
-de `config.toml`, `general.motor` y `proceso.nivel`:
+Voziris no tiene telemetría de ningún tipo: ni anónima, ni opcional. Lo que
+puede salir depende de dos opciones de `config.toml`, `general.motor` y
+`proceso.nivel`, y de si le has dicho que mire las versiones nuevas:
 
 | Modo | Sale del equipo |
 |---|---|
-| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. |
+| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. La única excepción es la consulta de versiones nuevas, si la has aceptado (fila siguiente) |
+| `[actualizaciones] buscar = "sí"` | una vez al día (si falla, por ejemplo sin red, se reintenta cada hora hasta que sale), una petición a la **API de GitHub** para saber cuál es la última versión publicada. No lleva nada tuyo: lo que ve GitHub es tu IP y la versión de Voziris. Con `"preguntar"` (de serie) o `"no"`, nada; ver [Versiones nuevas](#versiones-nuevas) |
 | `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
 | `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
 | Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
@@ -290,6 +291,50 @@ de `config.toml`, `general.motor` y `proceso.nivel`:
 Está verificado con un test (`tests/test_offline.py`) que bloquea toda
 conexión saliente del proceso y transcribe diez dictados en modo local
 literal: ningún intento de conexión.
+
+## Versiones nuevas
+
+La primera vez que arranca, Voziris pregunta si quieres que mire una vez al
+día si hay una versión nueva. Sin un sí, no se conecta a nada por su cuenta.
+La respuesta se cambia en Ajustes → Acerca de, o en `config.toml`:
+
+```toml
+[actualizaciones]
+buscar = "sí"        # "sí" | "no" | "preguntar"
+```
+
+Si hay una nueva, avisa una vez con una notificación, y en la bandeja
+aparece **«Actualizar a la X.Y.Z…»**. Al pulsarlo:
+
+1. descarga de GitHub el ZIP de esa versión y su `SHA256SUMS.txt`, con una
+   ventana de progreso que se puede cancelar;
+2. comprueba el SHA-256, lo descomprime en la carpeta temporal y comprueba
+   que no falta ningún archivo del paquete;
+3. arranca el instalador de la versión nueva, el mismo de
+   `Instalar Voziris.cmd`. Este instalador comprueba que la copia arranca,
+   cierra tu Voziris justo antes de cambiar el programa y abre la nueva.
+   `config.toml`, `modelos/` e `historial/` no se tocan.
+
+Si algo falla por el camino, no se cambia nada y la ventana dice qué ha
+pasado. Si la versión publicada no trae el paquete para instalarse sola, se
+abre su página para descargarla a mano. Mientras dura una actualización,
+volver a pulsar «Actualizar» no lanza otra. «Buscar actualizaciones», en la
+bandeja, mira en ese momento, aunque la opción esté en `"no"`.
+
+Un `"no"` o un `"preguntar"` escritos a mano en `config.toml` con Voziris
+abierta valen desde ese momento: no se vuelve a consultar, y no se pisan al
+cambiar algo desde la bandeja. Si a la vez se cambia la casilla de Ajustes,
+gana lo más restrictivo. Contestar la tarjeta solo escribe esa opción: no
+deshace lo que hayas editado a mano.
+
+Solo se actualiza sola la copia instalada. Si usas Voziris sin instalar, la
+entrada se llama «Descargar la X.Y.Z…» y abre la página de la versión.
+
+Lo que protege la comprobación y lo que no: el SHA-256 sale de la misma
+release que el ZIP, así que detecta una descarga cortada o dañada, pero no
+una release falsa. Voziris no está firmado: la confianza es la de la cuenta
+de GitHub del proyecto. Solo descarga de las releases de
+`alfonsosanzme/voziris`, y solo por HTTPS.
 
 ## La música se calla mientras dictas
 
@@ -364,11 +409,16 @@ Cuatro redes, de la más fina a la más gruesa:
 
 ## Si algo falla: el registro y el diagnóstico
 
-Junto al ejecutable hay dos archivos de registro:
+Junto al ejecutable hay estos archivos de registro:
 
 - `voziris.log`: lo que hace la aplicación, dictado a dictado, con qué motor
   entregó cada uno y cualquier error de Python. Se abre desde la bandeja →
   «Ver registro».
+- `voziris-transcribir.log`, `voziris-actualizar.log` y
+  `voziris-instalar.log`: los de «Transcribir grabación o vídeo…», de
+  «Actualizar a la X.Y.Z…» y del instalador, que corren en procesos aparte
+  mientras la bandeja tiene abierto `voziris.log`. El instalador que lanza una
+  actualización escribe el suyo en la carpeta de la instalación.
 - `voziris-fallos.log`: solo se escribe si el proceso muere por un fallo
   nativo del que Python aún pudo dejar rastro (una violación de acceso).
 

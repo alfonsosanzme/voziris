@@ -461,6 +461,43 @@ def hay_instancia_abierta(nombre: str = "Local\\Voziris") -> bool:
     return True
 
 
+def existe_mutex(nombre: str) -> bool:
+    """True si algún proceso (este también) tiene el mutex `nombre`, sin tomarlo."""
+    _solo_windows()
+    _kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.OpenMutexW.restype = wintypes.HANDLE
+    manejador = _kernel32.OpenMutexW(0x00100000, False, nombre)  # SYNCHRONIZE
+    if not manejador:
+        return False
+    _kernel32.CloseHandle(manejador)
+    return True
+
+
+_mutex_tareas: dict[str, int] = {}
+
+
+def tomar_mutex(nombre: str) -> bool:
+    """True si nadie más tiene el mutex `nombre`: queda tomado hasta que el proceso muera.
+
+    Para tareas que no deben correr dos a la vez (`--actualizar`, VOZ-82). No
+    toca el de la instancia: `hay_instancia_abierta()` sigue diciendo la verdad.
+    """
+    _solo_windows()
+    if nombre in _mutex_tareas:
+        return True
+    _kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    ctypes.set_last_error(0)
+    manejador = _kernel32.CreateMutexW(None, False, nombre)
+    if not manejador:
+        return True  # sin mutex no se puede saber: mejor seguir que no hacer nada
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+        _kernel32.CloseHandle(manejador)
+        return False
+    _mutex_tareas[nombre] = int(manejador)
+    return True
+
+
 NOMBRE_EVENTO_SALIDA = "Local\\Voziris.Salir"
 WAIT_OBJECT_0 = 0
 EVENT_MODIFY_STATE = 0x0002
