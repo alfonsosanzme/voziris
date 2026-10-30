@@ -14,11 +14,19 @@ deducir leyendo el código.
 │  ↓                 │   │            │   │                  │   │              │
 │  Búfer previo 500ms│ → │  local  ó  │ → │  diccionario     │ → │ app activa   │
 │  Captura 16 kHz    │   │  API       │   │  sustituciones   │   │   ó          │
-│  VAD (modo clavar) │   │            │   │  LLM (opcional)  │   │ archivo .md  │
+│  VAD (clavar · voz)│   │            │   │  LLM (opcional)  │   │ archivo .md  │
 └────────────────────┘   └────────────┘   └──────────────────┘   └──────────────┘
                                                                          ↓
                                                                   D3 historial
 ```
+
+El VAD hace dos trabajos. En «clavar», cierra el dictado cuando se calla. Y en
+todos los modos, al cerrar, decide si alguien habló: si nadie habló, el audio
+no llega a ningún motor (VOZ-84). Whisper, el de la API, escribe «Gracias por
+ver el vídeo» con cualquier audio sin voz, y ningún parámetro de la petición lo
+evita. No trocea ni toca el audio: cuando hay voz, a los motores les llega lo
+mismo que si no estuviera. Recuperar un dictado y volver a transcribirlo no
+pasan por él, porque son peticiones explícitas.
 
 Tres protocolos sostienen todo el diseño: `MotorSTT`, `PostProceso` y
 `Destino`. `__main__.py` es el único módulo que conoce todas las piezas; los

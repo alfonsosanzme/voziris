@@ -141,12 +141,15 @@ class HistorialFalso:
 
 
 class VadFalso:
-    """Corta en el bloque `corta_en` (contando desde reiniciar)."""
+    """Corta en el bloque `corta_en` (contando desde reiniciar). `hay` es lo que
+    contesta `hay_voz` al cerrar cada dictado (VOZ-84)."""
 
-    def __init__(self, corta_en: int = 3) -> None:
+    def __init__(self, corta_en: int = 3, hay: bool | None = True) -> None:
         self.corta_en = corta_en
+        self.hay = hay
         self.bloques = 0
         self.reinicios = 0
+        self.preguntas = 0
 
     def precalentar(self) -> None: ...
 
@@ -157,6 +160,10 @@ class VadFalso:
     def alimentar(self, bloque: np.ndarray) -> bool:
         self.bloques += 1
         return self.bloques >= self.corta_en
+
+    def hay_voz(self, muestras: np.ndarray) -> bool | None:
+        self.preguntas += 1
+        return self.hay
 
 
 class Banco:
@@ -505,6 +512,58 @@ def test_la_cola_del_vad_no_bloquea_al_hilo_de_audio() -> None:
         assert time.perf_counter() - t0 < 0.5  # put_nowait: se descartan, no se espera
         b.orq.alternar_clavar()
         assert b.destino.esperar()
+    finally:
+        b.parar()
+
+
+# --- sin voz no se transcribe (VOZ-84) -----------------------------------------------------
+
+
+def test_sin_voz_ni_se_transcribe_ni_se_pega_en_ningun_modo() -> None:
+    """Pulsar y no decir nada: con ese audio, Whisper escribía «Gracias por ver el vídeo»."""
+    b = Banco(vad=VadFalso(corta_en=2, hay=False))
+    try:
+        b.orq.empezar(Modo.MANTENER, "app_activa")
+        b.orq.terminar(1000)
+        b.esperar_reposo()
+        b.orq.alternar_clavar()
+        _bloques(b, 2, 0.02)  # el VAD cierra el clavado
+        limite = time.monotonic() + 3
+        while len(b.avisos) < 2 and time.monotonic() < limite:
+            time.sleep(0.01)
+        b.esperar_reposo()
+        assert b.avisos == ["Nada que escribir: no se oyó voz"] * 2
+        assert b.vad is not None and b.vad.preguntas == 2
+        assert b.motor.llamadas == 0
+        assert b.destino.entregas == [] and b.historial.entradas == []
+        assert b.orq.estado is Estado.REPOSO
+    finally:
+        b.parar()
+
+
+@pytest.mark.parametrize("hay", [True, None])
+def test_con_voz_o_sin_poder_decidir_se_transcribe_como_siempre(hay: bool | None) -> None:
+    """None: el modelo aún no ha cargado o ha fallado. Ante la duda, no se tira nada."""
+    b = Banco(vad=VadFalso(hay=hay))
+    try:
+        b.orq.empezar(Modo.MANTENER, "app_activa")
+        b.orq.terminar(1000)
+        assert b.destino.esperar()[0][0] == "Hola, mundo."
+        assert b.vad is not None and b.vad.preguntas == 1
+    finally:
+        b.parar()
+
+
+def test_si_el_vad_revienta_buscando_voz_se_transcribe_igual() -> None:
+    class VadRoto(VadFalso):
+        def hay_voz(self, muestras: np.ndarray) -> bool | None:
+            raise RuntimeError("onnx")
+
+    b = Banco(vad=VadRoto())
+    try:
+        b.orq.empezar(Modo.MANTENER, "app_activa")
+        b.orq.terminar(1000)
+        assert b.destino.esperar()[0][0] == "Hola, mundo."
     finally:
         b.parar()
 
