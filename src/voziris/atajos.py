@@ -26,7 +26,15 @@ Tres hilos:
   - el que llama a `registrar()` / `liberar()`.
 
 Las pulsaciones que inyecta el propio Voziris (`SendInput` con
-`winapi.MARCA_VOZIRIS`) se ignoran: el Ctrl+V del pegado no es un atajo.
+`winapi.MARCA_VOZIRIS`) no disparan nada: el Ctrl+V del pegado no es un atajo.
+
+El hook no ve todas las teclas (VOZ-83). Si su callback tarda más que
+`LowLevelHooksTimeout` (~300 ms: pasa con el GIL ocupado, por ejemplo mientras
+carga el modelo local), Windows sigue sin él y se salta las teclas que lleguen
+mientras tanto. Tampoco ve lo que se pulsa en el escritorio seguro (Win+L,
+Ctrl+Alt+Supr) ni sobre ventanas elevadas. Con la subida de Win perdida, Ctrl
+solo sería `ctrl+win`; por eso el `Detector` contrasta lo que cree apretado con
+lo que dice Windows (`GetAsyncKeyState`) antes de decidir.
 
 El hook de bajo nivel es también la razón del riesgo R2 (falsos positivos de
 antivirus) y de R3 (no funciona sobre ventanas elevadas). Ambos van
@@ -44,7 +52,7 @@ import threading
 import time
 from collections.abc import Callable
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from voziris import teclas, winapi
@@ -60,6 +68,7 @@ WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_QUIT = 0x0012
+LLKHF_INJECTED = 0x10
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN = 0x0001, 0x0002, 0x0004, 0x0008
 MOD_NOREPEAT = 0x4000
 ERROR_HOTKEY_ALREADY_REGISTERED = 1409
@@ -77,6 +86,12 @@ QUE_DISPARA: dict[str, tuple[Modo, str]] = {
 DE_PULSACION = ("clavar", "clavar_markdown")
 """Atajos que disparan en cada pulsación: el orquestador alterna."""
 
+AVISO_OLVIDO_CADA_S = 60.0
+"""Como mucho un aviso por minuto de teclas olvidadas (VOZ-83). Si otra aplicación
+se traga el teclado después del hook (Samsung Multi Control o TeamViewer manejando
+otro equipo), Windows no ve ninguna tecla y cada pulsación olvida las que siguen
+apretadas. Sin límite, se perdería pronto el registro que sirve para diagnosticar."""
+
 _NOMBRE_DE_VK: dict[int, str] = {vk: nombre for nombre, vks in teclas.VK.items() for vk in vks}
 
 
@@ -85,9 +100,14 @@ _NOMBRE_DE_VK: dict[int, str] = {vk: nombre for nombre, vks in teclas.VK.items()
 
 @dataclass(frozen=True)
 class Accion:
-    tipo: Literal["empezar", "terminar", "cancelar", "cambiar"]
+    tipo: Literal["empezar", "terminar", "cancelar", "cambiar", "olvidar"]
     atajo: str
     duracion_ms: int = 0
+    """En `terminar`, lo que duró la pulsación; en `olvidar`, lo que llevaba apretada."""
+    tecla: str = field(default="", compare=False)
+    """Para el registro: la que completa la combinación, o la que se olvida."""
+    inyectada: bool = field(default=False, compare=False)
+    """Para el registro: esa pulsación la inyectó otra aplicación."""
 
 
 class Detector:
@@ -111,18 +131,28 @@ class Detector:
       - La tecla no modificadora de una combinación se consume, al bajar y al
         subir, para que no llegue a la aplicación. Los modificadores nunca:
         consumirlos descoloca a las aplicaciones.
+      - Al hook se le escapan subidas (VOZ-83). Antes de cada pulsación nueva
+        (la autorrepetición no lo es), las demás teclas que se creen apretadas
+        se contrastan con `pulsada` (en Windows, `GetAsyncKeyState`), y lo que
+        ya no lo está se olvida con `olvidar`. Si era de la combinación
+        mantenida, además se emite su `terminar`. Sin `pulsada`, el Detector
+        se fía del hook.
     """
 
     def __init__(
         self,
         combinaciones: dict[str, teclas.Combinacion],
         en_curso: Callable[[], bool],
+        pulsada: Callable[[int], bool] | None = None,
     ) -> None:
         self.combinaciones = combinaciones
         self._en_curso = en_curso
-        self._pulsadas: set[str] = set()
-        self._otras: set[int] = set()
+        self._pulsada = pulsada
+        self._pulsadas: dict[str, float] = {}  # nombre → cuándo se pulsó
+        self._otras: dict[int, float] = {}  # las que no tienen nombre, por código
         self._consumidas: set[str] = set()
+        self._pulsadas_por_voziris: set[str] = set()
+        self._soltadas_por_voziris: set[str] = set()
         self._activo: str | None = None
         self._inicio = 0.0
 
@@ -130,14 +160,41 @@ class Detector:
         """Procesa un evento. Devuelve (acciones, consumir_este_evento)."""
         nombre = _NOMBRE_DE_VK.get(vk)
         if nombre is None:
-            (self._otras.add if abajo else self._otras.discard)(vk)
+            if abajo:
+                self._otras.setdefault(vk, ahora)
+            else:
+                self._otras.pop(vk, None)
             return [], False
         return self._abajo(nombre, ahora) if abajo else self._arriba(nombre, ahora)
 
+    def de_voziris(self, vk: int, abajo: bool) -> None:
+        """Una pulsación que inyecta Voziris. No es un atajo, pero hay que saberla.
+
+        Al pegar, `winapi.soltar_modificadores` suelta el Ctrl que el usuario
+        aún tiene apretado. Windows lo da por suelto aunque el dedo siga encima;
+        sin esto se olvidaría, y encadenar dos dictados sin soltar Ctrl dejaría
+        de funcionar. Se cree al hook hasta que el usuario la suelte. El Ctrl
+        de Ctrl+V no cuenta: Voziris suelta lo que acaba de pulsar él mismo.
+        """
+        nombre = _NOMBRE_DE_VK.get(vk)
+        if nombre is None:
+            return
+        if abajo:
+            self._pulsadas_por_voziris.add(nombre)
+        elif nombre in self._pulsadas_por_voziris:
+            self._pulsadas_por_voziris.discard(nombre)
+        elif nombre in self._pulsadas:
+            self._soltadas_por_voziris.add(nombre)
+
     def _abajo(self, nombre: str, ahora: float) -> tuple[list[Accion], bool]:
-        if nombre in self._pulsadas:  # autorrepetición de Windows al mantener
+        # Autorrepetición de Windows al mantener. Aquí no se pregunta a Windows:
+        # si otra aplicación se traga la tecla después del hook (Samsung Multi
+        # Control o TeamViewer manejando otro equipo), para Windows está suelta
+        # y se olvidaría en cada repetición. Que se repita ya dice que sigue abajo.
+        if nombre in self._pulsadas:
             return [], nombre in self._consumidas
-        self._pulsadas.add(nombre)
+        acciones = self._repasar(ahora)
+        self._pulsadas[nombre] = ahora
         for atajo, combo in self.combinaciones.items():
             # «cancelar» admite modificadores de más: lo normal es pulsar Esc
             # sin haber soltado todavía el ctrl+win del dictado que se cancela.
@@ -146,26 +203,26 @@ class Detector:
             consumir = combo.tecla == nombre
             if atajo == "cancelar":
                 if not self._en_curso():
-                    return [], False
+                    return acciones, False
                 self._activo = None
-                self._marcar(nombre, consumir)
-                return [Accion("cancelar", atajo)], consumir
-            if atajo in DE_PULSACION:
-                self._marcar(nombre, consumir)
-                return [Accion("empezar", atajo)], consumir
-            if self._activo is None:  # mantener / markdown
+                accion = Accion("cancelar", atajo, tecla=nombre)
+            elif atajo in DE_PULSACION:
+                accion = Accion("empezar", atajo, tecla=nombre)
+            elif self._activo is None:  # mantener / markdown
                 self._activo, self._inicio = atajo, ahora
-                self._marcar(nombre, consumir)
-                return [Accion("empezar", atajo)], consumir
-            if atajo != self._activo:  # extiende al mantenido: cambia de destino
+                accion = Accion("empezar", atajo, tecla=nombre)
+            elif atajo != self._activo:  # extiende al mantenido: cambia de destino
                 self._activo = atajo
-                self._marcar(nombre, consumir)
-                return [Accion("cambiar", atajo)], consumir
-            return [], False
-        return [], False
+                accion = Accion("cambiar", atajo, tecla=nombre)
+            else:
+                return acciones, False
+            self._marcar(nombre, consumir)
+            return [*acciones, accion], consumir
+        return acciones, False
 
     def _arriba(self, nombre: str, ahora: float) -> tuple[list[Accion], bool]:
-        self._pulsadas.discard(nombre)
+        self._pulsadas.pop(nombre, None)
+        self._soltadas_por_voziris.discard(nombre)
         consumir = nombre in self._consumidas
         self._consumidas.discard(nombre)
         acciones: list[Accion] = []
@@ -173,6 +230,41 @@ class Detector:
             atajo, self._activo = self._activo, None
             acciones.append(Accion("terminar", atajo, int((ahora - self._inicio) * 1000)))
         return acciones, consumir
+
+    def _apretada(self, nombre: str) -> bool:
+        """Si sigue apretada según Windows, cuando Windows lo puede saber."""
+        if self._pulsada is None:
+            return True
+        if nombre in self._consumidas or nombre in self._soltadas_por_voziris:
+            # Windows no vio la consumida, y la soltada por Voziris la da por
+            # suelta con el dedo encima: de esas solo sabe el hook.
+            return True
+        return any(self._pulsada(vk) for vk in teclas.VK[nombre])
+
+    def _repasar(self, ahora: float) -> list[Accion]:
+        """Olvida lo que se cree apretado y Windows dice que no (VOZ-83).
+
+        La tecla que está llegando no se pregunta: dentro del hook, Windows aún
+        no la ha anotado (lo dice la documentación de LowLevelKeyboardProc).
+        """
+        pulsada = self._pulsada
+        if pulsada is None:
+            return []
+        acciones: list[Accion] = []
+        for nombre, desde in list(self._pulsadas.items()):
+            if self._apretada(nombre):
+                continue
+            del self._pulsadas[nombre]
+            acciones.append(Accion("olvidar", "", int((ahora - desde) * 1000), tecla=nombre))
+            if self._activo is not None and nombre in self.combinaciones[self._activo].teclas:
+                atajo, self._activo = self._activo, None
+                acciones.append(Accion("terminar", atajo, int((ahora - self._inicio) * 1000)))
+        for vk, desde in list(self._otras.items()):
+            if not pulsada(vk):
+                del self._otras[vk]
+                ms = int((ahora - desde) * 1000)
+                acciones.append(Accion("olvidar", "", ms, tecla=f"{vk:#04x}"))
+        return acciones
 
     def _completa(self, combo: teclas.Combinacion, recien: str, exacto: bool = True) -> bool:
         if recien not in combo.teclas:
@@ -195,6 +287,8 @@ class Detector:
         self._pulsadas.clear()
         self._otras.clear()
         self._consumidas.clear()
+        self._pulsadas_por_voziris.clear()
+        self._soltadas_por_voziris.clear()
         self._activo = None
 
 
@@ -277,7 +371,7 @@ class Atajos:
         self._al_terminar = al_terminar
         self._al_cancelar = al_cancelar
         self._al_cambiar = al_cambiar
-        self._detector = Detector({}, en_curso)
+        self._detector = Detector({}, en_curso, winapi.tecla_pulsada)
         self._cola: queue.Queue[Accion | None] = queue.Queue()
         self._hilo_hook: threading.Thread | None = None
         self._hilo_despacho: threading.Thread | None = None
@@ -287,6 +381,8 @@ class Atajos:
         self._listo = threading.Event()
         self._error_hook: str | None = None
         self._lock = threading.Lock()
+        self._ultimo_aviso_olvido: float | None = None
+        self._olvidos_callados = 0
 
     # --- registro ------------------------------------------------------------
 
@@ -387,14 +483,16 @@ class Atajos:
         try:
             if codigo == HC_ACTION:
                 datos = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if datos.dwExtraInfo != winapi.MARCA_VOZIRIS:
-                    abajo = wparam in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                vk, abajo = int(datos.vkCode), wparam in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                if datos.dwExtraInfo == winapi.MARCA_VOZIRIS:
                     with self._lock:
-                        acciones, consumir = self._detector.tecla(
-                            int(datos.vkCode), abajo, time.monotonic()
-                        )
+                        self._detector.de_voziris(vk, abajo)
+                else:
+                    with self._lock:
+                        acciones, consumir = self._detector.tecla(vk, abajo, time.monotonic())
+                    de_otra = bool(datos.flags & LLKHF_INJECTED)
                     for accion in acciones:
-                        self._cola.put(accion)
+                        self._cola.put(replace(accion, inyectada=True) if de_otra else accion)
                     if consumir:
                         return 1
         except Exception:  # noqa: BLE001 — una excepción aquí tumba el hook
@@ -409,6 +507,14 @@ class Atajos:
             if accion is None:
                 return
             try:
+                if accion.tipo == "olvidar":
+                    self._avisar_olvido(accion)
+                    continue
+                if accion.tipo in ("empezar", "cambiar"):
+                    log.info(
+                        "atajo «%s» al pulsar %s%s", accion.atajo, accion.tecla,
+                        " (inyectada por otra aplicación)" if accion.inyectada else "",
+                    )
                 if accion.tipo == "empezar":
                     modo, destino = QUE_DISPARA[accion.atajo]
                     self._al_empezar(modo, destino)
@@ -421,6 +527,21 @@ class Atajos:
                     self._al_cancelar()
             except Exception:  # noqa: BLE001 — un callback roto no para los atajos
                 log.exception("el callback de «%s» falló", accion.atajo)
+
+    def _avisar_olvido(self, accion: Accion) -> None:
+        """Al registro, como mucho una vez por minuto: el siguiente aviso cuenta los callados."""
+        ahora = time.monotonic()
+        ultimo = self._ultimo_aviso_olvido
+        if ultimo is not None and ahora - ultimo < AVISO_OLVIDO_CADA_S:
+            self._olvidos_callados += 1
+            return
+        callados, self._olvidos_callados = self._olvidos_callados, 0
+        self._ultimo_aviso_olvido = ahora
+        log.warning(
+            "el hook no vio soltarse «%s» (llevaba %.1f s apretada): se da por suelta%s",
+            accion.tecla, accion.duracion_ms / 1000,
+            f" (y {callados} más desde el aviso anterior)" if callados else "",
+        )
 
     # --- sondeo de conflictos ---------------------------------------------------
 
