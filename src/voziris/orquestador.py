@@ -78,11 +78,12 @@ class CapturaDeAudio(Protocol):
 
 
 class DetectorDeSilencio(Protocol):
-    """Lo que el orquestador necesita de `audio.vad.DetectorSilencio` (VOZ-20)."""
+    """Lo que el orquestador necesita de `audio.vad.DetectorSilencio` (VOZ-20, VOZ-84)."""
 
     def precalentar(self) -> None: ...
     def reiniciar(self) -> None: ...
     def alimentar(self, bloque: np.ndarray) -> bool: ...
+    def hay_voz(self, muestras: np.ndarray) -> bool | None: ...
 
 
 class Sonidos(Protocol):
@@ -576,8 +577,13 @@ class Orquestador:
             nivel=self.nivel,
         )
         self._fase = "transcribiendo"
-        log.info("transcribiendo %.1f s de audio", audio.duracion_s)
         try:
+            if self._nadie_hablo(audio):
+                # VOZ-84: con cualquier audio sin voz, Whisper escribe «Gracias por
+                # ver el vídeo». Ni se manda: sigue el camino de un motor que no
+                # saca nada.
+                raise TranscripcionFallida("no se oyó voz")
+            log.info("transcribiendo %.1f s de audio", audio.duracion_s)
             transcripcion = self._transcribir(audio)
         except MotorNoDisponible as e:
             with self._lock:
@@ -587,9 +593,10 @@ class Orquestador:
             if audio.duracion_s < LARGO_PARA_GUARDAR_SIN_TEXTO_S:
                 self._avisar(f"Nada que escribir: {e}")
                 return True
-            # Cinco segundos o más sin texto suele ser el motor, no silencio: el
-            # audio se queda en «Dictados sin transcribir», y se dice con el icono
-            # de error y un aviso de la bandeja, no solo 1,5 s en el indicador.
+            # Cinco segundos o más sin texto suele ser el motor (o el VAD), no
+            # silencio: el audio se queda en «Dictados sin transcribir», y se dice
+            # con el icono de error y un aviso de la bandeja, no solo 1,5 s en el
+            # indicador.
             with self._lock:
                 self._fallar(f"No salió texto de {audio.duracion_s:.0f} s de audio ({e})")
             return False
@@ -695,6 +702,25 @@ class Orquestador:
         log.info("dictado %d vuelto a transcribir por %s (%d caracteres)", indice,
                  transcripcion.motor, len(transcripcion.texto))
         return transcripcion
+
+    def _nadie_hablo(self, audio: Audio) -> bool:
+        """True solo si el VAD está seguro de que en el dictado no habló nadie (VOZ-84).
+
+        Sin VAD, sin su modelo cargado todavía o si falla, False: se transcribe
+        como siempre. Solo lo miran los dictados en vivo; recuperar y volver a
+        transcribir son peticiones explícitas y van al motor sin preguntar.
+        """
+        if self._vad is None:
+            return False
+        try:
+            hay = self._vad.hay_voz(audio.muestras)
+        except Exception:  # noqa: BLE001 — el protocolo dice que no lanza, por si acaso
+            log.exception("el VAD falló buscando voz")
+            return False
+        if hay is False:
+            log.info("%.1f s de audio sin voz: no se transcribe", audio.duracion_s)
+            return True
+        return False
 
     def _transcribir(self, audio: Audio) -> Transcripcion:
         self.motor_listo.wait()  # el primer dictado del día puede pillar el modelo cargando

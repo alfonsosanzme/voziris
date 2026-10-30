@@ -1,7 +1,17 @@
-"""A2 — corte por silencio, solo en modo «clavar».
+"""A2 — corte por silencio en modo «clavar», y si hay voz que transcribir (VOZ-84).
 
 En modo «mantener» el usuario decide cuándo acaba soltando la tecla; aquí no
-hace falta VAD. En modo «clavar» hay que detectar que ha terminado de hablar.
+hace falta VAD para cortar. En modo «clavar» hay que detectar que ha terminado
+de hablar.
+
+Además, al cerrar cualquier dictado se mira si en él habló alguien
+(`hay_voz`). Si nadie habló, no se manda a ningún motor: Whisper, el de la
+API, escribe «Gracias por ver el vídeo» con cualquier audio sin voz. Medido en
+VOZ-84 con el silencio del micrófono del cliente, con ceros, sin normalizar,
+con poca ganancia y sin el vocabulario: no hay petición que lo evite. Con el
+audio ya normalizado, el silencio del cliente no pasa de 0,05, y ni ceros ni
+ruidos de sala, zumbidos, teclas o ventiladores llegan a 0,35. Los 21 dictados
+reales con voz que se probaron pasan todos, también bajados 40 dB.
 
 Silero VAD en ONNX, con el mismo onnxruntime que ya arrastra el motor local:
 sin dependencias nuevas. El modelo (2,3 MB) se descarga a `carpeta` la
@@ -21,7 +31,7 @@ solo llega tras `silencio_corte_ms` de silencio CONTINUO: una pausa de 700 ms
 para pensar no corta la frase. Cortar de más es peor que tardar un poco,
 porque parte el dictado en dos.
 
-Issue: VOZ-20.
+Issue: VOZ-20, VOZ-84.
 """
 
 from __future__ import annotations
@@ -157,3 +167,42 @@ class DetectorSilencio:
     def silencio_ms(self) -> float:
         """Silencio continuo acumulado, para el HUD."""
         return self._silencio_ms
+
+    # --- ¿habló alguien? (VOZ-84) --------------------------------------------------------
+
+    def hay_voz(self, muestras: np.ndarray) -> bool | None:
+        """True en cuanto un bloque llega a `UMBRAL_VOZ`; False si ninguno llega.
+
+        Recorre el audio entero con un estado propio: no toca el del corte en
+        streaming, así que se puede preguntar mientras otro dictado se graba
+        clavado. Para en el primer bloque con voz, que en un dictado normal
+        llega en el primer par de segundos: unos milisegundos, a 0,12 ms por
+        cada bloque de 32 ms.
+
+        None si no puede decidir, porque el modelo aún no ha cargado o ha
+        fallado. Quien llama transcribe entonces como siempre: ante la duda, el
+        dictado no se tira.
+        """
+        sesion = self._sesion
+        if sesion is None:
+            return None
+        datos = np.asarray(muestras, dtype=np.float32).reshape(-1)
+        estado = np.zeros((2, 1, 128), dtype=np.float32)
+        contexto = np.zeros(CONTEXTO, dtype=np.float32)
+        try:
+            for inicio in range(0, len(datos), BLOQUE):
+                trozo = datos[inicio : inicio + BLOQUE]
+                if len(trozo) < BLOQUE:
+                    trozo = np.pad(trozo, (0, BLOQUE - len(trozo)))
+                entrada = np.concatenate((contexto, trozo))[np.newaxis, :]
+                salida, estado = sesion.run(
+                    ["output", "stateN"],
+                    {"input": entrada, "state": estado, "sr": np.array(SAMPLE_RATE, np.int64)},
+                )
+                if float(salida[0, 0]) >= UMBRAL_VOZ:
+                    return True
+                contexto = trozo[-CONTEXTO:]
+        except Exception:  # noqa: BLE001 — el VAD no puede tumbar un dictado
+            log.exception("Silero VAD falló buscando voz; se transcribe sin mirar")
+            return None
+        return False

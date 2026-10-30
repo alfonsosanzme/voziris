@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from voziris.audio import vad as mod
+from voziris.audio.captura import normalizar
 from voziris.audio.vad import BLOQUE, CONTEXTO, MS_POR_BLOQUE, DetectorSilencio
 from voziris.tipos import SAMPLE_RATE
 
@@ -131,6 +132,53 @@ def test_corte_configurable_en_caliente() -> None:
     assert resultados.index(True) == int(300 / MS_POR_BLOQUE)
 
 
+# --- ¿habló alguien? (VOZ-84) -----------------------------------------------------------
+
+
+def test_hay_voz_sin_modelo_no_decide() -> None:
+    assert DetectorSilencio(1200).hay_voz(np.zeros(SAMPLE_RATE, np.float32)) is None
+
+
+def test_hay_voz_para_en_el_primer_bloque_que_llega_al_umbral() -> None:
+    d, sesion = _detector([0.1, 0.3, mod.UMBRAL_VOZ, 0.9])
+    assert d.hay_voz(np.zeros(BLOQUE * 10, np.float32)) is True
+    assert len(sesion.entradas) == 3  # lo que queda ni se mira
+
+
+def test_hay_voz_entre_umbrales_no_es_voz() -> None:
+    d, sesion = _detector([0.49] * 40)
+    assert d.hay_voz(np.zeros(0, np.float32)) is False and not sesion.entradas
+    assert d.hay_voz(np.zeros(BLOQUE * 30 + 100, np.float32)) is False
+    assert len(sesion.entradas) == 31  # todo el audio, con el último bloque rellenado
+    assert all(e["input"].shape == (1, CONTEXTO + BLOQUE) for e in sesion.entradas)
+
+
+def test_hay_voz_lleva_su_propio_estado_y_no_toca_el_del_corte() -> None:
+    """Se puede preguntar mientras se graba clavado: cada uno con lo suyo."""
+    d, sesion = _detector([0.9, 0.0, 0.0, 0.0])
+    d.alimentar(np.full(BLOQUE, 0.1, np.float32))
+    d.alimentar(np.full(BLOQUE, 0.2, np.float32))
+    estado, contexto = d._estado.copy(), d._contexto.copy()
+    silencio, hubo_voz = d.silencio_ms, d.hubo_voz
+    assert d.hay_voz(np.full(BLOQUE * 2, 0.3, np.float32)) is False
+    propia, siguiente = sesion.entradas[2], sesion.entradas[3]
+    assert not propia["state"].any() and not propia["input"][0, :CONTEXTO].any()  # de cero
+    assert np.all(siguiente["input"][0, :CONTEXTO] == 0.3)  # y con su propio contexto
+    assert np.array_equal(d._estado, estado) and np.array_equal(d._contexto, contexto)
+    assert (d.silencio_ms, d.hubo_voz) == (silencio, hubo_voz)
+
+
+def test_hay_voz_si_el_modelo_falla_no_decide(caplog: Any) -> None:
+    class Revienta:
+        def run(self, *_: Any, **__: Any) -> None:
+            raise RuntimeError("shape mismatch")
+
+    d = DetectorSilencio(1200)
+    d._sesion = Revienta()
+    assert d.hay_voz(np.zeros(BLOQUE * 4, np.float32)) is None
+    assert any("buscando voz" in r.message for r in caplog.records)
+
+
 # --- modelo real ----------------------------------------------------------------------
 
 
@@ -193,3 +241,40 @@ def test_silero_real_distingue_voz_de_silencio() -> None:
     # No corta durante la voz ni en la pausa de 700 ms; corta ~1,2 s después de
     # callar (más lo que Silero tarde en dejar de ver voz en la última sílaba).
     assert inicio_silencio_s + 1.0 <= primer_corte_s <= inicio_silencio_s + 1.8, primer_corte_s
+
+
+def _silero_real() -> DetectorSilencio:
+    if not (RAIZ / "modelos" / "silero-vad" / mod.ARCHIVO).exists():
+        pytest.skip("Silero no descargado")
+    d = DetectorSilencio(1200, RAIZ / "modelos")
+    d.precalentar()
+    assert d.disponible
+    return d
+
+
+@pytest.mark.modelo
+def test_silero_real_no_oye_a_nadie_en_el_silencio_ni_en_el_ruido() -> None:
+    """VOZ-84: con estos audios, normalizados como los deja la captura, Whisper
+    escribe «Gracias por ver el vídeo». No pueden llegar al motor.
+
+    El del portátil es lo que entrega un micrófono con supresión de ruido
+    cuando nadie habla: unos pocos LSB de 16 bits (−97 dBFS en el equipo del
+    cliente), que la normalización sube más de 80 dB.
+    """
+    d = _silero_real()
+    rng = np.random.default_rng(84)
+    portatil = rng.integers(-2, 3, SAMPLE_RATE).astype(np.float32) / 32768
+    sala = (rng.standard_normal(SAMPLE_RATE * 3) * 1e-3).astype(np.float32)  # −60 dBFS
+    for sin_voz in (np.zeros(SAMPLE_RATE, np.float32), portatil, sala):
+        assert d.hay_voz(normalizar(sin_voz)) is False
+
+
+@pytest.mark.modelo
+def test_silero_real_oye_un_dictado_aunque_llegue_muy_bajo() -> None:
+    d = _silero_real()
+    voz = _voz_real(d)
+    previo = np.zeros(SAMPLE_RATE // 2, np.float32)  # el búfer previo, sin hablar
+    assert d.hay_voz(np.concatenate((previo, voz))) is True
+    # 40 dB más bajo, cuantizado a 16 bits como lo entrega el micrófono
+    baja = np.round(voz * 0.01 * 32767).astype(np.float32) / 32767
+    assert d.hay_voz(normalizar(np.concatenate((previo, baja)))) is True

@@ -228,6 +228,44 @@ def test_un_dictado_largo_sin_texto_no_se_tira(banco: Any, segundos: float,
     assert (b.orq.estado is Estado.ERROR) is se_guarda
 
 
+class NadieHabla:
+    """Un VAD que no oye a nadie (VOZ-84)."""
+
+    def precalentar(self) -> None: ...
+
+    def reiniciar(self) -> None: ...
+
+    def alimentar(self, bloque: np.ndarray) -> bool:
+        return False
+
+    def hay_voz(self, muestras: np.ndarray) -> bool | None:
+        return False
+
+
+@pytest.mark.parametrize(("segundos", "se_guarda"), [(2.0, False), (6.0, True)])
+def test_sin_voz_no_llega_al_motor_y_si_es_largo_se_guarda(banco: Any, segundos: float,
+                                                         se_guarda: bool) -> None:
+    """VOZ-84. Lo corto se tira con un aviso; lo largo se guarda, por si el VAD se equivoca."""
+    b = banco(segundos=segundos, vad=NadieHabla())
+    b.motor.texto = "Gracias por ver el vídeo"  # lo que habría escrito Whisper
+    b.dictar()
+    assert b.destino.textos == [] and b.historial.todas() == []
+    assert len(b.pendientes.listar()) == (1 if se_guarda else 0)
+    assert (b.orq.estado is Estado.ERROR) is se_guarda
+    assert any("no se oyó voz" in a for a in b.avisos), b.avisos
+
+
+def test_recuperar_y_volver_a_transcribir_no_preguntan_al_vad(banco: Any) -> None:
+    """Son peticiones explícitas: si se pide transcribir una grabación, se transcribe."""
+    b = banco(segundos=6.0, vad=NadieHabla())
+    b.dictar()
+    [pendiente] = b.pendientes.listar()
+    assert b.orq.recuperar(pendiente.ruta) == "Hola, mundo."
+    b.motor.texto = "Hola otra vez."
+    nueva = b.orq.retranscribir(1)
+    assert nueva is not None and nueva.texto == "Hola otra vez."
+
+
 # --- recuperar y volver a transcribir -----------------------------------------------------------
 
 

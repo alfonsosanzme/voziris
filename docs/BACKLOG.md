@@ -439,3 +439,21 @@ Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dicta
 - [x] El rehacer seguro vale también cuando pystray rehace el menú tras pulsar un elemento.
 - [x] Recuperar poda la grabación; el mismo audio no se recupera dos veces a la vez.
 - [x] Cada proceso (también «Transcribir» del Explorador) deja su marca en voziris-fallos.log, y el diagnóstico busca volcados en todo el archivo y solo enseña las marcas que tienen uno detrás.
+
+### VOZ-84 · Sin voz no se escribe nada
+**Archivos:** `audio/vad.py`, `orquestador.py`
+
+Lo que vio el cliente el 30/10: si pulsaba Ctrl+Win y no decía nada, Groq escribía siempre «Gracias por ver el video». Eran 8 de los 73 dictados del historial, de 0,8 a 1,5 s. Su micrófono entrega silencio digital (−97 dBFS) cuando nadie habla, y Whisper se inventa esa frase con cualquier audio sin voz. Medido contra Groq: pasa sin normalizar, con ceros, con la ganancia limitada a +30 dB y sin el vocabulario («Gracias.»); el modelo turbo escribe «¡Suscríbete al canal!». `no_speech_prob` no sirve para filtrarlo: da 0 en esa última y 0,95 en una palabra real.
+
+**Criterios de aceptación**
+- [x] Al cerrar cualquier dictado en vivo, en cualquier modo y destino, Silero (el VAD que ya se cargaba para «clavar») mira si alguien habló. Si nadie habló, no se llama a ningún motor ni se pega nada, y el indicador dice «Nada que escribir: no se oyó voz».
+- [x] Con 5 s o más sin voz pasa lo mismo que cuando el motor no saca texto: icono de error, y el audio se queda en «Dictados sin transcribir», por si el VAD se equivocó.
+- [x] Recuperar y volver a transcribir no preguntan al VAD: son peticiones explícitas.
+- [x] Sin el modelo del VAD, antes de que cargue o si falla, se transcribe como antes.
+- [x] Con voz no cambia nada: ni la normalización, ni el audio que se manda, ni la petición.
+- [x] Sin opciones nuevas: el `config.toml` de las versiones anteriores vale tal cual.
+- [x] Medido sobre el audio normalizado:
+  - el silencio del cliente no pasa de 0,05, y ningún ruido de prueba llega a 0,35 (ceros, ruido de sala, zumbido, teclas, ventilador). El umbral es 0,5;
+  - pasan los 21 dictados reales con voz, también bajados 40 dB;
+  - pasan el 97–99 % de las palabras sueltas de 350 a 800 ms. Las que no ve, trozos de menos de 250 ms, Groq tampoco las acertó.
+- [x] Cuesta unos milisegundos por dictado: 0,12 ms por cada 32 ms de audio, y para en cuanto oye voz. Ahorra una llamada a Groq por cada pulsación vacía.
