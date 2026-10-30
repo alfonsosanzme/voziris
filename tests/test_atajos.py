@@ -19,6 +19,7 @@ import pytest
 
 from voziris import teclas, winapi
 from voziris.atajos import (
+    AVISO_OLVIDO_CADA_S,
     KBDLLHOOKSTRUCT,
     LLKHF_INJECTED,
     WM_KEYDOWN,
@@ -45,7 +46,8 @@ class Escenario:
     """Lo que ve el hook y lo que Windows da por apretado, que casi siempre coinciden.
 
     `visto=False` es una tecla que Windows procesa y el hook no ve (VOZ-83).
-    Lo que el Detector consume no llega a Windows.
+    `tragada=True`, una que el hook ve y otra aplicación se traga después, así
+    que Windows no la ve. Lo mismo pasa con lo que consume el Detector.
     """
 
     def __init__(self, en_curso: bool = False) -> None:
@@ -57,18 +59,18 @@ class Escenario:
         self.acciones: list[Accion] = []
         self.consumidas: list[tuple[int, bool]] = []
 
-    def abajo(self, vk: int, tras_ms: int = 0, visto: bool = True) -> None:
-        self._tecla(vk, True, tras_ms, visto)
+    def abajo(self, vk: int, tras_ms: int = 0, visto: bool = True, tragada: bool = False) -> None:
+        self._tecla(vk, True, tras_ms, visto, tragada)
 
-    def arriba(self, vk: int, tras_ms: int = 0, visto: bool = True) -> None:
-        self._tecla(vk, False, tras_ms, visto)
+    def arriba(self, vk: int, tras_ms: int = 0, visto: bool = True, tragada: bool = False) -> None:
+        self._tecla(vk, False, tras_ms, visto, tragada)
 
     def voziris(self, vk: int, abajo: bool) -> None:
         """Una pulsación que inyecta el propio Voziris, con su marca."""
         self.detector.de_voziris(vk, abajo)
         (self.windows.add if abajo else self.windows.discard)(vk)
 
-    def _tecla(self, vk: int, abajo: bool, tras_ms: int, visto: bool) -> None:
+    def _tecla(self, vk: int, abajo: bool, tras_ms: int, visto: bool, tragada: bool) -> None:
         self.reloj += tras_ms / 1000
         consumir = False
         if visto:
@@ -77,7 +79,7 @@ class Escenario:
             if consumir:
                 self.consumidas.append((vk, abajo))
         # Windows la anota después de pasar por el hook: dentro, aún no se ve.
-        if not consumir:
+        if not consumir and not tragada:
             (self.windows.add if abajo else self.windows.discard)(vk)
 
     @property
@@ -299,18 +301,27 @@ def test_tampoco_una_tecla_sin_nombre() -> None:
     assert e.olvidadas == ["0xc0"]
 
 
-def test_volver_a_pulsar_la_tecla_atascada_es_una_pulsacion_nueva() -> None:
-    """No es autorrepetición: Windows ya la tenía por suelta. Cierra un dictado y abre otro."""
+def test_la_autorrepeticion_se_fia_del_hook_aunque_windows_no_vea_la_tecla() -> None:
+    """Samsung Multi Control o TeamViewer, al manejar otro equipo, se tragan las teclas
+    después del hook, y para Windows están sueltas. Preguntarle en cada autorrepetición
+    (unas 30 por segundo) olvidaba la tecla y dejaba un aviso en el registro cada vez."""
     e = Escenario()
-    e.abajo(VK["lctrl"])
-    e.abajo(VK["lwin"], tras_ms=250)
-    e.arriba(VK["lwin"], tras_ms=2_000, visto=False)  # el dedo sigue en Ctrl
-    e.abajo(VK["lwin"], tras_ms=1_000)
-    assert e.disparos == [
-        Accion("empezar", "mantener"), Accion("terminar", "mantener", 3_000),
-        Accion("empezar", "mantener"),
-    ]
-    assert e.olvidadas == ["win"]
+    e.abajo(VK["shift"], tragada=True)
+    for _ in range(30):
+        e.abajo(VK["shift"], tras_ms=33, tragada=True)
+    e.arriba(VK["shift"], tras_ms=33, tragada=True)
+    assert e.acciones == []
+
+
+def test_volver_a_pulsar_la_tecla_atascada_sirve_para_el_atajo() -> None:
+    """Esa pulsación pasa por autorrepetición, pero Windows ya la ve apretada."""
+    e = Escenario()
+    e.abajo(VK["lwin"])
+    e.arriba(VK["lwin"], tras_ms=250, visto=False)
+    e.abajo(VK["lwin"], tras_ms=5_000)  # Win otra vez, y luego Ctrl
+    e.abajo(VK["lctrl"], tras_ms=40)
+    assert e.disparos == [Accion("empezar", "mantener")]
+    assert e.olvidadas == []
 
 
 def test_encadenar_dictados_sin_soltar_ctrl() -> None:
@@ -355,13 +366,16 @@ def test_el_dictado_mantenido_se_cierra_si_sus_teclas_ya_no_estan() -> None:
 
 
 def test_mantener_apretado_clavar_no_lo_repite() -> None:
-    """La tecla consumida no llega a Windows: su autorrepetición no es una pulsación nueva."""
+    """La tecla consumida no llega a Windows: ni su autorrepetición es una pulsación
+    nueva, ni se olvida al pulsar otra con la combinación aún apretada."""
     e = Escenario()
     e.abajo(VK["lctrl"])
     e.abajo(VK["shift"])
     e.abajo(VK["space"])
     for _ in range(3):
         e.abajo(VK["space"], tras_ms=500)
+    e.abajo(VK["a"], tras_ms=100)
+    e.arriba(VK["a"], tras_ms=100)
     e.arriba(VK["space"])
     assert e.disparos == [Accion("empezar", "clavar")]
     assert e.olvidadas == []
@@ -385,6 +399,29 @@ def test_el_registro_dice_con_que_tecla_se_dispara_y_que_se_olvida(
         "atajo «mantener» al pulsar ctrl",
         "atajo «clavar» al pulsar space (inyectada por otra aplicación)",
         "el hook no vio soltarse «win» (llevaba 41.2 s apretada): se da por suelta",
+    ]
+
+
+def test_los_avisos_de_teclas_olvidadas_no_llenan_el_registro(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Como mucho uno por minuto. Con una aplicación que se traga el teclado, cada
+    pulsación nueva olvida las que siguen apretadas (Shift al escribir, o el solape)."""
+    atajos = Atajos(lambda m, d: None, lambda ms: None, lambda: None)
+
+    def despachar(*acciones: Accion) -> None:
+        for accion in (*acciones, None):
+            atajos._cola.put(accion)
+        atajos._despachar()
+
+    with caplog.at_level(logging.WARNING, logger="voziris.atajos"):
+        despachar(*[Accion("olvidar", "", 100, tecla="shift")] * 3)
+        atajos._ultimo_aviso_olvido -= AVISO_OLVIDO_CADA_S  # pasa un minuto
+        despachar(Accion("olvidar", "", 41_200, tecla="win"))
+    assert [r.getMessage() for r in caplog.records] == [
+        "el hook no vio soltarse «shift» (llevaba 0.1 s apretada): se da por suelta",
+        "el hook no vio soltarse «win» (llevaba 41.2 s apretada): se da por suelta"
+        " (y 2 más desde el aviso anterior)",
     ]
 
 

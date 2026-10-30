@@ -86,6 +86,12 @@ QUE_DISPARA: dict[str, tuple[Modo, str]] = {
 DE_PULSACION = ("clavar", "clavar_markdown")
 """Atajos que disparan en cada pulsación: el orquestador alterna."""
 
+AVISO_OLVIDO_CADA_S = 60.0
+"""Como mucho un aviso por minuto de teclas olvidadas (VOZ-83). Si otra aplicación
+se traga el teclado después del hook (Samsung Multi Control o TeamViewer manejando
+otro equipo), Windows no ve ninguna tecla y cada pulsación olvida las que siguen
+apretadas. Sin límite, se perdería pronto el registro que sirve para diagnosticar."""
+
 _NOMBRE_DE_VK: dict[int, str] = {vk: nombre for nombre, vks in teclas.VK.items() for vk in vks}
 
 
@@ -125,11 +131,12 @@ class Detector:
       - La tecla no modificadora de una combinación se consume, al bajar y al
         subir, para que no llegue a la aplicación. Los modificadores nunca:
         consumirlos descoloca a las aplicaciones.
-      - Al hook se le escapan subidas (VOZ-83). Antes de cada pulsación nueva,
-        lo que se cree apretado se contrasta con `pulsada` (en Windows,
-        `GetAsyncKeyState`) y lo que ya no lo está se olvida con `olvidar`. Si
-        era de la combinación mantenida, además se emite su `terminar`.
-        Sin `pulsada`, el Detector se fía del hook.
+      - Al hook se le escapan subidas (VOZ-83). Antes de cada pulsación nueva
+        (la autorrepetición no lo es), las demás teclas que se creen apretadas
+        se contrastan con `pulsada` (en Windows, `GetAsyncKeyState`), y lo que
+        ya no lo está se olvida con `olvidar`. Si era de la combinación
+        mantenida, además se emite su `terminar`. Sin `pulsada`, el Detector
+        se fía del hook.
     """
 
     def __init__(
@@ -180,8 +187,12 @@ class Detector:
             self._soltadas_por_voziris.add(nombre)
 
     def _abajo(self, nombre: str, ahora: float) -> tuple[list[Accion], bool]:
-        if nombre in self._pulsadas and self._apretada(nombre):
-            return [], nombre in self._consumidas  # autorrepetición de Windows al mantener
+        # Autorrepetición de Windows al mantener. Aquí no se pregunta a Windows:
+        # si otra aplicación se traga la tecla después del hook (Samsung Multi
+        # Control o TeamViewer manejando otro equipo), para Windows está suelta
+        # y se olvidaría en cada repetición. Que se repita ya dice que sigue abajo.
+        if nombre in self._pulsadas:
+            return [], nombre in self._consumidas
         acciones = self._repasar(ahora)
         self._pulsadas[nombre] = ahora
         for atajo, combo in self.combinaciones.items():
@@ -370,6 +381,8 @@ class Atajos:
         self._listo = threading.Event()
         self._error_hook: str | None = None
         self._lock = threading.Lock()
+        self._ultimo_aviso_olvido: float | None = None
+        self._olvidos_callados = 0
 
     # --- registro ------------------------------------------------------------
 
@@ -495,10 +508,7 @@ class Atajos:
                 return
             try:
                 if accion.tipo == "olvidar":
-                    log.warning(
-                        "el hook no vio soltarse «%s» (llevaba %.1f s apretada): se da por suelta",
-                        accion.tecla, accion.duracion_ms / 1000,
-                    )
+                    self._avisar_olvido(accion)
                     continue
                 if accion.tipo in ("empezar", "cambiar"):
                     log.info(
@@ -517,6 +527,21 @@ class Atajos:
                     self._al_cancelar()
             except Exception:  # noqa: BLE001 — un callback roto no para los atajos
                 log.exception("el callback de «%s» falló", accion.atajo)
+
+    def _avisar_olvido(self, accion: Accion) -> None:
+        """Al registro, como mucho una vez por minuto: el siguiente aviso cuenta los callados."""
+        ahora = time.monotonic()
+        ultimo = self._ultimo_aviso_olvido
+        if ultimo is not None and ahora - ultimo < AVISO_OLVIDO_CADA_S:
+            self._olvidos_callados += 1
+            return
+        callados, self._olvidos_callados = self._olvidos_callados, 0
+        self._ultimo_aviso_olvido = ahora
+        log.warning(
+            "el hook no vio soltarse «%s» (llevaba %.1f s apretada): se da por suelta%s",
+            accion.tecla, accion.duracion_ms / 1000,
+            f" (y {callados} más desde el aviso anterior)" if callados else "",
+        )
 
     # --- sondeo de conflictos ---------------------------------------------------
 

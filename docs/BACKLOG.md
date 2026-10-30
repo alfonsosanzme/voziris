@@ -453,14 +453,18 @@ Lo vio el cliente en sus dos equipos: a veces, al pulsar solo Ctrl, se activaba 
 **Criterios de aceptación**
 - [x] Antes de cada pulsación nueva, lo que el hook cree apretado se contrasta con `GetAsyncKeyState`, y se olvida lo que ya no lo está. Ctrl solo, Ctrl+C y Ctrl+V ya no arrancan el dictado aunque se haya perdido la subida de Win.
 - [x] El síntoma contrario también está arreglado: una tecla atascada (la «l» de Win+L, la Ñ) ya no deja `ctrl+win` sin responder.
-- [x] Volver a pulsar una tecla atascada cuenta como pulsación nueva, no como autorrepetición.
+- [x] La autorrepetición se fía del hook, sin preguntar a Windows.
+  - Si otra aplicación se traga la tecla después del hook (Samsung Multi Control o TeamViewer manejando otro equipo), Windows la da por suelta. Preguntarle olvidaba la tecla en cada repetición, unas 30 veces por segundo.
+  - Volver a pulsar una tecla atascada pasa por autorrepetición, pero el atajo funciona: para entonces Windows ya la ve apretada.
 - [x] Un dictado mantenido cuyas teclas ya no están apretadas se cierra con la siguiente pulsación.
 - [x] Encadenar dictados sin soltar Ctrl sigue funcionando:
   - el Ctrl que Voziris suelta al pegar no se olvida;
   - el Ctrl del Ctrl+V del propio Voziris no hace pasar por apretado un Ctrl atascado.
-- [x] Mantener apretado «clavar» no lo repite. Windows no ve la tecla que consume Voziris, y su autorrepetición no se toma por una pulsación nueva.
+- [x] Mantener apretado «clavar» no lo repite, y su tecla no se olvida al pulsar otra. Windows no ve la tecla que consume Voziris: de esa solo sabe el hook.
 - [x] El registro dice con qué tecla se completa cada atajo y si esa pulsación la inyectó otra aplicación.
 - [x] El registro avisa de cada tecla que el hook no vio soltarse, con el tiempo que la creyó apretada.
+  - Como mucho, un aviso por minuto. El siguiente dice cuántos se callaron.
+  - Si una aplicación se traga el teclado, cada pulsación nueva olvida las teclas que siguen apretadas, y sin límite se llenaría el registro.
 - [x] Probado de punta a punta con el hook real y el GIL retenido 1,5 s:
   - en `main`, la subida de Shift se pierde y Ctrl solo dispara «ctrl+shift»;
   - con el arreglo, Ctrl solo no hace nada y el registro avisa de la tecla olvidada.
