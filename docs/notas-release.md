@@ -17,15 +17,15 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
   siguen apretadas de verdad. Por lo mismo, una tecla que se quedaba
   «atascada» ya no deja `Ctrl+Win` sin responder.
 - **Si no hablas, no se escribe nada.** Al pulsar el atajo sin decir nada, el
-  motor por API escribía «Gracias por ver el video»: Whisper se inventa esa
-  frase con cualquier audio sin voz. Ahora, antes de transcribir, el detector
-  de voz mira si alguien ha hablado. Si nadie ha hablado, no se manda el audio
-  a ningún motor, no se pega nada y el indicador dice «Nada que escribir: no
-  se oyó voz». Con 5 segundos o más sin voz, la grabación se queda en
-  «Dictados sin transcribir», por si el detector se ha equivocado.
+  motor por API escribía «Gracias por ver el video»: Whisper se inventa frases
+  así con cualquier audio sin voz. Ahora, antes de transcribir, el detector de
+  voz (en cuanto ha cargado, al arrancar) mira si alguien ha hablado. Si nadie
+  ha hablado, no se manda el audio a ningún motor ni se pega nada. Con 5
+  segundos o más sin voz, avisa con el icono de error y la grabación se queda
+  en «Dictados sin transcribir», por si el detector se ha equivocado.
 - **Avisa de las versiones nuevas y se actualiza desde la bandeja.** Unos 20
   segundos después de arrancar por primera vez, pregunta si quieres que mire
-  una vez al día si hay una versión nueva. Sin un sí, no se conecta a nada por
+  una vez al día si hay una versión nueva. Sin un sí, no consulta GitHub por
   su cuenta. Si la hay, te avisa, y en el menú de la bandeja aparece
   «Actualizar a la …». Al pulsarlo, descarga la versión nueva de su release de
   GitHub, comprueba su SHA-256 y que no le falta ningún archivo, y la instala
@@ -37,10 +37,13 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
 - **Ajustes ya guarda con la configuración de serie.** En la 0.1.0 y la 0.1.1,
   mientras la carpeta del Markdown siguiera con el valor de ejemplo, Ajustes
   no dejaba guardar nada, tampoco la clave de Groq, aunque no usaras ese
-  destino. Ahora esa carpeta solo se comprueba si la cambias.
-- **Al instalar encima de otra versión**, el aviso final dice «Voziris
-  actualizado» y qué versión tenías antes. El diagnóstico de la bandeja
-  recoge también los registros de las actualizaciones y de la instalación.
+  destino. Lo que se cambiaba en la bandeja («Motor», «Mientras dicto» y
+  «Cortar al callar») solo duraba hasta reiniciar. Ahora esa carpeta solo se
+  comprueba si la cambias.
+- **Al instalar encima de una versión anterior**, el aviso final dice
+  «Voziris actualizado» y qué versión tenías antes. El diagnóstico de la
+  bandeja recoge también los registros de las actualizaciones desde la
+  bandeja.
 
 ## Qué hay
 
@@ -75,7 +78,8 @@ termina, los dictados esperan, también con el motor por API. Dentro va
 conectar una clave de Groq.
 
 **Si ya tenías la 0.1.0 o la 0.1.1:** esas versiones no buscan versiones
-nuevas, así que esta vez se actualiza a mano. Desde la 0.1.2, la bandeja te
+nuevas, así que esta vez se actualiza a mano. Desde la 0.1.2, si aceptas que
+mire las versiones nuevas (o con «Buscar actualizaciones»), la bandeja te
 ofrecerá las siguientes.
 
 - **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
@@ -117,10 +121,11 @@ has descargado tiene este hash, es el que se publicó aquí.
     ZIP: detecta una descarga cortada o dañada, no una release falsa.
 - Si el primer arranque no tiene conexión, la bandeja solo dice que el motor de
   voz no está disponible. Conéctate y vuelve a abrir Voziris.
-- Una sola palabra muy corta, dicha sola, puede tomarse por silencio: el
-  indicador dice «Nada que escribir: no se oyó voz». Vuelve a dictarla.
-- Sobre una ventana que corre como administrador, Windows no entrega la
-  pulsación sintética: el dictado queda en el historial y en el portapapeles.
+- Una sola palabra muy corta, dicha sola, puede tomarse por silencio, y
+  entonces no se escribe nada. Vuelve a dictarla.
+- Con una ventana que corre como administrador en primer plano, Windows no
+  deja a Voziris ver el atajo ni pegar en ella. Si un dictado tenía que ir a
+  esa ventana, queda en el historial y en el portapapeles.
 - Solo se conserva el portapapeles si contenía texto.
 - Algunas terminales rechazan el pegado sintético: `metodo = "tecleo"`.
 - La separación de voces acierta con dos personas en una reunión. En una
