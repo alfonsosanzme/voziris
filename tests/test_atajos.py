@@ -8,14 +8,25 @@ Usan combinaciones que no hacen nada en la ventana que tenga el foco.
 
 from __future__ import annotations
 
+import ctypes
+import logging
 import threading
 import time
 from collections.abc import Iterator
+from types import SimpleNamespace
 
 import pytest
 
 from voziris import teclas, winapi
-from voziris.atajos import Accion, Atajos, Detector
+from voziris.atajos import (
+    KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED,
+    WM_KEYDOWN,
+    WM_KEYUP,
+    Accion,
+    Atajos,
+    Detector,
+)
 from voziris.errores import ConfigInvalida
 from voziris.tipos import Modo
 
@@ -31,25 +42,52 @@ COMBOS = {
 
 
 class Escenario:
+    """Lo que ve el hook y lo que Windows da por apretado, que casi siempre coinciden.
+
+    `visto=False` es una tecla que Windows procesa y el hook no ve (VOZ-83).
+    Lo que el Detector consume no llega a Windows.
+    """
+
     def __init__(self, en_curso: bool = False) -> None:
         self.en_curso = en_curso
-        self.detector = Detector(dict(COMBOS), lambda: self.en_curso)
+        self.windows: set[int] = set()
+        """Lo que contestaría GetAsyncKeyState."""
+        self.detector = Detector(dict(COMBOS), lambda: self.en_curso, self.windows.__contains__)
         self.reloj = 0.0
         self.acciones: list[Accion] = []
         self.consumidas: list[tuple[int, bool]] = []
 
-    def abajo(self, vk: int, tras_ms: int = 0) -> None:
-        self._tecla(vk, True, tras_ms)
+    def abajo(self, vk: int, tras_ms: int = 0, visto: bool = True) -> None:
+        self._tecla(vk, True, tras_ms, visto)
 
-    def arriba(self, vk: int, tras_ms: int = 0) -> None:
-        self._tecla(vk, False, tras_ms)
+    def arriba(self, vk: int, tras_ms: int = 0, visto: bool = True) -> None:
+        self._tecla(vk, False, tras_ms, visto)
 
-    def _tecla(self, vk: int, abajo: bool, tras_ms: int) -> None:
+    def voziris(self, vk: int, abajo: bool) -> None:
+        """Una pulsación que inyecta el propio Voziris, con su marca."""
+        self.detector.de_voziris(vk, abajo)
+        (self.windows.add if abajo else self.windows.discard)(vk)
+
+    def _tecla(self, vk: int, abajo: bool, tras_ms: int, visto: bool) -> None:
         self.reloj += tras_ms / 1000
-        acciones, consumir = self.detector.tecla(vk, abajo, self.reloj)
-        self.acciones += acciones
-        if consumir:
-            self.consumidas.append((vk, abajo))
+        consumir = False
+        if visto:
+            acciones, consumir = self.detector.tecla(vk, abajo, self.reloj)
+            self.acciones += acciones
+            if consumir:
+                self.consumidas.append((vk, abajo))
+        # Windows la anota después de pasar por el hook: dentro, aún no se ve.
+        if not consumir:
+            (self.windows.add if abajo else self.windows.discard)(vk)
+
+    @property
+    def disparos(self) -> list[Accion]:
+        """Lo que le llega al orquestador: todo menos `olvidar`, que solo va al registro."""
+        return [a for a in self.acciones if a.tipo != "olvidar"]
+
+    @property
+    def olvidadas(self) -> list[str]:
+        return [a.tecla for a in self.acciones if a.tipo == "olvidar"]
 
 
 # --- detector -------------------------------------------------------------------
@@ -179,6 +217,204 @@ def test_soltar_todo_olvida_las_teclas() -> None:
     e.detector.soltar_todo()
     e.abajo(VK["lwin"])
     assert e.acciones == []
+
+
+# --- VOZ-83: subidas que el hook no ve --------------------------------------------
+#
+# Si el callback del hook tarda más de ~300 ms (con el GIL ocupado mientras carga
+# el modelo local), Windows se salta las teclas que lleguen mientras tanto; y en
+# el escritorio seguro (Win+L) no le cuenta nada. En el equipo del cliente, el
+# 30/10, una subida de Win perdida al arrancar hizo que cada Ctrl arrancara un
+# dictado durante cinco minutos.
+
+
+def pegar(e: Escenario) -> None:
+    """Lo que inyecta `app_activa` al pegar: suelta los modificadores apretados y Ctrl+V."""
+    for vk in winapi.MODIFICADORES_FISICOS:
+        if vk in e.windows:
+            e.voziris(vk, abajo=False)
+    for vk, abajo in ((winapi.VK_CONTROL, True), (winapi.VK_V, True),
+                      (winapi.VK_V, False), (winapi.VK_CONTROL, False)):
+        e.voziris(vk, abajo)
+
+
+def test_ctrl_solo_no_es_ctrl_win_aunque_el_hook_no_viera_soltarse_win() -> None:
+    e = Escenario()
+    e.abajo(VK["lwin"])
+    e.arriba(VK["lwin"], tras_ms=250, visto=False)
+    e.abajo(VK["lctrl"], tras_ms=40_000)
+    e.arriba(VK["lctrl"], tras_ms=300)
+    assert e.disparos == []
+    assert e.olvidadas == ["win"]
+    assert e.acciones[0].duracion_ms == 40_250  # lo que el hook la creyó apretada
+    e.abajo(VK["lctrl"], tras_ms=2_000)
+    e.abajo(VK["lwin"], tras_ms=40)  # ctrl+win de verdad sigue funcionando
+    assert e.disparos == [Accion("empezar", "mantener")]
+
+
+def test_ni_ctrl_c_ni_ctrl_v_arrancan_el_dictado() -> None:
+    e = Escenario()
+    e.abajo(VK["lwin"])
+    e.arriba(VK["lwin"], tras_ms=150, visto=False)
+    for letra in ("c", "v"):
+        e.abajo(VK["lctrl"], tras_ms=5_000)
+        e.abajo(VK[letra], tras_ms=80)
+        e.arriba(VK[letra], tras_ms=90)
+        e.arriba(VK["lctrl"], tras_ms=60)
+    assert e.disparos == [] and e.consumidas == []
+
+
+def test_tras_bloquear_con_win_l_ctrl_solo_no_dicta() -> None:
+    """La L se suelta antes de que cambie el escritorio; Win, ya en el seguro."""
+    e = Escenario()
+    e.abajo(VK["lwin"])
+    e.abajo(VK["l"], tras_ms=120)
+    e.arriba(VK["l"], tras_ms=90)
+    e.arriba(VK["lwin"], tras_ms=200, visto=False)
+    e.abajo(VK["lctrl"], tras_ms=600_000)
+    e.arriba(VK["lctrl"], tras_ms=300)
+    assert e.disparos == []
+
+
+def test_una_tecla_atascada_ya_no_deja_el_atajo_sin_responder() -> None:
+    """El síntoma contrario: con la «l» de Win+L atascada, ctrl+win no hacía nada."""
+    e = Escenario()
+    e.abajo(VK["lwin"])
+    e.abajo(VK["l"], tras_ms=120)
+    e.arriba(VK["l"], tras_ms=90, visto=False)
+    e.arriba(VK["lwin"], tras_ms=200, visto=False)
+    e.abajo(VK["lctrl"], tras_ms=600_000)
+    e.abajo(VK["lwin"], tras_ms=40)
+    assert e.disparos == [Accion("empezar", "mantener")]
+    assert sorted(e.olvidadas) == ["l", "win"]
+
+
+def test_tampoco_una_tecla_sin_nombre() -> None:
+    e = Escenario()
+    e.abajo(0xC0)  # la Ñ: no tiene nombre en `teclas.VK`
+    e.arriba(0xC0, tras_ms=100, visto=False)
+    e.abajo(VK["lctrl"], tras_ms=1_000)
+    e.abajo(VK["lwin"], tras_ms=40)
+    assert e.disparos == [Accion("empezar", "mantener")]
+    assert e.olvidadas == ["0xc0"]
+
+
+def test_volver_a_pulsar_la_tecla_atascada_es_una_pulsacion_nueva() -> None:
+    """No es autorrepetición: Windows ya la tenía por suelta. Cierra un dictado y abre otro."""
+    e = Escenario()
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["lwin"], tras_ms=250)
+    e.arriba(VK["lwin"], tras_ms=2_000, visto=False)  # el dedo sigue en Ctrl
+    e.abajo(VK["lwin"], tras_ms=1_000)
+    assert e.disparos == [
+        Accion("empezar", "mantener"), Accion("terminar", "mantener", 3_000),
+        Accion("empezar", "mantener"),
+    ]
+    assert e.olvidadas == ["win"]
+
+
+def test_encadenar_dictados_sin_soltar_ctrl() -> None:
+    """Al pegar, Voziris suelta el Ctrl que sigue apretado. No por eso se olvida."""
+    e = Escenario()
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["lwin"], tras_ms=250)
+    e.arriba(VK["lwin"], tras_ms=3_000)
+    pegar(e)
+    assert VK["lctrl"] not in e.windows  # para Windows, Ctrl ya está suelto
+    e.abajo(VK["lwin"], tras_ms=500)  # el dedo sigue en Ctrl: otro dictado
+    e.arriba(VK["lwin"], tras_ms=2_000)
+    e.arriba(VK["lctrl"], tras_ms=100)
+    assert e.disparos == [
+        Accion("empezar", "mantener"), Accion("terminar", "mantener", 3_000),
+        Accion("empezar", "mantener"), Accion("terminar", "mantener", 2_000),
+    ]
+    assert e.olvidadas == []
+    e.abajo(VK["lwin"], tras_ms=1_000)  # ya soltado de verdad: Win solo no es nada
+    assert len(e.disparos) == 4
+
+
+def test_el_ctrl_del_pegado_no_da_por_apretado_un_ctrl_atascado() -> None:
+    """Ctrl atascado en el hook y un pegado sin tocar el teclado (dictado desde la bandeja)."""
+    e = Escenario()
+    e.abajo(VK["lctrl"])
+    e.arriba(VK["lctrl"], tras_ms=100, visto=False)
+    pegar(e)
+    e.abajo(VK["lwin"], tras_ms=1_000)  # Win solo, para abrir el menú Inicio
+    assert e.disparos == []
+    assert e.olvidadas == ["ctrl"]
+
+
+def test_el_dictado_mantenido_se_cierra_si_sus_teclas_ya_no_estan() -> None:
+    e = Escenario()
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["lwin"], tras_ms=250)
+    e.arriba(VK["lwin"], tras_ms=2_000, visto=False)
+    e.arriba(VK["lctrl"], tras_ms=250, visto=False)
+    e.abajo(VK["a"], tras_ms=5_000)  # la siguiente pulsación, la que sea
+    assert e.disparos == [Accion("empezar", "mantener"), Accion("terminar", "mantener", 7_250)]
+
+
+def test_mantener_apretado_clavar_no_lo_repite() -> None:
+    """La tecla consumida no llega a Windows: su autorrepetición no es una pulsación nueva."""
+    e = Escenario()
+    e.abajo(VK["lctrl"])
+    e.abajo(VK["shift"])
+    e.abajo(VK["space"])
+    for _ in range(3):
+        e.abajo(VK["space"], tras_ms=500)
+    e.arriba(VK["space"])
+    assert e.disparos == [Accion("empezar", "clavar")]
+    assert e.olvidadas == []
+    assert e.consumidas == [(VK["space"], True)] * 4 + [(VK["space"], False)]
+
+
+def test_el_registro_dice_con_que_tecla_se_dispara_y_que_se_olvida(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    atajos = Atajos(lambda m, d: None, lambda ms: None, lambda: None)
+    for accion in (
+        Accion("empezar", "mantener", tecla="ctrl"),
+        Accion("empezar", "clavar", tecla="space", inyectada=True),
+        Accion("olvidar", "", 41_200, tecla="win"),
+        None,
+    ):
+        atajos._cola.put(accion)
+    with caplog.at_level(logging.INFO, logger="voziris.atajos"):
+        atajos._despachar()
+    assert [r.getMessage() for r in caplog.records] == [
+        "atajo «mantener» al pulsar ctrl",
+        "atajo «clavar» al pulsar space (inyectada por otra aplicación)",
+        "el hook no vio soltarse «win» (llevaba 41.2 s apretada): se da por suelta",
+    ]
+
+
+def test_el_callback_del_hook_reparte_lo_de_voziris_y_lo_de_otras_aplicaciones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sin instalar el hook: eventos como los que da Windows, directos al callback."""
+    windows: set[int] = set()
+    monkeypatch.setattr(winapi, "tecla_pulsada", windows.__contains__)
+    user32 = SimpleNamespace(CallNextHookEx=lambda *argumentos: 0)
+    monkeypatch.setattr("voziris.atajos._user32", user32, raising=False)
+    atajos = Atajos(lambda m, d: None, lambda ms: None, lambda: None)
+    atajos._detector.combinaciones = dict(COMBOS)
+
+    def evento(vk: int, abajo: bool, marca: int = 0, flags: int = 0) -> None:
+        datos = KBDLLHOOKSTRUCT(vk, 0, flags, 0, marca)
+        atajos._al_recibir_tecla(0, WM_KEYDOWN if abajo else WM_KEYUP, ctypes.addressof(datos))
+        (windows.add if abajo else windows.discard)(vk)
+
+    evento(VK["lctrl"], True)
+    evento(VK["lwin"], True, flags=LLKHF_INJECTED)  # p. ej., un gesto del ratón
+    evento(VK["lwin"], False)
+    evento(winapi.VK_LCONTROL, False, marca=winapi.MARCA_VOZIRIS)  # el pegado suelta Ctrl
+    evento(VK["lwin"], True)  # con el dedo aún en Ctrl
+    acciones: list[Accion | None] = []
+    while not atajos._cola.empty():
+        acciones.append(atajos._cola.get_nowait())
+    assert [(a.tipo, a.tecla, a.inyectada) for a in acciones if a is not None] == [
+        ("empezar", "win", True), ("terminar", "", False), ("empezar", "win", False),
+    ]
 
 
 # --- registro sin Windows ---------------------------------------------------------

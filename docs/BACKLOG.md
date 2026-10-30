@@ -440,6 +440,31 @@ Lo que se vio en el equipo del cliente el 23/09: 87 dictados guardados en `dicta
 - [x] Recuperar poda la grabación; el mismo audio no se recupera dos veces a la vez.
 - [x] Cada proceso (también «Transcribir» del Explorador) deja su marca en voziris-fallos.log, y el diagnóstico busca volcados en todo el archivo y solo enseña las marcas que tienen uno detrás.
 
+### VOZ-83 · Ctrl solo arrancaba el dictado
+**Archivos:** `atajos.py`, `winapi.py`
+
+Lo vio el cliente en sus dos equipos: a veces, al pulsar solo Ctrl, se activaba el dictado. Sin voz, Groq lo transcribía como «Gracias por ver el vídeo», y eso se pegaba (lo arregla VOZ-84). El 30/10, en su equipo, hubo 7 dictados de 0,3 a 1 s en cinco minutos. El primero llegó 41 s después de arrancar Voziris, y pararon al reiniciarla.
+
+**Causa.** El `Detector` solo sabía lo que le contaba el hook. Si el hook ve bajar Win y no lo ve subir, Win se queda apretada para él. Desde ese momento, cada Ctrl completa `ctrl+win`, sea solo o en Ctrl+C o Ctrl+V, hasta que se vuelve a pulsar Win.
+- Windows espera al hook unos 312 ms por tecla (`LowLevelHooksTimeout`). Si el callback está esperando el GIL, le llega tarde la primera tecla y se pierden las siguientes.
+- Al arrancar, la carga del modelo local retiene el GIL 0,7 s y 1,5 s seguidos, con el hook ya instalado. Medido en el equipo del cliente.
+- También se pierden subidas en el escritorio seguro (Win+L) y sobre ventanas elevadas.
+
+**Criterios de aceptación**
+- [x] Antes de cada pulsación nueva, lo que el hook cree apretado se contrasta con `GetAsyncKeyState`, y se olvida lo que ya no lo está. Ctrl solo, Ctrl+C y Ctrl+V ya no arrancan el dictado aunque se haya perdido la subida de Win.
+- [x] El síntoma contrario también está arreglado: una tecla atascada (la «l» de Win+L, la Ñ) ya no deja `ctrl+win` sin responder.
+- [x] Volver a pulsar una tecla atascada cuenta como pulsación nueva, no como autorrepetición.
+- [x] Un dictado mantenido cuyas teclas ya no están apretadas se cierra con la siguiente pulsación.
+- [x] Encadenar dictados sin soltar Ctrl sigue funcionando:
+  - el Ctrl que Voziris suelta al pegar no se olvida;
+  - el Ctrl del Ctrl+V del propio Voziris no hace pasar por apretado un Ctrl atascado.
+- [x] Mantener apretado «clavar» no lo repite. Windows no ve la tecla que consume Voziris, y su autorrepetición no se toma por una pulsación nueva.
+- [x] El registro dice con qué tecla se completa cada atajo y si esa pulsación la inyectó otra aplicación.
+- [x] El registro avisa de cada tecla que el hook no vio soltarse, con el tiempo que la creyó apretada.
+- [x] Probado de punta a punta con el hook real y el GIL retenido 1,5 s:
+  - en `main`, la subida de Shift se pierde y Ctrl solo dispara «ctrl+shift»;
+  - con el arreglo, Ctrl solo no hace nada y el registro avisa de la tecla olvidada.
+
 ### VOZ-84 · Sin voz no se escribe nada
 **Archivos:** `audio/vad.py`, `orquestador.py`
 

@@ -198,10 +198,19 @@ def teclear(texto: str) -> None:
     enviar(eventos_texto(texto))
 
 
+def tecla_pulsada(vk: int) -> bool:
+    """Si Windows da la tecla por apretada ahora mismo (`GetAsyncKeyState`).
+
+    Cuenta también lo inyectado con `SendInput`. Dentro del hook de teclado
+    aún no refleja la tecla que se está procesando, solo las anteriores.
+    """
+    _solo_windows()
+    return bool(_user32.GetAsyncKeyState(vk) & 0x8000)
+
+
 def modificadores_pulsados() -> list[int]:
     """Modificadores que el usuario tiene físicamente apretados ahora mismo."""
-    _solo_windows()
-    return [vk for vk in MODIFICADORES_FISICOS if _user32.GetAsyncKeyState(vk) & 0x8000]
+    return [vk for vk in MODIFICADORES_FISICOS if tecla_pulsada(vk)]
 
 
 def soltar_modificadores() -> list[int]:
