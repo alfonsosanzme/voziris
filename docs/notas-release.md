@@ -102,7 +102,7 @@ ofrecerá las siguientes.
 
 ```
 SHA-256  voziris-0.1.2-win64.zip
-8aa5215eb57d728e95166aba59d4a837d25cee63e9edae4c61f8830fb1a07b54
+32ab61ec4348c488aa6671587a16f5ddd6ce511abda8b61f196477499d622168
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
