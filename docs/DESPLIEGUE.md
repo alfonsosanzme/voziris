@@ -54,11 +54,13 @@ PY="C:/dev/voziris/.venv/Scripts/python.exe"   # el venv del proyecto
 REL="C:/dev/voziris-release-$V"     # worktree limpio de la rama release-<X.Y.Z>
 BUILD="C:/dev/voziris-release/$V"   # salida de PyInstaller y del empaquetado
 CREATICS="$HOME/OneDrive - Creatics Mundo Educa"
-WEB="$CREATICS/LABIAS/WEB - KAIRIS - Claude/Nueva KAIRIS"
+WEB="$CREATICS/KAIRIS/Web Kairis_Claude"   # el repositorio de kairis.es
 COMPARTIR="C:/dev/voziris-entrega/compartir"
 ```
 
 Como cualquier otra rama, el worktree va en `C:\dev\voziris-<rama>`. Las compilaciones van juntas en `C:\dev\voziris-release`, una carpeta por versión. `C:\dev\voziris-entrega` es un enlace (*junction*) a la carpeta `KAIRIS\Studio\Voziris\voziris-entrega` de OneDrive.
+
+La web también se mudó el 21 de octubre. La carpeta de antes, `LABIAS\WEB - KAIRIS - Claude\Nueva KAIRIS`, es una copia congelada que no llega ni a GitHub ni a kairis.es: lo dice su `MUDADO.md`.
 
 ## Paso a paso
 
@@ -320,7 +322,7 @@ echo $(( ( $(stat -c %s "$BUILD/dist/voziris-$V-win64.zip") + 524288 ) / 1048576
 
 Revisa también la `nota` del mismo objeto. `grep -n "0\.1\." "$WEB/data/blog.json"` encuentra las versiones que se mencionan en el texto.
 
-**Quién lo hace.** En `Nueva KAIRIS` trabaja otra sesión, «WEB Kairis». El enlace de la 0.1.1 lo cambió ella, en el commit `a3229f7`, y desplegó con el OK de Alfonso. Lo más limpio es pasarle este encargo:
+**Quién lo hace.** En el repositorio de la web (`$WEB`) trabaja otra sesión, «WEB Kairis». El enlace de la 0.1.1 lo cambió ella, en el commit `a3229f7`, y desplegó con el OK de Alfonso. Lo más limpio es pasarle este encargo:
 
 > Sigue la skill `anadir-blog`. En `data/blog.json`, post `voziris`, objeto `descarga`, pon url `<URL>`, version `v<X.Y.Z>` y peso `<N> MB`. No toques nada más del post. Antes, comprueba que la URL responde 200 con `<bytes>` bytes y SHA-256 `<hash>`. Después:
 >
