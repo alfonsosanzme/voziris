@@ -498,7 +498,7 @@ Lo encontró la verificación de las notas de la 0.1.2. El orquestador avisa y p
 - [x] Sin aviso, el indicador se oculta al momento, como siempre.
 - [x] Sin opciones nuevas ni cambios fuera del indicador.
 - [x] Test sin ventanas con el orquestador de verdad y la cola vaciada de una vez: falla con el código de antes.
-- [ ] Comprobado con la ventana de verdad: Windows dice que está a la vista ~1,5 s, y en la captura se lee el aviso.
+- [x] Comprobado con la ventana de verdad: Windows dice que está a la vista ~1,5 s, y en la captura de la pantalla se lee el aviso.
 
 **Fuera de esto, y sigue igual**
 - Si llegan dos avisos seguidos, solo se ve el último.
