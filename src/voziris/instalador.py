@@ -453,8 +453,8 @@ def _sustituir_preguntando(
         except OSError as e:
             if getattr(e, "winerror", None) not in _ERRORES_PASAJEROS:
                 raise
-            # El lado que ha fallado: mirar la copia recién hecha, sin que haga falta, son
-            # 20 s más, porque el antivirus analiza cada archivo al abrirlo Restart Manager.
+            # Solo el lado que ha fallado. Restart Manager abre cada archivo, y el antivirus
+            # analiza los recién copiados: con los de la copia, sin hacer falta, son segundos más.
             fallo = Path(e.filename) if e.filename else destino
             retienen = _quien_retiene(nuevo if fallo.parent == nuevo else destino)
             log.warning("no se puede cambiar el programa, lo retiene: %s",
