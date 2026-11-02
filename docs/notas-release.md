@@ -1,4 +1,4 @@
-# Voziris 0.1.1
+# Voziris 0.1.2
 
 Dictado por voz para Windows 10 y 11 (64 bits) con dos motores: **local**
 (NVIDIA Parakeet TDT 0.6B v3 en ONNX, sin tarjeta gráfica y sin conexión) y
@@ -7,38 +7,43 @@ servidor propio.
 
 La historia de por qué existe: https://kairis.es/blog/voziris.html
 
-## Novedades en 0.1.1
+## Novedades en 0.1.2
 
-Esta versión no trae funciones nuevas. Trata de que la instalación no falle en
-silencio y de que, cuando algo falla, el aviso diga qué hacer.
-
-- **El aviso dice qué archivo falta.** Si el antivirus pone en cuarentena un
-  archivo del programa, o «Extraer todo» se salta alguno, el aviso ya no dice
-  «Falta PyAV». Ahora nombra el archivo: «Falta `_internal\av.libs\…dll`.
-  Suele ser el antivirus…». El programa lo comprueba también al arrancar.
-- **El instalador comprueba antes de cambiar nada.**
-  - Revisa que la carpeta extraída esté completa.
-  - Copia el programa aparte y comprueba que esa copia arranca.
-  - Solo entonces sustituye la versión anterior. Si algo falla por el camino,
-    la anterior se queda como estaba y se vuelve a abrir.
-  - Ya no arrastra la marca de «descargado de Internet» a la copia instalada.
-  - Al actualizar, no pisa la configuración, el modelo ni el historial que
-    ya tengas instalados.
-  - Muestra una ventana con el progreso. Tarda algo más que antes, porque
-    comprueba cada archivo.
-- **Control inteligente de aplicaciones de Windows 11.** Si esa protección
-  bloquea Voziris, el instalador lo detecta y explica qué hacer. La guía del
-  ZIP tiene un apartado nuevo, «Si Windows lo bloquea».
-- **Al transcribir un archivo sin conexión la primera vez**, el aviso dice que
-  falta descargar el modelo de voz. Antes decía «ni la API ni el motor local
-  están disponibles».
-- **Transcribir abre el archivo antes de cargar el modelo.** Si no se puede
-  abrir, o a la instalación le falta PyAV, se sabe al momento y no tras esperar
-  a la carga.
-- **Registro aparte para las transcripciones de archivos.** Su registro está en
-  `voziris-transcribir.log`, junto a `voziris.log`.
-- **El diagnóstico de la bandeja** comprueba el paquete, recoge los bloqueos
-  que haya anotado Windows e incluye ese registro de transcripciones.
+- **Ctrl solo ya no arranca el dictado.** A veces, al pulsar solo Ctrl, o
+  Ctrl+C o Ctrl+V, empezaba un dictado corto. Pasaba sobre todo al poco de
+  arrancar Voziris, mientras carga el modelo: si se le escapaba que habías
+  soltado la tecla Windows, la seguía creyendo apretada hasta que la volvías a
+  pulsar. Ahora, con cada tecla que pulsas, comprueba con Windows cuáles
+  siguen apretadas de verdad. Por lo mismo, una tecla que se quedaba
+  «atascada» ya no deja `Ctrl+Win` sin responder.
+- **Si no hablas, no se escribe nada.** Al pulsar el atajo sin decir nada, el
+  motor por API escribía «Gracias por ver el video»: Whisper se inventa frases
+  así con cualquier audio sin voz. Ahora, antes de transcribir, el detector de
+  voz (en cuanto ha cargado, al arrancar) mira si alguien ha hablado. Si nadie
+  ha hablado, no se manda el audio a ningún motor ni se pega nada. Con 5
+  segundos o más sin voz, avisa con el icono de error y la grabación se queda
+  en «Dictados sin transcribir», por si el detector se ha equivocado.
+- **Avisa de las versiones nuevas y se actualiza desde la bandeja.** Unos 20
+  segundos después de arrancar por primera vez, pregunta si quieres que mire
+  una vez al día si hay una versión nueva. Sin un sí, no consulta GitHub por
+  su cuenta. Si la hay, te avisa, y en el menú de la bandeja aparece
+  «Actualizar a la …». Al pulsarlo, descarga la versión nueva de su release de
+  GitHub, comprueba su SHA-256 y que no le falta ningún archivo, y la instala
+  sin tocar tu configuración, tus dictados ni el modelo.
+  - «Buscar actualizaciones», en la bandeja, mira en el momento.
+  - La respuesta se cambia en Ajustes → Acerca de.
+  - Si usas Voziris sin instalar, la entrada se llama «Descargar la …» y abre
+    la página de la versión.
+- **Ajustes ya guarda con la configuración de serie.** En la 0.1.0 y la 0.1.1,
+  mientras la carpeta del Markdown siguiera con el valor de ejemplo, Ajustes
+  no dejaba guardar nada, tampoco la clave de Groq, aunque no usaras ese
+  destino. Lo que se cambiaba en la bandeja («Motor», «Mientras dicto» y
+  «Cortar al callar») solo duraba hasta reiniciar. Ahora esa carpeta solo se
+  comprueba si la cambias.
+- **Al instalar encima de una versión anterior**, el aviso final dice
+  «Voziris actualizado» y qué versión tenías antes. El diagnóstico de la
+  bandeja recoge también los registros de las actualizaciones desde la
+  bandeja.
 
 ## Qué hay
 
@@ -62,7 +67,7 @@ silencio y de que, cuando algo falla, el aviso diga qué hacer.
   o con `voziris.exe --transcribir`.
 - Portable y sin permisos de administrador. Instalación opcional por usuario
   (menú Inicio y «Aplicaciones instaladas») con `Instalar Voziris.cmd`, que
-  tampoco los pide.
+  tampoco los pide. La copia instalada se actualiza desde la bandeja.
 
 ## Instalación
 
@@ -72,7 +77,10 @@ termina, los dictados esperan, también con el motor por API. Dentro va
 `LÉEME - Instalar Voziris.html`, con la instalación en el equipo y cómo
 conectar una clave de Groq.
 
-**Si ya tenías la 0.1.0:**
+**Si ya tenías la 0.1.0 o la 0.1.1:** esas versiones no buscan versiones
+nuevas, así que esta vez se actualiza a mano. Desde la 0.1.2, si aceptas que
+mire las versiones nuevas (o con «Buscar actualizaciones»), la bandeja te
+ofrecerá las siguientes.
 
 - **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
   `Instalar Voziris.cmd`. Cierra la Voziris abierta solo cuando va a
@@ -93,8 +101,8 @@ conectar una clave de Groq.
 ## Verificación del archivo
 
 ```
-SHA-256  voziris-0.1.1-win64.zip
-6cc615079d8018897bb043bedbb22c81cc7e5ec358af1402edacc23035841d87
+SHA-256  voziris-0.1.2-win64.zip
+32ab61ec4348c488aa6671587a16f5ddd6ce511abda8b61f196477499d622168
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
@@ -109,10 +117,15 @@ has descargado tiene este hash, es el que se publicó aquí.
   - En equipos con **Control inteligente de aplicaciones** activado, Windows
     puede bloquear la copia instalada. Esto pasa aunque deje abrir la carpeta
     extraída. La guía explica qué hacer.
+  - Al actualizar desde la bandeja, el SHA-256 sale de la misma release que el
+    ZIP: detecta una descarga cortada o dañada, no una release falsa.
 - Si el primer arranque no tiene conexión, la bandeja solo dice que el motor de
   voz no está disponible. Conéctate y vuelve a abrir Voziris.
-- Sobre una ventana que corre como administrador, Windows no entrega la
-  pulsación sintética: el dictado queda en el historial y en el portapapeles.
+- Una sola palabra muy corta, dicha sola, puede tomarse por silencio, y
+  entonces no se escribe nada. Vuelve a dictarla.
+- Con una ventana que corre como administrador en primer plano, Windows no
+  deja a Voziris ver el atajo ni pegar en ella. Si un dictado tenía que ir a
+  esa ventana, queda en el historial y en el portapapeles.
 - Solo se conserva el portapapeles si contenía texto.
 - Algunas terminales rechazan el pegado sintético: `metodo = "tecleo"`.
 - La separación de voces acierta con dos personas en una reunión. En una
