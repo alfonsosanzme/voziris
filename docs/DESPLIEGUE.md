@@ -242,14 +242,15 @@ No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de p
    - si no cancelas, la bandeja se cierra y se abre la versión publicada, con el aviso «Voziris actualizado… (antes, la 0.0.1)»;
    - `config.toml`, `modelos/` e `historial/` siguen intactos;
    - `voziris-actualizar.log` y `voziris-instalar.log` están en la carpeta de la instalación;
-   - en `voziris-instalar.log` no hay ningún «reintento»: `--actualizar` ya no retenía `_internal`.
+   - en `voziris-instalar.log` no hay ningún «reintento»: `--actualizar` ya no retenía `_internal`;
+   - cuando la publicada lleve VOZ-85: el aviso final sale encima de las demás ventanas y, con él abierto, «Actualizar» no contesta que ya hay una en marcha.
 
 Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la **publicada**, y tiene que ser la 0.1.2 o posterior. Contra la 0.1.1 no puede terminar: su instalador no toma el mutex de instalar, así que `--actualizar` sigue vivo durante el cambio (hasta `ESPERA_INSTALADOR_S`) y le bloquea `_internal`. Esto último se dedujo del código y de lo medido; no se ejecutó.
 
-Hay dos cosas que confunden, las dos vistas con la 0.1.2:
+Hay dos cosas que confunden si el instalador es el de la 0.1.2 o anterior. VOZ-85 las arregla en la versión que lo lleve:
 
-- **Una Voziris viva de la carpeta instalada impide cambiar `_internal`** (`WinError 5`, «otro programa tiene abierto un archivo»). Con una copia, pasa desde unos 50 ms después de arrancar. El 31 de octubre lo provocó un duplicado sin ventana, parado en el aviso «Voziris ya está abierto». Antes de instalar, mira en el Administrador de tareas que no quede otra `voziris.exe`.
-- **El instalador retiene su mutex hasta que se pulsa Aceptar en el aviso final**, y ese aviso puede abrirse detrás de otras ventanas. Mientras tanto, «Actualizar» contesta que ya hay una actualización en marcha y no descarga nada. Búscalo con Alt+Tab.
+- **Una Voziris viva de la carpeta instalada impide cambiar `_internal`** (`WinError 5`, «otro programa tiene abierto un archivo»). Pasa desde unos 200 ms después de arrancar, porque queda abierto `_internal\base_library.zip`. El 31 de octubre lo provocó un duplicado sin ventana, parado en el aviso «Voziris ya está abierto». Antes de instalar, mira en el Administrador de tareas que no quede otra `voziris.exe`. Desde VOZ-85, el instalador cierra lo que siga vivo desde esa carpeta (si está transcribiendo, pregunta antes). Si otro programa lo retiene, dice cuál es, con su PID, y deja reintentar.
+- **El instalador retiene su mutex hasta que se pulsa Aceptar en el aviso final**, y ese aviso puede abrirse detrás de otras ventanas. Mientras tanto, «Actualizar» contesta que ya hay una actualización en marcha y no descarga nada. Búscalo con Alt+Tab. Desde VOZ-85, el mutex se suelta antes del aviso, y el aviso sale encima de las demás ventanas.
 
 **Cómo fue con la 0.1.2 (2 de noviembre).** No se podía probar antes de publicar, porque la publicada era la 0.1.1. Por decisión de Alfonso, se publicó primero y se probó justo después, en su propio equipo, de la 0.0.1 a la 0.1.2.
 - Funcionó de punta a punta: descarga, SHA-256 y manifiesto correctos, y el instalador cerró la 0.0.1, cambió el programa sin reintentos y abrió la nueva.
@@ -433,7 +434,7 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
 
 1. **Comprueba la carpeta extraída** contra el manifiesto. Si falta algo, no toca nada y dice qué archivo es.
 2. **Prepara una copia aparte** en `%LOCALAPPDATA%\Programs\Voziris.nuevo`. Le quita la marca de Internet y la arranca con `--comprobar`.
-3. **Solo entonces cambia el programa:** cierra la Voziris abierta y sustituye `voziris.exe` y `_internal`. Si algo falla, la versión anterior se queda como estaba y se vuelve a abrir.
+3. **Solo entonces cambia el programa:** cierra la Voziris abierta y sustituye `voziris.exe` y `_internal`. Si algo falla, la versión anterior se queda como estaba y se vuelve a abrir. Desde VOZ-85, también cierra lo que siga vivo desde esa carpeta y, si hay algo transcribiendo, pregunta antes. Si otro programa lo impide, dice cuál es y deja reintentar sin volver a copiar.
 4. **Conserva los datos.** Mantiene `config.toml`, `modelos/` e `historial/` de la instalación, y de la carpeta extraída solo copia lo que falte.
 5. **Rehace lo demás:**
    - el acceso del menú Inicio, y el de inicio de sesión si existía;
@@ -444,7 +445,7 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
 
 Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora. Lo que pasa queda en `voziris-actualizar.log` y en `voziris-instalar.log`, junto al `voziris.log` de la instalación, y el diagnóstico recoge los dos.
 
-No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Si dice «otro programa tiene abierto un archivo», mira en el Administrador de tareas si queda otra `voziris.exe`: basta una sin ventana para bloquearlo. El aviso final puede abrirse detrás de otras ventanas. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
+No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Con el instalador de la 0.1.2 o anterior, si dice «otro programa tiene abierto un archivo», mira en el Administrador de tareas si queda otra `voziris.exe`: basta una sin ventana para bloquearlo. Su aviso final, además, puede abrirse detrás de otras ventanas. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
 
 ### Si se usa sin instalar y va a seguir así
 

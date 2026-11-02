@@ -263,17 +263,24 @@ def _error_fatal(
 ) -> None:
     log.error(mensaje)
     print(mensaje, file=sys.stderr)
-    if con_ventana:
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
+    if con_ventana and winapi.ES_WINDOWS:
+        winapi.cuadro(titulo, mensaje, winapi.MB_ICONERROR)
 
-            raiz = tk.Tk()
-            raiz.withdraw()
-            messagebox.showerror(titulo, mensaje)
-            raiz.destroy()
-        except Exception:  # noqa: BLE001 — sin Tk, ya está en el log y en stderr
-            pass
+
+AVISO_YA_ABIERTA_S = 10
+"""Un duplicado no puede quedarse esperando a que alguien cierre su aviso (VOZ-85)."""
+
+
+def _aviso_ya_abierta() -> None:
+    """Se cierra solo: lo puede haber lanzado otro programa, sin nadie delante que lo vea.
+
+    El 31 de octubre un duplicado se quedó parado en su aviso sin ventana visible,
+    y el instalador falló dos veces por él.
+    """
+    texto = "Voziris ya está abierto: mira el icono de la bandeja."
+    log.info(texto)
+    print(texto, file=sys.stderr)
+    winapi.cuadro("Voziris", texto, segundos=AVISO_YA_ABIERTA_S)
 
 
 # --- construcción ---------------------------------------------------------------------
@@ -970,8 +977,8 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
 
         threading.Thread(target=trabajo, name="voziris-buscar-version", daemon=True).start()
 
-    actualizacion: list[Any] = []
-    """El `--actualizar` lanzado desde aquí: para no lanzar otro encima."""
+    actualizacion: list[tuple[Any, float]] = []
+    """El `--actualizar` lanzado desde aquí y cuándo: para no lanzar otro encima."""
 
     def actualizar() -> None:
         """Instalada: `--actualizar` en otro proceso, con su ventana. Portable: la página."""
@@ -981,7 +988,8 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             novedad = vigilante.novedad
             _abrir_pagina(novedad.pagina if novedad else actualizaciones.PAGINA)
             return
-        if _actualizacion_en_marcha(actualizacion[-1] if actualizacion else None):
+        ultimo, lanzado = actualizacion[-1] if actualizacion else (None, 0.0)
+        if _actualizacion_en_marcha(ultimo, time.monotonic() - lanzado):
             avisar("La actualización ya está en marcha: espera a que termine")
             return
         extra = ["--config", str(ruta_config)] if ruta_config else []
@@ -991,7 +999,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
             log.warning("no se pudo lanzar --actualizar: %s", e)
             avisar(f"No se pudo empezar la actualización: {e}")
             return
-        actualizacion.append(proceso)
+        actualizacion.append((proceso, time.monotonic()))
         # La ventana tarda unos segundos en salir (el antivirus mira el .exe).
         avisar("Preparando la actualización: en unos segundos sale su ventana")
 
@@ -1248,17 +1256,27 @@ def _guardar_respuesta(configuracion: cfg.Config, si: bool) -> str | None:
     return None
 
 
-def _actualizacion_en_marcha(proceso: Any) -> bool:
+ARRANQUE_ACTUALIZAR_S = 10.0
+"""Lo que la bandeja da por en marcha un `--actualizar` vivo que aún no ha tomado su mutex."""
+
+
+def _actualizacion_en_marcha(proceso: Any, lanzado_hace_s: float = 0.0) -> bool:
     """¿Sigue la actualización de antes? Descargando, o su instalador trabajando.
 
-    Mira el proceso lanzado desde aquí y los mutex de `--actualizar` y de
-    `--instalar`: así también cuenta una actualización lanzada antes de
-    reiniciar la bandeja. `--actualizar` no termina hasta que el instalador
-    toma el suyo (o pasan `ESPERA_INSTALADOR_S`, lo que no debería ocurrir
-    ni con el antivirus mirando cada DLL). Cuando el instalador termina, bien,
-    cancelado o con error, el mutex desaparece y se puede reintentar ya.
+    Mira los mutex de `--actualizar` y de `--instalar`: así también cuenta una
+    actualización lanzada antes de reiniciar la bandeja. `--actualizar` no
+    termina hasta que el instalador toma el suyo (o pasan
+    `ESPERA_INSTALADOR_S`, lo que no debería ocurrir ni con el antivirus mirando
+    cada DLL). Cuando cualquiera de los dos termina, bien, cancelado o con
+    error, suelta el mutex antes de su aviso final y se puede reintentar ya,
+    aunque el aviso siga abierto (VOZ-85).
+
+    Por eso el proceso lanzado desde aquí solo cuenta por sí mismo mientras
+    arranca (`ARRANQUE_ACTUALIZAR_S`), antes de tomar su mutex. Después, vivo y
+    sin mutex es que está en su aviso final. Si con el antivirus tarda más en
+    arrancar y llega otro clic, de los dos solo sigue el que tome el mutex.
     """
-    if proceso is not None and proceso.poll() is None:
+    if proceso is not None and proceso.poll() is None and lanzado_hace_s < ARRANQUE_ACTUALIZAR_S:
         return True
     return winapi.ES_WINDOWS and (
         winapi.existe_mutex(MUTEX_INSTALAR) or winapi.existe_mutex(MUTEX_ACTUALIZAR)
@@ -1376,17 +1394,8 @@ def _abrir_con_windows(ruta: Path) -> None:
 def _mensaje(titulo: str, texto: str) -> None:
     """Un cuadro de diálogo cuando no hay consola que leer."""
     print(f"{titulo}: {texto}")
-    if getattr(sys, "frozen", False):
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-
-            raiz = tk.Tk()
-            raiz.withdraw()
-            messagebox.showinfo(titulo, texto)
-            raiz.destroy()
-        except Exception:  # noqa: BLE001 — ya está impreso y en el log
-            pass
+    if getattr(sys, "frozen", False) and winapi.ES_WINDOWS:
+        winapi.cuadro(titulo, texto)
 
 
 def _cerrar_la_abierta() -> None:
@@ -1420,6 +1429,14 @@ def _instalar_cli() -> int:
         cerrada.append(winapi.ES_WINDOWS and winapi.hay_instancia_abierta())
         _cerrar_la_abierta()
 
+    def preguntar_cerrar(pregunta: str) -> bool:
+        tipo = winapi.MB_YESNO | winapi.MB_ICONWARNING | winapi.MB_DEFBUTTON2
+        return winapi.cuadro("Voziris está trabajando", pregunta, tipo) == winapi.IDYES
+
+    def preguntar_reintento(explicacion: str) -> bool:
+        tipo = winapi.MB_RETRYCANCEL | winapi.MB_ICONWARNING
+        return winapi.cuadro("No se puede cambiar el programa", explicacion, tipo) == winapi.IDRETRY
+
     def trabajo(progreso: Callable[[str, float | None], None]) -> Path:
         return instalador.instalar(
             comprobar_copia=(
@@ -1430,27 +1447,37 @@ def _instalar_cli() -> int:
             antes_de_sustituir=cerrar_la_abierta,
             al_progresar=progreso,
             pausar_volcados=volcados_en_pausa,
+            preguntar_cerrar=preguntar_cerrar,
+            preguntar_reintento=preguntar_reintento,
         )
+
+    def no_se_instala() -> None:
+        _reabrir_si_se_cerro(any(cerrada), instalador.carpeta_instalacion())
+        # Antes del aviso, que se puede quedar abierto mucho tiempo, detrás de otras
+        # ventanas: la instalación ya ha terminado (VOZ-85).
+        winapi.soltar_mutex(MUTEX_INSTALAR)
 
     try:
         destino = ejecutar_con_progreso(
             "Instalando Voziris", f"En {instalador.carpeta_instalacion()}", trabajo
         )
-    except TranscripcionCancelada:
+    except (TranscripcionCancelada, instalador.InstalacionCancelada):
         log.info("instalación cancelada")
+        no_se_instala()
         _mensaje("Instalación cancelada", "No se ha cambiado nada.")
         return 3
     except instalador.InstalacionFallida as e:
-        _reabrir_si_se_cerro(any(cerrada), instalador.carpeta_instalacion())
+        no_se_instala()
         _error_fatal(str(e), con_ventana=True, titulo=titulo_error)
         return 1
     except Exception as e:  # noqa: BLE001 — sin esto, el cuadro de PyInstaller con la traza
         log.exception("instalación fallida")
-        _reabrir_si_se_cerro(any(cerrada), instalador.carpeta_instalacion())
+        no_se_instala()
         _error_fatal(f"No se pudo instalar Voziris: {e}", con_ventana=True, titulo=titulo_error)
         return 1
     log.info("instalado en %s", destino)
     aviso = _abrir_la_instalada(destino)
+    winapi.soltar_mutex(MUTEX_INSTALAR)
     if anterior and anterior != __version__:
         # Otra versión encima (VOZ-82): una actualización, desde la bandeja o con el ZIP
         # a mano, o la vuelta a una anterior.
@@ -1596,6 +1623,16 @@ def _actualizar_cli() -> int:
         log.info("ya hay una actualización en marcha")
         return SALIDA_NADA_QUE_INSTALAR
 
+    # Antes de cada aviso final se suelta el mutex: la actualización ya ha terminado, y el
+    # aviso se puede quedar abierto mucho tiempo, detrás de otras ventanas (VOZ-85).
+    def mensaje(titulo: str, texto: str) -> None:
+        winapi.soltar_mutex(MUTEX_ACTUALIZAR)
+        _mensaje(titulo, texto)
+
+    def error(texto: str) -> None:
+        winapi.soltar_mutex(MUTEX_ACTUALIZAR)
+        _error_fatal(texto, con_ventana=True, titulo=titulo_error)
+
     def trabajo(
         progreso: Callable[[str, float | None], None],
     ) -> tuple[actualizaciones.Novedad | None, Path | None]:
@@ -1616,25 +1653,24 @@ def _actualizar_cli() -> int:
         if isinstance(tarde, tuple) and isinstance(tarde[1], Path):
             # Cancelado con todo ya descargado: no se instala, y la descarga sobra.
             shutil.rmtree(tarde[1].parent.parent, ignore_errors=True)
-        _mensaje("Actualización cancelada", "No se ha cambiado nada.")
+        mensaje("Actualización cancelada", "No se ha cambiado nada.")
         return 3
     except actualizaciones.ConsultaFallida as e:
-        _error_fatal(f"No se pudo consultar la versión nueva: {e}.", con_ventana=True,
-                     titulo=titulo_error)
+        error(f"No se pudo consultar la versión nueva: {e}.")
         return 1
     except actualizaciones.ActualizacionFallida as e:
-        _error_fatal(str(e), con_ventana=True, titulo=titulo_error)
+        error(str(e))
         return 1
     except Exception as e:  # noqa: BLE001 — sin esto, el cuadro de PyInstaller con la traza
         log.exception("actualización fallida")
-        _error_fatal(f"No se pudo actualizar Voziris: {e}", con_ventana=True, titulo=titulo_error)
+        error(f"No se pudo actualizar Voziris: {e}")
         return 1
     if novedad is None:
-        _mensaje("Voziris está al día", f"Ya tienes la última versión ({__version__}).")
+        mensaje("Voziris está al día", f"Ya tienes la última versión ({__version__}).")
         return SALIDA_NADA_QUE_INSTALAR
     if exe is None:
         # La release no trae el ZIP o su SHA256SUMS.txt con el nombre esperado.
-        _mensaje(
+        mensaje(
             "Actualizar Voziris",
             f"La versión {novedad.version} no trae el paquete para instalarse sola. "
             "Se abre su página para descargarla.",
@@ -1669,7 +1705,7 @@ def _actualizar_cli() -> int:
                 f"en {exe.parent}: puedes instalarla con «Instalar Voziris.cmd», o "
                 f"descargarla de nuevo desde {novedad.pagina}"
             )
-        _error_fatal(texto, con_ventana=True, titulo=titulo_error)
+        error(texto)
         return 1
     _esperar_al_instalador(instalador_nuevo, ESPERA_INSTALADOR_S)
     return 0
@@ -1841,7 +1877,7 @@ def main(argv: list[str] | None = None) -> int:
         return _menu_contextual_cli(activar=args.menu_contextual)
 
     if not consola and not transcribir and winapi.ES_WINDOWS and not winapi.instancia_unica():
-        _error_fatal("Voziris ya está abierto: mira el icono de la bandeja.", con_ventana=True)
+        _aviso_ya_abierta()
         return 0
 
     try:

@@ -83,6 +83,14 @@ a = Analysis(
         # que no va en el paquete: si algo lo importara, fallaría en un
         # Windows sin el redistribuible. Mejor que no esté.
         "win32ui", "win32uiole", "dde", "pythonwin",
+        # setuptools (VOZ-85): entra porque cffi lo menciona en lo que usa para
+        # compilar, y con él, el hook pyi_rth_setuptools. Ese hook lo importa en
+        # CADA arranque, setuptools pregunta su versión a importlib.metadata, y
+        # eso deja abierto _internal\base_library.zip hasta que el proceso sale:
+        # con cualquier Voziris viva, Windows no dejaba renombrar _internal al
+        # instalar. Sin él, un duplicado no retiene nada y arranca 100 ms antes.
+        # tools/empaquetar.py se niega a empaquetar si vuelve a aparecer.
+        "setuptools", "pkg_resources", "_distutils_hack", "distutils",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

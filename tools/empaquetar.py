@@ -88,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No hay ejecutable en {dist}: ejecuta antes PyInstaller.", file=sys.stderr)
         return 1
     python_dll = _dll_de_python(dist)
-    problemas = _faltan_runtimes(dist) + _rutas_largas(dist, integridad.archivos_del_programa(dist))
+    problemas = (_faltan_runtimes(dist) + _sobra_setuptools(dist)
+                 + _rutas_largas(dist, integridad.archivos_del_programa(dist)))
     if python_dll is None:
         problemas.append("no hay una sola python3XX.dll en _internal")
     elif python_dll != f"python{sys.version_info.major}{sys.version_info.minor}.dll":
@@ -163,6 +164,13 @@ def _dll_de_python(dist: Path) -> str | None:
 def _faltan_runtimes(dist: Path) -> list[str]:
     presentes = {p.name.lower() for p in (dist / "_internal").glob("*.dll")}
     return [f"falta {r} en _internal" for r in RUNTIMES_VC if r not in presentes]
+
+
+def _sobra_setuptools(dist: Path) -> list[str]:
+    """Con él, cualquier Voziris viva impide cambiar `_internal` al instalar (VOZ-85)."""
+    if (dist / "_internal" / "setuptools").exists():
+        return ["setuptools va en _internal: mira los excludes de build/voziris.spec"]
+    return []
 
 
 def _rutas_largas(dist: Path, archivos: list[Path]) -> list[str]:
