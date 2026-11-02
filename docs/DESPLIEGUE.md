@@ -2,6 +2,8 @@
 
 Este documento explica cómo publicar una versión nueva de Voziris y cómo hacer que llegue a quien lo usa. Se escribió después de publicar la 0.1.1, el 7 de octubre de 2026 (PR #40, con `main` en `149936c`). Está comprobado contra el código de esa versión y sus órdenes son las que funcionaron entonces. Lo que no se ha ejecutado nunca lleva la marca **(sin probar)**.
 
+Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen.
+
 En todo el documento, `<X.Y.Z>` es la versión nueva y `<anterior>` la que está publicada ahora (por ejemplo, 0.1.2 y 0.1.1).
 
 ## Qué significa desplegar
@@ -29,17 +31,18 @@ Todas las órdenes son de **Git Bash**, salvo dos de PowerShell que van marcadas
 | `gh` con la sesión de `alfonsosanzme` | `gh auth status` | Crea el PR y la release. |
 | El Python 3.13 del venv del proyecto, no un 3.14 | `"$PY" --version` → `3.13.x`; `"$PY" -m PyInstaller --version` → `6.x` | `pyproject.toml` excluye la 3.14. Además, `empaquetar.py` se niega si la `python3XX.dll` del paquete no es la del Python que lo ejecuta. |
 | `node` | `node --version` | Genera el blog. |
-| Unos 1,5 GB libres en `%LOCALAPPDATA%\Temp` | — | La compilación ocupa unos 370 MB. La prueba de actualización extrae paquetes de unos 230 MB y los instala. |
-| Compilar **fuera de OneDrive** | Las rutas de abajo | OneDrive impide borrar `build/dist`, y PyInstaller necesita vaciar esa carpeta. |
+| Unos 1,5 GB libres en `C:` | — | La compilación ocupa unos 370 MB en `C:\dev\voziris-release`. La prueba de actualización extrae paquetes de unos 230 MB en `%TEMP%` y los instala. |
+| Trabajar **fuera de OneDrive y de `%LOCALAPPDATA%`** | Las rutas de abajo, todas en `C:\dev` | OneDrive impide borrar `build/dist`, y PyInstaller necesita vaciar esa carpeta. La app de Claude virtualiza `%LOCALAPPDATA%`: lo que crean ahí sus herramientas no lo ve el Python del venv, que es el de la Microsoft Store (ver la primera trampa). |
 
 Hay dos trampas, las dos comprobadas:
 
 - **El venv vive en la copia principal y arrastra su código.**
-  - El venv está en `voziris-entrega/voziris/.venv` y tiene Voziris instalado en modo editable, apuntando al `src/` de la copia principal.
-  - Esa copia puede ir por detrás de `main` o tener cambios sin commit de otra sesión. Sin `PYTHONPATH`, Python y PyInstaller cogen ese código.
+  - El venv es `C:\dev\voziris\.venv` y tiene Voziris instalado en modo editable, apuntando a `C:\dev\voziris\src`, el de la copia principal.
+  - Esa copia puede ir por detrás de `origin/main`. Sin `PYTHONPATH`, Python y PyInstaller cogen ese código.
   - El 7 de octubre, `import voziris` sin `PYTHONPATH` daba la 0.1.0.
   - En el registro de PyInstaller de la 0.1.1, el `pathex` del `.spec` aparece **detrás** del `src` de la copia principal.
   - Por eso todas las órdenes de Python de este documento llevan `PYTHONPATH="$PWD/src"` y se ejecutan desde el worktree.
+  - Con `PYTHONPATH` en una carpeta que ese Python no ve, `import voziris` vuelve a caer en la copia principal, y sin avisar. Pasa con lo que crea la app de Claude en `%LOCALAPPDATA%`: en octubre dio tres fallos falsos al probar #43 y #44. Por eso el paso 1 imprime `voziris.__file__`.
 - **PyInstaller empaqueta lo que hay en disco, no lo que hay en git.** Hay que compilar desde un worktree limpio, nunca desde la copia principal.
 
 Estas son las variables que usan las órdenes. Un Git Bash abierto a mano las conserva de una orden a otra. **Una sesión de Claude Code empieza cada llamada con un shell nuevo**, así que tiene que poner al principio de cada bloque las variables que use.
@@ -47,13 +50,17 @@ Estas son las variables que usan las órdenes. Un Git Bash abierto a mano las co
 ```bash
 V=<X.Y.Z>                       # la versión nueva: solo dígitos y puntos
 ANT=<anterior>                  # la publicada ahora
+PY="C:/dev/voziris/.venv/Scripts/python.exe"   # el venv del proyecto
+REL="C:/dev/voziris-release-$V"     # worktree limpio de la rama release-<X.Y.Z>
+BUILD="C:/dev/voziris-release/$V"   # salida de PyInstaller y del empaquetado
 CREATICS="$HOME/OneDrive - Creatics Mundo Educa"
-PY="$CREATICS/KAIRIS/Studio/Voziris/voziris-entrega/voziris/.venv/Scripts/python.exe"
-REL="$LOCALAPPDATA/Temp/voziris-rel-$V"       # worktree limpio, fuera de OneDrive
-BUILD="$LOCALAPPDATA/Temp/voziris-build-$V"   # salida de PyInstaller y del empaquetado
-WEB="$CREATICS/LABIAS/WEB - KAIRIS - Claude/Nueva KAIRIS"
-COMPARTIR="$CREATICS/KAIRIS/Studio/Voziris/voziris-entrega/compartir"
+WEB="$CREATICS/KAIRIS/Web Kairis_Claude"   # el repositorio de kairis.es
+COMPARTIR="C:/dev/voziris-entrega/compartir"
 ```
+
+Como cualquier otra rama, el worktree va en `C:\dev\voziris-<rama>`. Las compilaciones van juntas en `C:\dev\voziris-release`, una carpeta por versión. `C:\dev\voziris-entrega` es un enlace (*junction*) a la carpeta `KAIRIS\Studio\Voziris\voziris-entrega` de OneDrive.
+
+La web también se mudó el 21 de octubre. La carpeta de antes, `LABIAS\WEB - KAIRIS - Claude\Nueva KAIRIS`, es una copia congelada que no llega ni a GitHub ni a kairis.es: lo dice su `MUDADO.md`.
 
 ## Paso a paso
 
@@ -62,7 +69,7 @@ COMPARTIR="$CREATICS/KAIRIS/Studio/Voziris/voziris-entrega/compartir"
 Esto se hace en Git Bash, desde cualquier copia del repositorio. `git fetch` y `git worktree add` solo escriben en `.git`: no tocan los archivos de nadie ni sus cambios sin commit.
 
 ```bash
-cd "$CREATICS/KAIRIS/Studio/Voziris/voziris-entrega/voziris"
+cd C:/dev/voziris
 git fetch origin --tags
 git worktree add --no-track -b "release-$V" "$REL" origin/main
 cd "$REL" && git status -sb                  # "## release-<X.Y.Z>", sin cambios
@@ -79,7 +86,7 @@ grep -n '^version' pyproject.toml; grep -n '__version__ =' src/voziris/__init__.
 PYTHONPATH="$PWD/src" "$PY" -B -c "import voziris; print(voziris.__version__, voziris.__file__)"
 ```
 
-Tiene que salir `<X.Y.Z>` con una ruta dentro de `voziris-rel-<X.Y.Z>`. La única prueba que fijaba la versión ya usa `__version__` (commit `3997d10`). Si una prueba falla solo por el número de versión, es por eso.
+Tiene que salir `<X.Y.Z>` con una ruta dentro de `C:\dev\voziris-release-<X.Y.Z>`. Si sale `C:\dev\voziris\src`, el `PYTHONPATH` no ha servido: no sigas. La única prueba que fijaba la versión ya usa `__version__` (commit `3997d10`). Si una prueba falla solo por el número de versión, es por eso.
 
 Mira también si `pyproject.toml` trae dependencias nuevas, con `git diff "v$ANT" -- pyproject.toml`. Si las trae, instálalas en el venv con `"$PY" -m pip install "<paquete>"`. No uses `pip install -e .` desde el worktree: reengancharía al worktree el venv de la copia principal.
 
@@ -146,7 +153,7 @@ echo "salida: $?"; tail -n 1 "$BUILD/pyinstaller.log"
 grep -A3 "Module search paths" "$BUILD/pyinstaller.log"
 ```
 
-Tienen que salir `salida: 0` y `Build complete!`. Las dos primeras rutas de búsqueda tienen que ser `…\voziris-rel-<X.Y.Z>` y `…\voziris-rel-<X.Y.Z>\src`. Si aparece antes `…\voziris-entrega\voziris\src`, faltaba `PYTHONPATH` y el paquete lleva el código de la copia principal.
+Tienen que salir `salida: 0` y `Build complete!`. Las dos primeras rutas de búsqueda tienen que ser `C:\dev\voziris-release-<X.Y.Z>` y `C:\dev\voziris-release-<X.Y.Z>\src`. Si aparece antes `C:\dev\voziris\src`, faltaba `PYTHONPATH` y el paquete lleva el código de la copia principal.
 
 ### 5. Empaquetar
 
@@ -315,7 +322,7 @@ echo $(( ( $(stat -c %s "$BUILD/dist/voziris-$V-win64.zip") + 524288 ) / 1048576
 
 Revisa también la `nota` del mismo objeto. `grep -n "0\.1\." "$WEB/data/blog.json"` encuentra las versiones que se mencionan en el texto.
 
-**Quién lo hace.** En `Nueva KAIRIS` trabaja otra sesión, «WEB Kairis». El enlace de la 0.1.1 lo cambió ella, en el commit `a3229f7`, y desplegó con el OK de Alfonso. Lo más limpio es pasarle este encargo:
+**Quién lo hace.** En el repositorio de la web (`$WEB`) trabaja otra sesión, «WEB Kairis». El enlace de la 0.1.1 lo cambió ella, en el commit `a3229f7`, y desplegó con el OK de Alfonso. Lo más limpio es pasarle este encargo:
 
 > Sigue la skill `anadir-blog`. En `data/blog.json`, post `voziris`, objeto `descarga`, pon url `<URL>`, version `v<X.Y.Z>` y peso `<N> MB`. No toques nada más del post. Antes, comprueba que la URL responde 200 con `<bytes>` bytes y SHA-256 `<hash>`. Después:
 >
@@ -523,7 +530,7 @@ Volver a la versión anterior es instalar su ZIP, que sigue en su release.
 
   Cada frase está contrastada con el código.
 - [ ] La suite (sin las dos pruebas de la bandeja), `ruff` y `mypy` están en verde.
-- [ ] El paquete está compilado desde un árbol limpio, fuera de OneDrive, y el worktree es lo primero en las rutas de PyInstaller.
+- [ ] El paquete está compilado desde un árbol limpio, en `C:\dev` (fuera de OneDrive y de `%LOCALAPPDATA%`), y el worktree es lo primero en las rutas de PyInstaller.
 - [ ] `empaquetar.py` ha terminado sin errores, `sha256sum -c` da OK y `--version` dice <X.Y.Z>.
 - [ ] El hash está en un commit, en las notas, junto al nombre del ZIP nuevo.
 - [ ] `tools/probar_instalacion.py` pasa desde cero y encima de cada versión publicada, y las tres verificaciones independientes no dejan nada pendiente.
@@ -550,11 +557,11 @@ Volver a la versión anterior es instalar su ZIP, que sigue en su release.
 `docs/RELEASE.md` sigue siendo la referencia para la verificación a mano en una máquina limpia (§4), que aquí no se repite. En lo demás contradice este documento en varios puntos, y en caso de duda manda este:
 
 - **§1 (y también la sección «Empaquetado» del README y la cabecera de `build/voziris.spec`)** compila con `pyinstaller … --distpath build/dist --workpath build/work`.
-  - Eso compila dentro del repositorio. La copia principal está en OneDrive, que impide vaciar `build/dist`, y además tiene cambios sin commit de otra sesión.
+  - Eso compila dentro del repositorio, en la copia principal. Esa copia puede ir por detrás de `origin/main`, y PyInstaller empaqueta lo que hay en disco. Además, tiene que quedarse en `main` y sin cambios, porque las sesiones de Claude se abren en ella.
   - `pyinstaller` a secas, sin `PYTHONPATH`, coge el `src/` de la copia principal (ver «Antes de empezar»).
   - Aquí se usa `"$PY" -m PyInstaller`, con salida en `$BUILD`.
 - **§2** tiene tres problemas:
-  - Usa `banco\muestra-08.wav` y `prueba de voz\nota.m4a`, que están en `.gitignore` y solo existen en la copia principal, no en un worktree.
+  - Usa `banco\muestra-08.wav` y `prueba de voz\nota.m4a`, que están en `.gitignore` y no existen en un worktree. Las grabaciones de prueba están en `voziris-entrega\datos-pruebas`, fuera del repositorio.
   - `voziris.exe --salir` cierra la Voziris que esté abierta, también la que Alfonso tiene instalada.
   - `voziris.exe --config …` sin `--archivo` no arranca si ya hay otra Voziris abierta, porque solo admite una instancia.
 - **§3** ejecuta `python tools/empaquetar.py` sin `--dist`, que da por hecho `build/dist/voziris`, y dice que `SHA256SUMS.txt` queda en `build/dist`. Con `--dist`, queda junto a la carpeta indicada, en `$BUILD/dist`.
