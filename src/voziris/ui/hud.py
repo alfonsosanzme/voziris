@@ -20,7 +20,7 @@ Requisitos de comportamiento:
 Hilos: vive en el hilo principal (Tk). Los métodos públicos se pueden llamar
 desde cualquier hilo: encolan en el hilo de Tk a través de `en_hilo_tk`.
 
-Issue: VOZ-22.
+Issue: VOZ-22, VOZ-86.
 """
 
 from __future__ import annotations
@@ -74,7 +74,8 @@ class Hud:
         self._grabando = False
         self._nivel_dibujado = 0.0
         self._temporizador: str | None = None
-        self._aviso_pendiente: str | None = None
+        self._con_aviso = False
+        """Hay un aviso a la vista: solo lo quitan su temporizador o el dictado siguiente."""
         self.visible = False
 
     # --- API pública (cualquier hilo) --------------------------------------------
@@ -90,6 +91,7 @@ class Hud:
         self._en_hilo_tk(lambda: self._mostrar("Procesando…", grabando=False))
 
     def ocultar(self, aviso: str | None = None) -> None:
+        """Al acabar un dictado. Un aviso que esté a la vista se queda su tiempo (VOZ-86)."""
         self._en_hilo_tk(lambda: self._ocultar(aviso))
 
     def aviso(self, texto: str) -> None:
@@ -164,6 +166,7 @@ class Hud:
         v = self._crear()
         assert self._lienzo is not None
         self._cancelar_temporizador()
+        self._con_aviso = False
         self._lienzo.itemconfigure(self._texto_id, text=texto)
         self._grabando = grabando
         self._lienzo.itemconfigure(self._barra_id, fill=BARRA if grabando else PROCESANDO)
@@ -198,6 +201,11 @@ class Hud:
             self._lienzo.itemconfigure(self._barra_id, fill=BARRA_ALTA if nivel > 0.9 else BARRA)
 
     def _ocultar(self, aviso: str | None) -> None:
+        if not aviso and self._con_aviso:
+            # El orquestador avisa y pasa a reposo al momento, y las dos órdenes
+            # llegan en la misma tanda de la cola: si esta quitara el aviso, se iría
+            # sin llegar a pintarse (VOZ-86).
+            return
         self._cancelar_temporizador()
         self._grabando = False
         if aviso:
@@ -208,12 +216,17 @@ class Hud:
             if not self.visible:
                 self._presentar(v)
                 self.visible = True
-            self._temporizador = self._raiz.after(AVISO_MS, lambda: self._ocultar(None))
+            self._con_aviso = True
+            self._temporizador = self._raiz.after(AVISO_MS, self._retirar_aviso)
             return
         if self._ventana is not None:
             self._ventana.withdraw()
         self.visible = False
         self._nivel_dibujado = 0.0
+
+    def _retirar_aviso(self) -> None:
+        self._con_aviso = False
+        self._ocultar(None)
 
     def _cancelar_temporizador(self) -> None:
         if self._temporizador is not None:
@@ -222,6 +235,7 @@ class Hud:
 
     def destruir(self) -> None:
         self._cancelar_temporizador()
+        self._con_aviso = False
         if self._ventana is not None:
             self._ventana.destroy()
             self._ventana = None
