@@ -2,7 +2,7 @@
 
 Este documento explica cómo publicar una versión nueva de Voziris y cómo hacer que llegue a quien lo usa. Se escribió después de publicar la 0.1.1, el 7 de octubre de 2026 (PR #40, con `main` en `149936c`). Está comprobado contra el código de esa versión y sus órdenes son las que funcionaron entonces. Lo que no se ha ejecutado nunca lleva la marca **(sin probar)**.
 
-Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen.
+Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen. Con ellas se publicó la 0.1.2 el 2 de noviembre de 2026 (PR #48, con `main` en `43d7cf8`): los pasos 1 a 9 y el 11 están comprobados con esa versión.
 
 En todo el documento, `<X.Y.Z>` es la versión nueva y `<anterior>` la que está publicada ahora (por ejemplo, 0.1.2 y 0.1.1).
 
@@ -34,7 +34,7 @@ Todas las órdenes son de **Git Bash**, salvo dos de PowerShell que van marcadas
 | Unos 1,5 GB libres en `C:` | — | La compilación ocupa unos 370 MB en `C:\dev\voziris-release`. La prueba de actualización extrae paquetes de unos 230 MB en `%TEMP%` y los instala. |
 | Trabajar **fuera de OneDrive y de `%LOCALAPPDATA%`** | Las rutas de abajo, todas en `C:\dev` | OneDrive impide borrar `build/dist`, y PyInstaller necesita vaciar esa carpeta. La app de Claude virtualiza `%LOCALAPPDATA%`: lo que crean ahí sus herramientas no lo ve el Python del venv, que es el de la Microsoft Store (ver la primera trampa). |
 
-Hay dos trampas, las dos comprobadas:
+Hay tres trampas, las tres comprobadas:
 
 - **El venv vive en la copia principal y arrastra su código.**
   - El venv es `C:\dev\voziris\.venv` y tiene Voziris instalado en modo editable, apuntando a `C:\dev\voziris\src`, el de la copia principal.
@@ -44,6 +44,9 @@ Hay dos trampas, las dos comprobadas:
   - Por eso todas las órdenes de Python de este documento llevan `PYTHONPATH="$PWD/src"` y se ejecutan desde el worktree.
   - Con `PYTHONPATH` en una carpeta que ese Python no ve, `import voziris` vuelve a caer en la copia principal, y sin avisar. Pasa con lo que crea la app de Claude en `%LOCALAPPDATA%`: en octubre dio tres fallos falsos al probar #43 y #44. Por eso el paso 1 imprime `voziris.__file__`.
 - **PyInstaller empaqueta lo que hay en disco, no lo que hay en git.** Hay que compilar desde un worktree limpio, nunca desde la copia principal.
+- **Desde la app de Claude, el registro también está virtualizado.** El 2 de noviembre, sus herramientas leían en `HKCU` una copia privada y vieja: `DisplayVersion` 0.1.0, con la 0.1.2 instalada.
+  - Para ver el valor real, usa el Python del venv (`winreg`) o WMI (`StdRegProv`).
+  - Por eso, los instaladores de la Voziris de verdad los lanza Alfonso desde el Explorador, no una sesión de Claude.
 
 Estas son las variables que usan las órdenes. Un Git Bash abierto a mano las conserva de una orden a otra. **Una sesión de Claude Code empieza cada llamada con un shell nuevo**, así que tiene que poner al principio de cada bloque las variables que use.
 
@@ -218,25 +221,46 @@ No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de p
 2. **La actualización** desde cada versión que pueda estar instalada, con 6.1 o con una prueba equivalente escrita a partir de `src/voziris/instalador.py`.
 3. **Las notas contra el código.** Cada frase de `docs/notas-release.md`, y de `docs/LEEME-instalar.html` si ha cambiado, se contrasta con el código y con `git diff v<anterior>..HEAD`. Lo que no se sostenga, se quita.
 
-**6.2 bis. La actualización desde la bandeja (desde la 0.1.2) (sin probar).** Es la única parte que no se puede arreglar después de publicar. Si `--actualizar` de una versión falla, publicar otra no lo arregla, porque es la versión instalada la que descarga. Se prueba contra la release viva sin publicar nada:
+**6.2 bis. La actualización desde la bandeja (desde la 0.1.2).** Es la única parte que no se puede arreglar después de publicar. Si `--actualizar` de una versión falla, publicar otra no lo arregla, porque es la versión instalada la que descarga. Se prueba contra la release viva sin publicar nada:
 
-1. Compila la versión nueva con `__version__` cambiado **solo en la copia de compilación** a una anterior a la publicada (por ejemplo `0.0.1`).
-2. Instálala en un equipo o usuario de Windows de pruebas, **nunca en el de Alfonso**: la actualización cierra la Voziris abierta y escribe en el registro de su usuario. Contesta «Sí» a la tarjeta y deja algún dictado en el historial.
+1. Compila la versión nueva con `__version__` cambiado **solo en una copia de compilación** a una anterior a la publicada (por ejemplo `0.0.1`). Es un worktree desechable: `empaquetar.py` también escribe en sus notas, y da igual.
+
+   ```bash
+   PRUEBA="C:/dev/voziris-release/$V-prueba-0.0.1"; mkdir -p "$PRUEBA"
+   cd C:/dev/voziris && git worktree add --detach "C:/dev/voziris-prueba-bandeja-$V" "release-$V"
+   cd "C:/dev/voziris-prueba-bandeja-$V"
+   sed -i 's/^__version__ = .*/__version__ = "0.0.1"/' src/voziris/__init__.py
+   PYTHONPATH="$PWD/src" "$PY" -m PyInstaller build/voziris.spec --noconfirm \
+     --distpath "$PRUEBA/dist" --workpath "$PRUEBA/work" > "$PRUEBA/pyinstaller.log" 2>&1
+   PYTHONPATH="$PWD/src" "$PY" tools/empaquetar.py --dist "$PRUEBA/dist/voziris"
+   ```
+
+2. Extrae ese ZIP en una carpeta nueva e instálalo con su `Instalar Voziris.cmd`, en un equipo o usuario de Windows de pruebas, **nunca en el de Alfonso sin su sí**: la actualización cierra la Voziris abierta y escribe en el registro de su usuario. Pulsa Aceptar en el aviso final. Contesta «Sí» a la tarjeta y deja algún dictado en el historial.
 3. Bandeja → «Buscar actualizaciones» → «Actualizar a la <publicada>…».
 4. Comprueba lo siguiente:
    - sale la ventana de progreso, y Cancelar no deja nada;
-   - si no cancelas, la bandeja se cierra y se abre la versión publicada;
+   - si no cancelas, la bandeja se cierra y se abre la versión publicada, con el aviso «Voziris actualizado… (antes, la 0.0.1)»;
    - `config.toml`, `modelos/` e `historial/` siguen intactos;
-   - `voziris-actualizar.log` está en la carpeta de la instalación.
+   - `voziris-actualizar.log` y `voziris-instalar.log` están en la carpeta de la instalación;
+   - en `voziris-instalar.log` no hay ningún «reintento»: `--actualizar` ya no retenía `_internal`.
 
-Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la **publicada**, y lo que se ve al final depende de cuál sea:
+Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la **publicada**, y tiene que ser la 0.1.2 o posterior. Contra la 0.1.1 no puede terminar: su instalador no toma el mutex de instalar, así que `--actualizar` sigue vivo durante el cambio (hasta `ESPERA_INSTALADOR_S`) y le bloquea `_internal`. Esto último se dedujo del código y de lo medido; no se ejecutó.
 
-- **Si la publicada es la 0.1.1** (el caso de la primera prueba, con la 0.1.2): su instalador termina con «Voziris instalado» y no con «Voziris actualizado». Escribe su registro en `voziris.log` y no en `voziris-instalar.log`, y no toma el mutex de instalar. Por eso la ventana de `--actualizar` sigue abierta unos 3 minutos (`ESPERA_INSTALADOR_S`) antes de cerrarse sola. Todo eso es lo esperado.
-- **Si la publicada es la 0.1.2 o posterior:** el aviso dice «Voziris actualizado», el registro del instalador está en `voziris-instalar.log` junto a la instalación, y `--actualizar` se cierra en cuanto el instalador arranca.
+Hay dos cosas que confunden, las dos vistas con la 0.1.2:
+
+- **Una Voziris viva de la carpeta instalada impide cambiar `_internal`** (`WinError 5`, «otro programa tiene abierto un archivo»). Con una copia, pasa desde unos 50 ms después de arrancar. El 31 de octubre lo provocó un duplicado sin ventana, parado en el aviso «Voziris ya está abierto». Antes de instalar, mira en el Administrador de tareas que no quede otra `voziris.exe`.
+- **El instalador retiene su mutex hasta que se pulsa Aceptar en el aviso final**, y ese aviso puede abrirse detrás de otras ventanas. Mientras tanto, «Actualizar» contesta que ya hay una actualización en marcha y no descarga nada. Búscalo con Alt+Tab.
+
+**Cómo fue con la 0.1.2 (2 de noviembre).** No se podía probar antes de publicar, porque la publicada era la 0.1.1. Por decisión de Alfonso, se publicó primero y se probó justo después, en su propio equipo, de la 0.0.1 a la 0.1.2.
+- Funcionó de punta a punta: descarga, SHA-256 y manifiesto correctos, y el instalador cerró la 0.0.1, cambió el programa sin reintentos y abrió la nueva.
+- El programa quedó idéntico al ZIP, y `config.toml`, el modelo y el historial, intactos.
+- Cancelar no se llegó a pulsar: solo lo cubren sus tests.
 
 **6.3. Máquina limpia.** La lista a mano está en `docs/RELEASE.md` §4 y no se repite aquí. Incluye Windows sin Python, un USB, el arranque en menos de 3 segundos y Control inteligente de aplicaciones. Más detalles en el último apartado de este documento.
 
 Si algo falla, el arreglo va en la rama: commit y vuelta al paso 3. Hay que volver a compilar y a empaquetar, y el hash cambia.
+
+Si solo cambia el LÉEME, basta con repetir el paso 5 sobre el mismo build, porque lo copia `empaquetar.py`. Así se hizo en la 0.1.2. Compara después los dos ZIP: solo tienen que cambiar el LÉEME, la fecha de `voziris-versiones.txt` y su línea del manifiesto.
 
 ### 7. PR y fusión
 
@@ -259,7 +283,7 @@ gh pr merge "release-$V" --squash
 
 `main` no está protegida, así que GitHub fusiona aunque la rama vaya por detrás. En ese caso, el commit fusionado llevaría código que el ZIP no tiene.
 
-La segunda orden detecta los cambios hechos después de compilar. Si solo tocan cosas que no van en el ZIP (el README, `docs/` salvo el LÉEME, `tests/`), no hace falta recompilar.
+La segunda orden detecta los cambios hechos después de compilar. Si solo tocan cosas que no van en el ZIP (el README, `docs/` salvo el LÉEME, `tests/`), no hace falta recompilar. Si toca el LÉEME, comprueba que el del ZIP es el de la rama.
 
 Igual que en la 0.1.1, la fusión se hace sin `--delete-branch`.
 
@@ -299,7 +323,7 @@ Comprueba también que Voziris la ve como la verán los equipos (VOZ-82). Desde 
 PYTHONPATH=src "$PY" -c "from voziris import actualizaciones as a; n = a.consultar('$ANT'); print(n, n.instalable if n else '')"
 ```
 
-Tiene que salir `Novedad(version='<X.Y.Z>', …)` con las URL de esta release, y `True`. Con `False`, a la release le falta el ZIP o `SHA256SUMS.txt` con su nombre exacto. **(Sin probar con una release nueva:** se comprobó contra la 0.1.1, preguntando desde la 0.1.0.)
+Tiene que salir `Novedad(version='<X.Y.Z>', …)` con las URL de esta release, y `True`. Con `False`, a la release le falta el ZIP o `SHA256SUMS.txt` con su nombre exacto. Comprobado con la 0.1.2, preguntando desde la 0.1.1.
 
 ### 10. La web: el enlace de kairis.es
 
@@ -420,7 +444,7 @@ Haz doble clic en el `Instalar Voziris.cmd` de la carpeta nueva. Da igual que ve
 
 Desde la 0.1.2, bandeja → «Actualizar a la X.Y.Z…» hace lo mismo sin tocar nada a mano. Descarga el ZIP y `SHA256SUMS.txt` de la release, comprueba el hash y el manifiesto, lo descomprime en `%TEMP%\voziris-actualizacion` y ejecuta el `--instalar` de la versión nueva. La carpeta temporal la borra la siguiente Voziris que arranque, pasada una hora. Lo que pasa queda en `voziris-actualizar.log` y en `voziris-instalar.log`, junto al `voziris.log` de la instalación, y el diagnóstico recoge los dos.
 
-No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
+No hace falta cerrar Voziris antes, porque el instalador la cierra justo antes del cambio. Si dice «otro programa tiene abierto un archivo», mira en el Administrador de tareas si queda otra `voziris.exe`: basta una sin ventana para bloquearlo. El aviso final puede abrirse detrás de otras ventanas. Para comprobar la versión, en Git Bash: `"$LOCALAPPDATA/Programs/Voziris/voziris.exe" --version`. También se ve en Configuración → Aplicaciones → Voziris. Después, la carpeta extraída ya no hace falta.
 
 ### Si se usa sin instalar y va a seguir así
 
@@ -534,6 +558,7 @@ Volver a la versión anterior es instalar su ZIP, que sigue en su release.
 - [ ] `empaquetar.py` ha terminado sin errores, `sha256sum -c` da OK y `--version` dice <X.Y.Z>.
 - [ ] El hash está en un commit, en las notas, junto al nombre del ZIP nuevo.
 - [ ] `tools/probar_instalacion.py` pasa desde cero y encima de cada versión publicada, y las tres verificaciones independientes no dejan nada pendiente.
+- [ ] La prueba de «Actualizar» desde la bandeja (6.2 bis) ha salido bien contra la versión publicada.
 - [ ] La lista a mano de `docs/RELEASE.md` §4 está hecha, o Alfonso ha decidido no exigirla.
 - [ ] El PR está fusionado con squash, y `main` coincide con lo compilado (salvo las notas).
 - [ ] La release `v<X.Y.Z>`:
