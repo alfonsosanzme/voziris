@@ -732,7 +732,10 @@ class Orquestador:
         """La cadena en orden fijo. Ningún paso puede perder el dictado."""
         for paso in self._postprocesos:
             if paso.requiere_red and not ctx.hay_red:
-                t.avisos.append(f"Sin red: «{paso.nombre}» omitido")
+                # Con «literal» no iba a hacer nada, y con el motor local ni se mira si
+                # hay red: el aviso saldría en cada dictado, y sería falso (VOZ-87).
+                if ctx.nivel is not Nivel.LITERAL:
+                    t.avisos.append(f"Sin red: «{paso.nombre}» omitido")
                 continue
             try:
                 t = paso.aplicar(t, ctx)

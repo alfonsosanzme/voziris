@@ -512,7 +512,7 @@ Dos cosas que no se veían. El 31/10, la instalación falló dos veces en el equ
 - [x] Si no se instala, por el motivo que sea, y se había cerrado la bandeja, se vuelve a abrir. También al cancelar.
 - [x] `MUTEX_INSTALAR` y `MUTEX_ACTUALIZAR` se sueltan antes de cualquier aviso final: bien, cancelado o con error.
 - [x] Por eso, la bandeja da por en marcha un `--actualizar` vivo y sin mutex solo durante sus primeros 10 s. Si con el antivirus tarda más y llega otro clic, de los dos solo sigue el que tome el mutex.
-- [x] `_mensaje` y `_error_fatal` son cuadros nativos encima de las demás ventanas (`MB_TOPMOST | MB_SETFOREGROUND`). Windows puede negarles el foco, pero se ven.
+- [x] `_mensaje` y `_error_fatal` son cuadros nativos con `MB_TOPMOST | MB_SETFOREGROUND`. Windows puede negarles el foco. *(«Siempre encima» no se sostuvo en la prueba del 3/11: ver abajo.)*
 - [x] Probado con el `.exe` compilado, en un escritorio oculto y con carpetas y claves de prueba:
   - un duplicado de la 0.1.2 parado en su aviso impide renombrar `_internal`. `_instalar_cli` lo cierra con `WM_CLOSE` y cambia el programa sin reintentos;
   - un duplicado compilado con esto sale a los 10 s con código 0, y mientras vive deja renombrar `_internal`;
@@ -524,9 +524,13 @@ Dos cosas que no se veían. El 31/10, la instalación falló dos veces en el equ
   - pulsar Cancelar mientras se cierra la bandeja deja viva la transcripción ya aceptada;
   - una transcripción que empieza mientras se cierra la bandeja se pregunta: con «No» sigue, también la que ya se había aceptado, y con «Sí» se cierra e instala.
 
-**Sin probar:**
-- `--instalar` y «Actualizar» de verdad, con una bandeja real. En la prueba, el cierre y la reapertura de la bandeja estaban sustituidos. Se comprueba en `docs/DESPLIEGUE.md` §6.2 bis cuando la publicada lleve esto.
-- Que el aviso se vea encima de otras ventanas en una pantalla de verdad.
+**Con una bandeja real, el 3/11 (0.1.3 con el número 0.0.1, en el equipo de Alfonso; `docs/DESPLIEGUE.md` §6.2 bis):**
+- `--instalar` cerró la 0.1.2 y abrió la nueva, sin reintentos, con el mutex suelto en el aviso final.
+- Con ese aviso abierto, «Actualizar» arrancó a la primera.
+
+**Sin aclarar:** el aviso final no se quedó con `WS_EX_TOPMOST`. A los 18 s de salir tenía el estilo `0x00010101`, sin nadie que se lo pidiera. El mismo cuadro sí lo tiene en un escritorio oculto, también desde el `.exe` y tras la ventana de progreso, y 3 s en la pantalla de verdad, aunque pierda el primer plano. No se sabe si lo pierde o no llega a tenerlo, ni por qué. Esa prueba solo lo midió a partir de los 18 s. No bloquea nada, porque el mutex ya no depende de ese aviso.
+
+**Sin probar con una bandeja real:** cerrar un duplicado (se cerró antes de llegar el instalador), y Cancelar.
 
 **Fuera de esto:** `--desinstalar` tiene el mismo punto ciego: si algo retiene la carpeta, no la borra entera y no lo dice.
 
@@ -546,3 +550,16 @@ Lo encontró la verificación de las notas de la 0.1.2. El orquestador avisa y p
 **Fuera de esto, y sigue igual**
 - Si llegan dos avisos seguidos, solo se ve el último.
 - Un aviso de más de unos 45 caracteres se corta por el ancho del indicador (268 px útiles): «La API falló (…): transcrito en local» se ve cortado. Los que ya se veían, igual.
+
+### VOZ-87 · Lo de serie no avisa en cada dictado
+**Archivos:** `motores/selector.py`, `motores/api.py`, `orquestador.py`
+
+Lo encontró la verificación de las notas de la 0.1.3. VOZ-86 hizo visibles los avisos de un dictado, y entre ellos había dos que salían en todos:
+- con lo de serie (motor automático, sin clave), «Sin clave de API: transcrito en local», cuando el LÉEME dice que la API no hace falta para nada;
+- con motor local, nivel literal y un modelo de IA puesto, «Sin red: «llm» omitido», aunque hubiera red: con ese motor y ese nivel no se mira.
+
+**Criterios de aceptación**
+- [x] En automático y sin clave se transcribe en local sin avisar.
+- [x] Con el motor en API y sin clave, el aviso sigue: se ha pedido algo que no se cumple.
+- [x] En automático con clave y sin conexión, el aviso sigue: el dictado sale con el otro motor.
+- [x] Con nivel literal, un paso que necesita red no avisa. Con otro nivel y sin red, sigue avisando.

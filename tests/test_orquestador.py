@@ -24,6 +24,7 @@ from voziris.tipos import (
     EntradaHistorial,
     Entrega,
     Modo,
+    Nivel,
     Transcripcion,
 )
 
@@ -419,6 +420,27 @@ def test_postproceso_que_lanza_no_pierde_el_dictado(banco: Banco) -> None:
     assert texto == "Hola, mundo."
     banco.esperar_reposo()
     assert any("roto" in a for a in banco.avisos) and any("Sin red" in a for a in banco.avisos)
+
+
+def test_con_nivel_literal_un_paso_de_red_no_avisa(banco: Banco) -> None:
+    """VOZ-87: no iba a hacer nada, y con el motor local ni se mira si hay red."""
+
+    class ConRed:
+        nombre = "llm"
+        requiere_red = True
+
+        def aplicar(self, t: Transcripcion, ctx: Contexto) -> Transcripcion:
+            t.texto = "nunca"
+            return t
+
+    banco.orq._postprocesos = [ConRed()]
+    banco.orq.nivel = Nivel.LITERAL
+    banco.orq.empezar(Modo.MANTENER, "app_activa")
+    banco.orq.terminar(1000)
+    texto, _ = banco.destino.esperar()[0]
+    assert texto == "Hola, mundo."
+    banco.esperar_reposo()
+    assert banco.avisos == []
 
 
 # --- modo clavar con VAD (VOZ-24) ---------------------------------------------------------

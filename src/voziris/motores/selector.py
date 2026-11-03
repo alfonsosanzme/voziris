@@ -7,6 +7,8 @@ Reglas, en este orden:
 2. `motor = "api"`   → el de API. Si no está disponible, **cae al local** y lo
    avisa en la transcripción; no se pierde el dictado.
 3. `motor = "auto"`  → API si está disponible (mejor precisión), local si no.
+   Sin clave no se avisa de nada (VOZ-87): es lo de serie, y nadie ha pedido la
+   API. Sí se avisa si hay clave y no se ha podido usar.
 
 El respaldo es solo en esa dirección: de la nube al local. Nunca al revés,
 para que nadie acabe mandando audio fuera sin haberlo pedido.
@@ -154,13 +156,15 @@ class Selector:
         if not self._usa_api() or self._api is None:
             return self._local.transcribir(audio, idioma)
 
-        aviso: str
+        aviso: str | None
         if self._api.disponible():
             try:
                 return self._con_paciencia(audio, idioma)
             except MotorNoDisponible as e:
                 log.warning("la API falló, se transcribe en local: %s", e)
                 aviso = f"La API falló ({e}): transcrito en local"
+        elif self._preferencia == "auto" and not getattr(self._api, "tiene_clave", True):
+            aviso = None
         else:
             motivo = getattr(self._api, "motivo_no_disponible", None)
             aviso = (motivo() if motivo else "Sin conexión con la API") + ": transcrito en local"
@@ -170,5 +174,6 @@ class Selector:
                 "ni la API ni el motor local están disponibles ahora mismo"
             )
         t = self._local.transcribir(audio, idioma)
-        t.avisos.append(aviso)
+        if aviso is not None:
+            t.avisos.append(aviso)
         return t
