@@ -104,7 +104,7 @@ https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
 
 ```
 SHA-256  voziris-0.1.3-win64.zip
-65479d322a7519643eba3e6f60b1f1e314e230f1b8d0b4c430ded28952691e45
+8b40161895804375f49695345dcf31a0beb995ea968d710ef2a50e1ad83b43a8
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
