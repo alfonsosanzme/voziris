@@ -167,7 +167,8 @@ def instalar(
             de cambiar el programa. Es donde se cierra la Voziris abierta: si
             la instalación no llega hasta aquí, el usuario no se queda sin ella.
         al_progresar: (mensaje, fracción) para la ventana de progreso. Puede
-            lanzar para cancelar, pero solo se le llama antes de tocar nada.
+            lanzar para cancelar, pero solo se le llama con el programa de antes
+            en su sitio. Se le llama después de cada pregunta, antes de actuar.
         pausar_volcados: apaga faulthandler mientras se crean los accesos
             directos (ver `integridad.autoprueba`).
         preguntar_cerrar: recibe la pregunta si un proceso de la carpeta está
@@ -300,6 +301,11 @@ def _instalar_programa(
         if al_progresar is not None:
             al_progresar(mensaje, fraccion)
 
+    def antes_de_actuar() -> None:
+        # Cancelar solo se apunta, y los cuadros no bloquean la ventana de progreso: lo que
+        # se pulsó con una pregunta abierta cuenta aquí, sea cual sea la respuesta.
+        avisar("Sustituyendo la versión anterior…")
+
     avisar("Comprobando que el paquete está completo…")
     try:
         entradas = integridad.leer_manifiesto(origen)
@@ -355,12 +361,13 @@ def _instalar_programa(
         if comprobar_copia is not None:
             avisar("Comprobando que la copia arranca…")
             comprobar_copia(nuevo / "voziris.exe")
-        avisar("Sustituyendo la versión anterior…")
-        _preguntar_si_hay_trabajo(destino, preguntar_cerrar)  # antes de cerrar nada
+        antes_de_actuar()
+        aceptados = _preguntar_si_hay_trabajo(destino, preguntar_cerrar)  # antes de cerrar nada
+        antes_de_actuar()
         if antes_de_sustituir is not None:
             antes_de_sustituir()
-        _cerrar_lo_que_quede(destino)
-        _sustituir_preguntando(nuevo, destino, preguntar_reintento)
+        _cerrar_lo_que_quede(destino, preguntar_cerrar, aceptados, antes_de_actuar)
+        _sustituir_preguntando(nuevo, destino, preguntar_reintento, antes_de_actuar)
     except shutil.Error as e:
         raise InstalacionFallida(explicar_error_de_copia(e)) from e
     except OSError as e:
@@ -395,28 +402,25 @@ def _pregunta_de_cierre(trabajando: list[tuple[winapi.Proceso, str | None]]) -> 
     )
 
 
-def _preguntar_si_hay_trabajo(
-    destino: Path, preguntar_cerrar: Callable[[str], bool] | None
-) -> None:
-    """Si un proceso de la carpeta está transcribiendo, nada se cierra sin preguntar.
-
-    Raises:
-        InstalacionCancelada: la respuesta fue que no, o no hay a quién preguntar.
-    """
-    if sys.platform != "win32":
-        return
+def _con_trabajo(procesos: list[winapi.Proceso]) -> list[tuple[winapi.Proceso, str | None]]:
+    """Los que tienen trabajo que se perdería, cada uno con lo que se le pasa a la pregunta."""
     trabajando: list[tuple[winapi.Proceso, str | None]] = []
-    try:
-        for proceso in winapi.procesos_en_carpeta(destino):
-            orden = winapi.orden_de_proceso(proceso.pid)
-            grabacion = None if orden is None else _grabacion_de(orden)
-            if orden is None or grabacion is not None:
-                trabajando.append((proceso, grabacion))
-    except OSError as e:
-        log.warning("no se pudo mirar qué procesos siguen vivos en %s: %s", destino, e)
-        return
-    if not trabajando:
-        return
+    for proceso in procesos:
+        orden = winapi.orden_de_proceso(proceso.pid)
+        if orden is None:
+            # Tampoco se lee la de quien acaba de irse, como la bandeja que está saliendo:
+            # contarlo sacaría una pregunta falsa, con el «No» por defecto.
+            if winapi.ruta_de_proceso(proceso.pid) == proceso.ruta:
+                trabajando.append((proceso, None))
+        elif (grabacion := _grabacion_de(orden)) is not None:
+            trabajando.append((proceso, grabacion))
+    return trabajando
+
+
+def _preguntar_cierre(
+    trabajando: list[tuple[winapi.Proceso, str | None]],
+    preguntar_cerrar: Callable[[str], bool] | None,
+) -> None:
     pregunta = _pregunta_de_cierre(trabajando)
     log.warning("trabajo en marcha en la carpeta: %s", trabajando)
     if preguntar_cerrar is None or not preguntar_cerrar(pregunta):
@@ -424,17 +428,57 @@ def _preguntar_si_hay_trabajo(
     log.info("el usuario acepta cerrarlo")
 
 
-def _cerrar_lo_que_quede(destino: Path) -> None:
+def _preguntar_si_hay_trabajo(
+    destino: Path, preguntar_cerrar: Callable[[str], bool] | None
+) -> set[int]:
+    """Si un proceso de la carpeta está transcribiendo, nada se cierra sin preguntar.
+
+    Returns:
+        Los PID que se ha aceptado cerrar.
+
+    Raises:
+        InstalacionCancelada: la respuesta fue que no, o no hay a quién preguntar.
+    """
+    if sys.platform != "win32":
+        return set()
+    try:
+        trabajando = _con_trabajo(winapi.procesos_en_carpeta(destino))
+    except OSError as e:
+        log.warning("no se pudo mirar qué procesos siguen vivos en %s: %s", destino, e)
+        return set()
+    if trabajando:
+        _preguntar_cierre(trabajando, preguntar_cerrar)
+    return {proceso.pid for proceso, _ in trabajando}
+
+
+def _cerrar_lo_que_quede(
+    destino: Path,
+    preguntar_cerrar: Callable[[str], bool] | None,
+    aceptados: set[int],
+    antes_de_actuar: Callable[[], None],
+) -> None:
     """Lo que sigue vivo desde la carpeta cuando la bandeja ya se ha cerrado.
 
-    Un duplicado parado en su aviso, un aviso final sin cerrar… No hay trabajo
-    que perder: lo que lo tenía, ya se ha preguntado. Si algo no se deja
-    cerrar, `_sustituir_preguntando` dirá quién es.
+    Un duplicado parado en su aviso, un aviso final sin cerrar… Eso se cierra sin
+    preguntar. Pero mientras se preguntaba o se cerraba la bandeja, hasta 6 s, ha
+    podido empezar una transcripción: la orden de cada uno se vuelve a leer justo
+    antes de cerrarlo, y lo que tenga trabajo y no se haya aceptado se pregunta.
+    Queda un hueco de milisegundos entre leerla y cerrarlo.
+
+    Lo que arranque después de sacar la lista no se toca. Si algo no se deja cerrar
+    o estorba, `_sustituir_preguntando` dirá quién es.
+
+    Raises:
+        InstalacionCancelada: la respuesta fue que no, o no hay a quién preguntar.
     """
     if sys.platform != "win32":
         return
     try:
         for proceso in winapi.procesos_en_carpeta(destino):
+            trabajando = [] if proceso.pid in aceptados else _con_trabajo([proceso])
+            if trabajando:
+                _preguntar_cierre(trabajando, preguntar_cerrar)
+                antes_de_actuar()
             resultado = winapi.cerrar_proceso(proceso, ESPERA_CIERRE_S)
             log.warning("seguía vivo un proceso de la carpeta: PID %d (%s): %s",
                         proceso.pid, proceso.ruta, resultado)
@@ -443,10 +487,14 @@ def _cerrar_lo_que_quede(destino: Path) -> None:
 
 
 def _sustituir_preguntando(
-    nuevo: Path, destino: Path, preguntar_reintento: Callable[[str], bool] | None
+    nuevo: Path,
+    destino: Path,
+    preguntar_reintento: Callable[[str], bool] | None,
+    antes_de_actuar: Callable[[], None],
 ) -> None:
     """`_sustituir`. Si algo lo retiene, se dice quién y se puede reintentar sin volver a copiar."""
     while True:
+        antes_de_actuar()  # hasta aquí, el programa de antes sigue en su sitio
         try:
             _sustituir(nuevo, destino)
             return
