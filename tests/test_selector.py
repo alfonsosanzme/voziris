@@ -158,3 +158,33 @@ def test_el_aviso_dice_si_falta_la_clave() -> None:
     sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
     t = Selector("api", local, sin_clave).transcribir(AUDIO, "es")
     assert t.avisos == ["Sin clave de API: transcrito en local"]
+
+
+def test_en_auto_sin_clave_no_se_avisa_en_cada_dictado() -> None:
+    """VOZ-87: es lo de serie. Nadie ha pedido la API, y el local es lo que se espera."""
+    from voziris.motores.api import MotorAPI
+
+    local = MotorFalso("local")
+    sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
+    t = Selector("auto", local, sin_clave).transcribir(AUDIO, "es")
+    assert t.motor == "local" and t.avisos == []
+
+
+def test_en_auto_con_clave_y_sin_conexion_se_avisa(monkeypatch: pytest.MonkeyPatch) -> None:
+    from voziris import red
+    from voziris.motores.api import MotorAPI
+
+    monkeypatch.setattr(red, "hay_red", lambda *_a, **_k: False)
+    local = MotorFalso("local")
+    con_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "gsk_de_prueba")
+    t = Selector("auto", local, con_clave).transcribir(AUDIO, "es")
+    assert t.motor == "local" and t.avisos == ["Sin conexión con la API: transcrito en local"]
+
+
+def test_en_auto_sin_clave_y_sin_local_se_dice() -> None:
+    from voziris.motores.api import MotorAPI
+
+    local = MotorFalso("local", disponible=False)
+    sin_clave = MotorAPI("https://api.groq.com/openai/v1", "m", "")
+    with pytest.raises(MotorNoDisponible, match="ni la API ni el motor local"):
+        Selector("auto", local, sin_clave).transcribir(AUDIO, "es")

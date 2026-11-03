@@ -119,6 +119,11 @@ class MotorAPI:
         """Hay clave y hay red. La comprobación de red va cacheada (`red.hay_red`)."""
         return bool(self._clave) and red.hay_red(self._host, self._puerto)
 
+    @property
+    def tiene_clave(self) -> bool:
+        """Para el selector: en `auto`, sin clave no hay nada de lo que avisar (VOZ-87)."""
+        return bool(self._clave)
+
     def motivo_no_disponible(self) -> str:
         """Para el aviso del selector: qué falta, sin adivinar."""
         if not self._clave:

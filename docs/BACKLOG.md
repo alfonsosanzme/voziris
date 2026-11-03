@@ -546,3 +546,16 @@ Lo encontró la verificación de las notas de la 0.1.2. El orquestador avisa y p
 **Fuera de esto, y sigue igual**
 - Si llegan dos avisos seguidos, solo se ve el último.
 - Un aviso de más de unos 45 caracteres se corta por el ancho del indicador (268 px útiles): «La API falló (…): transcrito en local» se ve cortado. Los que ya se veían, igual.
+
+### VOZ-87 · Lo de serie no avisa en cada dictado
+**Archivos:** `motores/selector.py`, `motores/api.py`, `orquestador.py`
+
+Lo encontró la verificación de las notas de la 0.1.3. VOZ-86 hizo visibles los avisos de un dictado, y entre ellos había dos que salían en todos:
+- con lo de serie (motor automático, sin clave), «Sin clave de API: transcrito en local», cuando el LÉEME dice que la API no hace falta para nada;
+- con motor local, nivel literal y un modelo de IA puesto, «Sin red: «llm» omitido», aunque hubiera red: con ese motor y ese nivel no se mira.
+
+**Criterios de aceptación**
+- [x] En automático y sin clave se transcribe en local sin avisar.
+- [x] Con el motor en API y sin clave, el aviso sigue: se ha pedido algo que no se cumple.
+- [x] En automático con clave y sin conexión, el aviso sigue: el dictado sale con el otro motor.
+- [x] Con nivel literal, un paso que necesita red no avisa. Con otro nivel y sin red, sigue avisando.
