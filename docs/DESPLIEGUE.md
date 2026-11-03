@@ -347,7 +347,9 @@ echo $(( ( $(stat -c %s "$BUILD/dist/voziris-$V-win64.zip") + 524288 ) / 1048576
 
 Revisa también la `nota` del mismo objeto. `grep -n "0\.1\." "$WEB/data/blog.json"` encuentra las versiones que se mencionan en el texto.
 
-**Quién lo hace.** En el repositorio de la web (`$WEB`) trabaja otra sesión, «WEB Kairis». El enlace de la 0.1.1 lo cambió ella, en el commit `a3229f7`, y desplegó con el OK de Alfonso. Lo más limpio es pasarle este encargo:
+**Quién lo hace.** Tú o una sesión que abras en `$WEB`, siguiendo el `CLAUDE.md` de ese repositorio. La web no tiene sesión fija: «WEB Kairis», que cambió el enlace de la 0.1.1 (commit `a3229f7`), está archivada y su carpeta es la de antes, así que no le pases encargos. El enlace de la 0.1.2 (`cd886a5`) se cambió desde la sesión principal de Voziris, también con el OK de Alfonso para desplegar.
+
+Si abres una sesión en `$WEB`, este es el encargo:
 
 > Sigue la skill `anadir-blog`. En `data/blog.json`, post `voziris`, objeto `descarga`, pon url `<URL>`, version `v<X.Y.Z>` y peso `<N> MB`. No toques nada más del post. Antes, comprueba que la URL responde 200 con `<bytes>` bytes y SHA-256 `<hash>`. Después:
 >
@@ -388,7 +390,7 @@ bash .deploy/deploy.sh
 Antes de lanzarlo, conviene saber cómo funciona `deploy.sh`:
 
 - **Sube `git archive HEAD` entero, no solo tu commit.** Si HEAD lleva commits de otra sesión que aún no se han desplegado o no se han subido a `origin`, tu deploy también los publica. No despliegues hasta que su autor o Alfonso digan que pueden salir.
-- **Antes de subir, valida** el blog, el sitemap, las imágenes, la cabecera y el pie, las reseñas y el versionado de CSS y JS. Si se para por algo que no es tuyo, detente y avisa a «WEB Kairis».
+- **Antes de subir, valida** el blog, el sitemap, las imágenes, la cabecera y el pie, las reseñas y el versionado de CSS y JS. Si se para por algo que no es tuyo, detente y avisa a Alfonso.
 - **No borra nada en el servidor.** Copia antes cada archivo que va a sobrescribir en `~/tmp/predeploy-<fecha>`.
 
 Después del deploy, comprueba la página publicada:
