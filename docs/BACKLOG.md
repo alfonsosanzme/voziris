@@ -505,8 +505,8 @@ Dos cosas que no se veían. El 31/10, la instalación falló dos veces en el equ
 - [x] Antes de cambiar el programa, el instalador mira qué procesos siguen vivos con su ejecutable en esa carpeta, sin esperar a que algo falle:
   - si uno está transcribiendo, o sigue vivo y no se puede leer su orden, pregunta antes de cerrar nada, también la bandeja, con el PID, la ruta y la grabación. El botón por defecto es «No», y con «No» no se cambia nada;
   - lo demás lo cierra sin preguntar y lo anota en el registro: `WM_CLOSE` a sus ventanas y, si a los 5 s sigue vivo, `TerminateProcess`. `Local\Voziris.Salir` solo lo atiende la instancia que tiene el mutex;
-  - la orden de cada uno se vuelve a leer justo antes de cerrarlo: lo que empiece a transcribir con la pregunta abierta o mientras se cierra la bandeja también se pregunta, y lo ya aceptado no. Queda un hueco de milisegundos entre leerla y cerrarlo, y lo que arranque después de sacar la lista no se cierra.
-- [x] Cancelar en la ventana de progreso cuenta también con una pregunta abierta, porque los cuadros no la bloquean. Si se pulsó, al contestar no se cierra nada más ni se cambia el programa, sea cual sea la respuesta. Lo mismo si se pulsa mientras se cierra la bandeja.
+  - después de cerrar la bandeja y antes de cerrar nada más, vuelve a sacar la lista y a leer la orden de todos: lo que empezó a transcribir con la pregunta abierta o mientras se cerraba la bandeja también se pregunta, todo junto, y lo ya aceptado no. Con «No» no se ha terminado nada. Lo que arranque después de sacar esa lista no se cierra.
+- [x] Cancelar en la ventana de progreso cuenta también con una pregunta abierta, porque los cuadros no la bloquean. Si se pulsó, al contestar no se cierra nada más ni se cambia el programa, sea cual sea la respuesta. Lo mismo si se pulsa mientras se cierra la bandeja u otro proceso: lo que queda por cerrar sigue vivo.
 - [x] Si aun así no se puede cambiar el programa, busca quién lo retiene (Restart Manager para los archivos, `NtQueryInformationFile` para quien tiene una carpeta como directorio de trabajo) y lo dice con **Reintentar** y **Cancelar**, sin volver a copiar. Lo que ya se había movido vuelve a `Voziris.nuevo`, y la instalación anterior sigue en su sitio mientras se pregunta.
 - [x] Ningún aviso dice «Espera un minuto». Dice qué programa es, con su PID y su ruta, y qué hacer; si no se sabe, qué suele ser. A una ventana del Explorador no se le propone «Finalizar tarea», porque se llevaría por delante el escritorio.
 - [x] Si no se instala, por el motivo que sea, y se había cerrado la bandeja, se vuelve a abrir. También al cancelar.
@@ -521,7 +521,8 @@ Dos cosas que no se veían. El 31/10, la instalación falló dos veces en el equ
   - mientras se pregunta, el mutex sigue tomado; en el aviso final, ya está suelto.
 - [x] Probado con la ventana de progreso y los cuadros de verdad, en un escritorio oculto y con un paquete falso:
   - pulsar Cancelar con una pregunta abierta y contestar «Sí» o «Reintentar» no cierra ni cambia nada;
-  - una transcripción que empieza mientras se cierra la bandeja se pregunta: con «No» sigue, y con «Sí» se cierra e instala.
+  - pulsar Cancelar mientras se cierra la bandeja deja viva la transcripción ya aceptada;
+  - una transcripción que empieza mientras se cierra la bandeja se pregunta: con «No» sigue, también la que ya se había aceptado, y con «Sí» se cierra e instala.
 
 **Sin probar:**
 - `--instalar` y «Actualizar» de verdad, con una bandeja real. En la prueba, el cierre y la reapertura de la bandeja estaban sustituidos. Se comprueba en `docs/DESPLIEGUE.md` §6.2 bis cuando la publicada lleve esto.

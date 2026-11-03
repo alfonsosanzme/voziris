@@ -461,9 +461,10 @@ def _cerrar_lo_que_quede(
 
     Un duplicado parado en su aviso, un aviso final sin cerrar… Eso se cierra sin
     preguntar. Pero mientras se preguntaba o se cerraba la bandeja, hasta 6 s, ha
-    podido empezar una transcripción: la orden de cada uno se vuelve a leer justo
-    antes de cerrarlo, y lo que tenga trabajo y no se haya aceptado se pregunta.
-    Queda un hueco de milisegundos entre leerla y cerrarlo.
+    podido empezar una transcripción. Lo que tenga trabajo y no se haya aceptado se
+    pregunta todo junto, antes de cerrar nada: un «No» no puede llegar con otra ya
+    terminada. Basta con leer la orden al sacar la lista, porque no cambia en vida
+    del proceso.
 
     Lo que arranque después de sacar la lista no se toca. Si algo no se deja cerrar
     o estorba, `_sustituir_preguntando` dirá quién es.
@@ -474,11 +475,13 @@ def _cerrar_lo_que_quede(
     if sys.platform != "win32":
         return
     try:
-        for proceso in winapi.procesos_en_carpeta(destino):
-            trabajando = [] if proceso.pid in aceptados else _con_trabajo([proceso])
-            if trabajando:
-                _preguntar_cierre(trabajando, preguntar_cerrar)
-                antes_de_actuar()
+        vivos = winapi.procesos_en_carpeta(destino)
+        antes_de_actuar()  # lo que se pulsó mientras se cerraba la bandeja
+        nuevos = _con_trabajo([p for p in vivos if p.pid not in aceptados])
+        if nuevos:
+            _preguntar_cierre(nuevos, preguntar_cerrar)
+        for proceso in vivos:
+            antes_de_actuar()  # cerrar uno puede tardar 5 s
             resultado = winapi.cerrar_proceso(proceso, ESPERA_CIERRE_S)
             log.warning("seguía vivo un proceso de la carpeta: PID %d (%s): %s",
                         proceso.pid, proceso.ruta, resultado)

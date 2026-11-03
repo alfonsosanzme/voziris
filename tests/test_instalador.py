@@ -697,6 +697,101 @@ def test_cancelar_con_la_segunda_pregunta_abierta_no_la_cierra(
     assert _es_la_v1(destino) and _sin_restos(destino)
 
 
+def test_lo_aceptado_sigue_vivo_si_se_cancela_mientras_se_cierra_la_bandeja(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "transcribe.exe", "--transcribir", "reunion.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            preguntar_cerrar=lambda p: True,
+                            antes_de_sustituir=lambda: cancelado.append(True),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.poll() is None
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_decir_no_a_la_segunda_pregunta_no_deja_cerrada_la_primera(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Aceptada una y empezada otra después: el «No» tiene que llegar antes de cerrar nada."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    primera = copia_viva(destino / "_internal" / "primera.exe", "--transcribir", "a.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    respuestas = iter([True, False])
+    segunda: list[Any] = []
+
+    def cerrar_la_bandeja() -> None:
+        segunda.append(copia_viva(destino / "_internal" / "segunda.exe",
+                                  "--transcribir", "b.m4a"))
+
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                            preguntar_cerrar=lambda p: next(respuestas),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert segunda[0].poll() is None
+    assert primera.poll() is None
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_lo_que_empieza_despues_se_pregunta_todo_junto(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    lanzados: list[Any] = []
+    preguntas: list[str] = []
+
+    def cerrar_la_bandeja() -> None:
+        for nombre in ("una", "otra"):
+            lanzados.append(copia_viva(destino / "_internal" / f"{nombre}.exe",
+                                       "--transcribir", f"{nombre}.m4a"))
+
+    def si(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return True
+
+    instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                        preguntar_cerrar=si,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(preguntas) == 1
+    assert "«una.m4a»" in preguntas[0] and "«otra.m4a»" in preguntas[0]
+    assert all(p.wait(timeout=5) == 1 for p in lanzados)
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+def test_cancelar_mientras_se_cierra_uno_no_cierra_el_siguiente(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Cada uno puede tardar 5 s en cerrarse: Cancelar no puede esperar a que acaben todos."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    lanzados = [copia_viva(destino / "_internal" / f"{nombre}.exe") for nombre in ("uno", "dos")]
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    cerrar = instalador.winapi.cerrar_proceso
+    cerrados: list[int] = []
+
+    def cerrar_y_cancelar(proceso: Any, espera_s: float) -> str:
+        cerrados.append(proceso.pid)
+        cancelado.append(True)
+        return cerrar(proceso, espera_s)
+
+    monkeypatch.setattr(instalador.winapi, "cerrar_proceso", cerrar_y_cancelar)
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(cerrados) == 1
+    assert [p.pid for p in lanzados if p.poll() is None] != []  # el otro sigue vivo
+    assert cerrados[0] not in {p.pid for p in lanzados if p.poll() is None}
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
 def test_lo_ya_aceptado_no_se_vuelve_a_preguntar(
     tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
     copia_viva: Any,
