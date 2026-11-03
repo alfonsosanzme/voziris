@@ -10,12 +10,12 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
 ## Novedades en 0.1.3
 
 - **Si pulsas sin hablar, ahora te lo dice.** Desde la 0.1.2, si nadie habla no
-  se escribe nada, pero el aviso se iba antes de llegar a verse. Ahora el
-  indicador enseña «Nada que escribir: no se oyó voz» durante un segundo y
-  medio. Con 5 segundos o más sin voz sigue como estaba: icono de error, y la
-  grabación se queda en «Dictados sin transcribir». También se ven los demás
-  avisos que llegan al acabar un dictado, como «…: transcrito en local» o «Sin
-  red: entregado sin limpiar».
+  se escribe nada (en cuanto ha cargado el detector de voz, al arrancar), pero
+  el aviso se iba antes de llegar a verse. Ahora el indicador enseña «Nada que
+  escribir: no se oyó voz» durante un segundo y medio. Con 5 segundos o más sin
+  voz sigue como estaba: icono de error, y la grabación se queda en «Dictados
+  sin transcribir». También se ven los demás avisos que llegan al acabar un
+  dictado, como «Sin conexión con la API: transcrito en local».
 - **Una Voziris sin ventana ya no impide instalar ni actualizar.** Bastaba una
   copia parada en el aviso «Voziris ya está abierto», por ejemplo abierta por
   otro programa sin que nadie la viera, para que la instalación fallara con
@@ -23,23 +23,25 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
   esperar no lo arreglaba. Ahora:
   - ese aviso se cierra solo a los 10 segundos, y esa copia ya no estorba
     mientras tanto;
-  - al cambiar el programa, el instalador cierra lo que siga abierto desde su
-    carpeta. Si algo está transcribiendo, pregunta antes: si contestas que no,
-    no se cambia nada y la transcripción sigue;
-  - si aun así otro programa lo impide, dice cuál es, con su PID, y deja
-    reintentar sin volver a copiar. La versión anterior sigue en su sitio;
-  - si al final no se instala y se había cerrado la bandeja, se vuelve a abrir,
-    también si cancelas.
+  - al cambiar el programa, el instalador cierra lo que siga abierto desde la
+    carpeta de instalación. Si se está transcribiendo una grabación o un vídeo,
+    pregunta antes: si contestas que no, no se cambia nada y la transcripción
+    sigue;
+  - si aun así otro programa lo impide, dice cuál es, con su PID, si Windows
+    deja saberlo (si no, qué suele ser), y deja reintentar sin volver a copiar.
+    La versión anterior sigue en su sitio;
+  - si al final no se instala y se había cerrado la bandeja, se vuelve a abrir
+    Voziris, también si cancelas.
 - **El aviso final de la instalación ya no se queda escondido.** Los avisos del
-  instalador y de «Actualizar» salen encima de las demás ventanas. Y mientras
-  el aviso final sigue abierto, «Actualizar» ya no contesta que hay una
-  actualización en marcha.
+  instalador salen encima de las demás ventanas, y desde esta versión también
+  los de «Actualizar». Y mientras el aviso final sigue abierto, «Actualizar» ya
+  no contesta que hay una actualización en marcha.
 
 ## Qué hay
 
 - `Ctrl+Win` graba mientras lo mantienes; `Ctrl+Shift+Espacio` deja el
   micrófono clavado hasta que vuelves a pulsar o te callas; `Ctrl+Alt+M`
-  manda el dictado a un archivo Markdown.
+  manda el dictado a un archivo Markdown (antes, elígelo en Ajustes → Destinos).
 - Puntuación y mayúsculas de serie en español, también sin conexión.
 - Búfer previo de 500 ms: no se pierde la primera sílaba.
 - Indicador flotante con nivel de audio que nunca roba el foco; tonos de
@@ -48,9 +50,8 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
   formato con un LLM opcional.
 - El portapapeles vuelve a lo que tenías copiado. Historial con reentrega y
   borrado desde la bandeja.
-- **Ningún dictado se pierde**: el audio se guarda en disco antes de
-  transcribir y, si algo falla, se puede volver a transcribir desde el
-  historial.
+- **Si algo falla, el dictado no se pierde**: el audio se guarda en disco antes
+  de transcribir y se puede volver a transcribir desde el historial.
 - Transcribe grabaciones y **vídeos** enteros (m4a, mp3, wav, mp4…) a
   Markdown, con marcas de tiempo y quién habla en cada momento. Se hace desde
   la bandeja, con el botón derecho del Explorador («Transcribir con Voziris»)
@@ -71,12 +72,14 @@ conectar una clave de Groq.
 «Actualizar a la 0.1.3…». Si aceptaste que mire las versiones nuevas, también te
 avisará sola cuando le toque mirar, una vez al día. Descarga la versión nueva,
 comprueba su SHA-256 y que no le falta ningún archivo, y la instala sin tocar tu
-configuración, tus dictados ni el modelo.
+configuración, tus dictados ni el modelo. En este salto la descarga aún la hace
+la 0.1.2: si falla o cancelas, su aviso puede quedar detrás de otras ventanas y,
+mientras siga abierto, «Actualizar» contesta que ya hay una en marcha.
 
 **Si ya tenías la 0.1.0 o la 0.1.1, o usas Voziris sin instalar:** se actualiza a
 mano, porque esas versiones no buscan versiones nuevas y la copia sin instalar
 no se cambia sola (en la 0.1.2, «Descargar la 0.1.3…» abre la página de la
-versión). Una vez instalada esta, si aceptas que mire las versiones nuevas (o con
+versión). Ya con esta versión, si aceptas que mire las versiones nuevas (o con
 «Buscar actualizaciones»), la bandeja te ofrecerá las siguientes. Lo que trajo la
 0.1.2 está en sus notas:
 https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
@@ -101,7 +104,7 @@ https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
 
 ```
 SHA-256  voziris-0.1.3-win64.zip
-0000000000000000000000000000000000000000000000000000000000000000
+65479d322a7519643eba3e6f60b1f1e314e230f1b8d0b4c430ded28952691e45
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
@@ -118,8 +121,8 @@ has descargado tiene este hash, es el que se publicó aquí.
     extraída. La guía explica qué hacer.
   - Al actualizar desde la bandeja, el SHA-256 sale de la misma release que el
     ZIP: detecta una descarga cortada o dañada, no una release falsa.
-- Si el primer arranque no tiene conexión, la bandeja solo dice que el motor de
-  voz no está disponible. Conéctate y vuelve a abrir Voziris.
+- Si el primer arranque no tiene conexión, solo dice que el motor de voz no está
+  disponible. Conéctate y vuelve a abrir Voziris.
 - Una sola palabra muy corta, dicha sola, puede tomarse por silencio, y
   entonces no se escribe nada. Vuelve a dictarla.
 - Un aviso del indicador de más de unos 45 caracteres se ve cortado.
