@@ -32,10 +32,11 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
     La versión anterior sigue en su sitio;
   - si al final no se instala y se había cerrado la bandeja, se vuelve a abrir
     Voziris, también si cancelas.
-- **El aviso final de la instalación ya no se queda escondido.** Los avisos del
-  instalador salen encima de las demás ventanas, y desde esta versión también
-  los de «Actualizar». Y mientras el aviso final sigue abierto, «Actualizar» ya
-  no contesta que hay una actualización en marcha.
+- **El aviso final de la instalación ya no bloquea «Actualizar».** Mientras
+  sigue abierto, «Actualizar» ya no contesta que hay una actualización en
+  marcha. Además, los avisos del instalador, y desde esta versión también los de
+  «Actualizar», piden a Windows salir delante de las demás ventanas, aunque
+  Windows puede dejarlos detrás de la que estés usando.
 
 ## Qué hay
 

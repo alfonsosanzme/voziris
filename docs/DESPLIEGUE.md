@@ -2,7 +2,7 @@
 
 Este documento explica cómo publicar una versión nueva de Voziris y cómo hacer que llegue a quien lo usa. Se escribió después de publicar la 0.1.1, el 7 de octubre de 2026 (PR #40, con `main` en `149936c`). Está comprobado contra el código de esa versión y sus órdenes son las que funcionaron entonces. Lo que no se ha ejecutado nunca lleva la marca **(sin probar)**.
 
-Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen. Con ellas se publicó la 0.1.2 el 2 de noviembre de 2026 (PR #48, con `main` en `43d7cf8`): los pasos 1 a 9 y el 11 están comprobados con esa versión.
+Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen. Con ellas se publicó la 0.1.2 el 2 de noviembre de 2026 (PR #48, con `main` en `43d7cf8`): los pasos 1 a 9 y el 11 están comprobados con esa versión, y otra vez con la 0.1.3, el 3 de noviembre de 2026.
 
 En todo el documento, `<X.Y.Z>` es la versión nueva y `<anterior>` la que está publicada ahora (por ejemplo, 0.1.2 y 0.1.1).
 
@@ -43,6 +43,7 @@ Hay tres trampas, las tres comprobadas:
   - En el registro de PyInstaller de la 0.1.1, el `pathex` del `.spec` aparece **detrás** del `src` de la copia principal.
   - Por eso todas las órdenes de Python de este documento llevan `PYTHONPATH="$PWD/src"` y se ejecutan desde el worktree.
   - Con `PYTHONPATH` en una carpeta que ese Python no ve, `import voziris` vuelve a caer en la copia principal, y sin avisar. Pasa con lo que crea la app de Claude en `%LOCALAPPDATA%`: en octubre dio tres fallos falsos al probar #43 y #44. Por eso el paso 1 imprime `voziris.__file__`.
+  - Pasa también al juntar rutas: en Git Bash, `PYTHONPATH="$PWD/src;otra"` no se traduce, y `$PWD` llega como `/c/dev/...`. Con `;`, escribe las rutas enteras (`C:/dev/...`). Le pasó a la 0.1.3 con una suite entera, y se vio porque imprimía `voziris.__file__`.
 - **PyInstaller empaqueta lo que hay en disco, no lo que hay en git.** Hay que compilar desde un worktree limpio, nunca desde la copia principal.
 - **Desde la app de Claude, el registro también está virtualizado.** El 2 de noviembre, sus herramientas leían en `HKCU` una copia privada y vieja: `DisplayVersion` 0.1.0, con la 0.1.2 instalada.
   - Para ver el valor real, usa el Python del venv (`winreg`) o WMI (`StdRegProv`).
@@ -99,7 +100,7 @@ Mira también si `pyproject.toml` trae dependencias nuevas, con `git diff "v$ANT
 
 - el título, `# Voziris <X.Y.Z>`;
 - «Novedades en <X.Y.Z>», con lo que salió en el `git log` del paso 1, contado para quien usa el programa;
-- «Instalación → Si ya tenías la …», para cada versión que alguien pueda tener instalada (hoy, la 0.1.0 y la 0.1.1);
+- «Instalación → Si ya tenías la …», para cada versión que alguien pueda tener instalada (hoy, de la 0.1.0 a la última);
 - «Limitaciones conocidas», si algo ha cambiado;
 - la línea del hash: el nombre nuevo y 64 ceros, dentro del bloque de código que ya tiene la sección «Verificación del archivo».
 
@@ -197,12 +198,12 @@ git add docs/notas-release.md && git commit -m "Notas $V: SHA-256 del ZIP"
 
 **6.1. Instalación real en carpetas temporales**, con `tools/probar_instalacion.py`. Usa el instalador de verdad y el ZIP de verdad, pero lo escribe todo en carpetas temporales y en una clave de pruebas de HKCU que borra al terminar. No cierra la Voziris abierta ni toca el menú Inicio. Sin `--anterior`, prueba una instalación desde cero. Con `--anterior <ZIP>`, simula esa versión instalada con `config.toml` y un historial de 500 líneas, instala la nueva encima y comprueba que esos datos siguen igual. La carpeta extraída de la nueva trae además su propio historial de una línea: es lo que hacía perder el de la instalada hasta la 0.1.1. Sale con 0 si todo cuadra y con 1 si algo no.
 
-Ejecútalo desde cero y encima de cada versión que alguien pueda tener instalada. Hoy son la 0.1.0 y la 0.1.1:
+Ejecútalo desde cero y encima de cada versión que alguien pueda tener instalada. Hoy son todas las publicadas (añade cada versión nueva a la lista):
 
 ```bash
 cd "$REL"
 PYTHONPATH="$PWD/src" "$PY" tools/probar_instalacion.py "$BUILD/dist/voziris-$V-win64.zip"
-for A in 0.1.0 "$ANT"; do
+for A in 0.1.0 0.1.1 0.1.2 "$ANT"; do
   gh release download "v$A" -R alfonsosanzme/voziris -p "voziris-$A-win64.zip" -D "$BUILD/anteriores" --skip-existing
   PYTHONPATH="$PWD/src" "$PY" tools/probar_instalacion.py "$BUILD/dist/voziris-$V-win64.zip" \
     --anterior "$BUILD/anteriores/voziris-$A-win64.zip" || echo "FALLA desde $A"
@@ -243,19 +244,25 @@ No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de p
    - `config.toml`, `modelos/` e `historial/` siguen intactos;
    - `voziris-actualizar.log` y `voziris-instalar.log` están en la carpeta de la instalación;
    - en `voziris-instalar.log` no hay ningún «reintento»: `--actualizar` ya no retenía `_internal`;
-   - cuando la publicada lleve VOZ-85: el aviso final sale encima de las demás ventanas y, con él abierto, «Actualizar» no contesta que ya hay una en marcha.
+   - con el aviso final de `Instalar Voziris.cmd` abierto (el del paso 2, que no hace falta cerrar antes), «Actualizar» no contesta que ya hay una en marcha.
 
-Así se prueba el código de `--actualizar` de la versión nueva. El instalador que se ejecuta es el de la **publicada**, y tiene que ser la 0.1.2 o posterior. Contra la 0.1.1 no puede terminar: su instalador no toma el mutex de instalar, así que `--actualizar` sigue vivo durante el cambio (hasta `ESPERA_INSTALADOR_S`) y le bloquea `_internal`. Esto último se dedujo del código y de lo medido; no se ejecutó.
+Así se prueba el código de `--actualizar` de la versión nueva. Lo del paso 2 prueba además su instalador con una bandeja real. El instalador que ejecuta «Actualizar» es el de la **publicada**, y tiene que ser la 0.1.2 o posterior. Contra la 0.1.1 no puede terminar: su instalador no toma el mutex de instalar, así que `--actualizar` sigue vivo durante el cambio (hasta `ESPERA_INSTALADOR_S`) y le bloquea `_internal`. Esto último se dedujo del código y de lo medido; no se ejecutó. Lo único que no se puede probar antes de publicar es el cruce de los dos: el `--actualizar` de la publicada con el instalador nuevo. Se ve al actualizar el primer equipo, después de publicar.
 
-Hay dos cosas que confunden si el instalador es el de la 0.1.2 o anterior. VOZ-85 las arregla en la versión que lo lleve:
+Hay dos cosas que confunden si el instalador es el de la 0.1.2 o anterior. VOZ-85 las arregla desde la 0.1.3:
 
 - **Una Voziris viva de la carpeta instalada impide cambiar `_internal`** (`WinError 5`, «otro programa tiene abierto un archivo»). Pasa desde unos 200 ms después de arrancar, porque queda abierto `_internal\base_library.zip`. El 31 de octubre lo provocó un duplicado sin ventana, parado en el aviso «Voziris ya está abierto». Antes de instalar, mira en el Administrador de tareas que no quede otra `voziris.exe`. Desde VOZ-85, el instalador cierra lo que siga vivo desde esa carpeta (si está transcribiendo, pregunta antes). Si otro programa lo retiene, dice cuál es, con su PID, y deja reintentar.
-- **El instalador retiene su mutex hasta que se pulsa Aceptar en el aviso final**, y ese aviso puede abrirse detrás de otras ventanas. Mientras tanto, «Actualizar» contesta que ya hay una actualización en marcha y no descarga nada. Búscalo con Alt+Tab. Desde VOZ-85, el mutex se suelta antes del aviso, y el aviso sale encima de las demás ventanas.
+- **El instalador retiene su mutex hasta que se pulsa Aceptar en el aviso final**, y ese aviso puede abrirse detrás de otras ventanas. Mientras tanto, «Actualizar» contesta que ya hay una actualización en marcha y no descarga nada. Búscalo con Alt+Tab. Desde VOZ-85, el mutex se suelta antes del aviso.
 
 **Cómo fue con la 0.1.2 (2 de noviembre).** No se podía probar antes de publicar, porque la publicada era la 0.1.1. Por decisión de Alfonso, se publicó primero y se probó justo después, en su propio equipo, de la 0.0.1 a la 0.1.2.
 - Funcionó de punta a punta: descarga, SHA-256 y manifiesto correctos, y el instalador cerró la 0.0.1, cambió el programa sin reintentos y abrió la nueva.
 - El programa quedó idéntico al ZIP, y `config.toml`, el modelo y el historial, intactos.
 - Cancelar no se llegó a pulsar: solo lo cubren sus tests.
+
+**Cómo fue con la 0.1.3 (3 de noviembre).** Antes de publicar, en el equipo de Alfonso y con su sí, de su 0.1.2 a la 0.0.1 de prueba y de vuelta a la 0.1.2 publicada.
+- `Instalar Voziris.cmd` cerró su bandeja y abrió la nueva, sin reintentos. Con su aviso final abierto, «Actualizar» arrancó a la primera. El programa quedó idéntico al ZIP de la 0.1.2, y de sus datos solo cambió `actualizaciones.json`.
+- No se pulsó Cancelar. El duplicado que se abrió a propósito ya no estaba cuando llegó el instalador.
+- **El aviso final no se quedó con `WS_EX_TOPMOST`,** aunque se lo pide: ver VOZ-85 en `docs/BACKLOG.md`. Las notas ya no prometen «encima de las demás ventanas». Para medirlo desde el primer momento, hay que mirar sus ventanas antes de que salga: `GetWindowLong` con `GWL_EXSTYLE`, solo sobre las de `voziris.exe`.
+- La revisión de las notas destapó un efecto de VOZ-86: con lo de serie, cada dictado enseñaba «Sin clave de API: transcrito en local». Se arregló antes de publicar (VOZ-87). **Cuando un arreglo hace visible algo que no se veía, mira qué más se ve.**
 
 **6.3. Máquina limpia.** La lista a mano está en `docs/RELEASE.md` §4 y no se repite aquí. Incluye Windows sin Python, un USB, el arranque en menos de 3 segundos y Control inteligente de aplicaciones. Más detalles en el último apartado de este documento.
 
@@ -425,7 +432,7 @@ Hay tres pasos comunes a todos los casos:
 
 1. **Consigue el ZIP**, de la release o de `compartir/`. Si el antivirus protesta, comprueba el hash. En PowerShell, `Get-FileHash .\voziris-<X.Y.Z>-win64.zip` tiene que dar el de las notas, en mayúsculas.
 2. **Desbloquéalo antes de extraer:** botón derecho → Propiedades → Desbloquear. Así Windows no pregunta por cada archivo al ejecutarlo.
-3. **Extráelo entero en una carpeta nueva y de ruta corta**, nunca encima de la versión anterior. Son unos 1.100 archivos, así que espera a que termine.
+3. **Extráelo entero en una carpeta nueva y de ruta corta**, nunca encima de la versión anterior. Son unos 1.200 archivos, así que espera a que termine.
    - Si «Extraer todo» dice que una ruta es demasiado larga, pulsa Cancelar, no Omitir. Omitir deja el programa a medias.
    - Si la ruta de la carpeta de `voziris.exe` pasa de unos 180 caracteres, Windows deja de cargar sus archivos.
    - En tu equipo, mejor fuera de OneDrive (por ejemplo, en Descargas). OneDrive retiene archivos (por eso se compila fuera de él) y sincronizaría el millar sin necesidad.
