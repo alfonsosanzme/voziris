@@ -1,4 +1,4 @@
-# Voziris 0.1.2
+# Voziris 0.1.3
 
 Dictado por voz para Windows 10 y 11 (64 bits) con dos motores: **local**
 (NVIDIA Parakeet TDT 0.6B v3 en ONNX, sin tarjeta gráfica y sin conexión) y
@@ -7,43 +7,33 @@ servidor propio.
 
 La historia de por qué existe: https://kairis.es/blog/voziris.html
 
-## Novedades en 0.1.2
+## Novedades en 0.1.3
 
-- **Ctrl solo ya no arranca el dictado.** A veces, al pulsar solo Ctrl, o
-  Ctrl+C o Ctrl+V, empezaba un dictado corto. Pasaba sobre todo al poco de
-  arrancar Voziris, mientras carga el modelo: si se le escapaba que habías
-  soltado la tecla Windows, la seguía creyendo apretada hasta que la volvías a
-  pulsar. Ahora, con cada tecla que pulsas, comprueba con Windows cuáles
-  siguen apretadas de verdad. Por lo mismo, una tecla que se quedaba
-  «atascada» ya no deja `Ctrl+Win` sin responder.
-- **Si no hablas, no se escribe nada.** Al pulsar el atajo sin decir nada, el
-  motor por API escribía «Gracias por ver el video»: Whisper se inventa frases
-  así con cualquier audio sin voz. Ahora, antes de transcribir, el detector de
-  voz (en cuanto ha cargado, al arrancar) mira si alguien ha hablado. Si nadie
-  ha hablado, no se manda el audio a ningún motor ni se pega nada. Con 5
-  segundos o más sin voz, avisa con el icono de error y la grabación se queda
-  en «Dictados sin transcribir», por si el detector se ha equivocado.
-- **Avisa de las versiones nuevas y se actualiza desde la bandeja.** Unos 20
-  segundos después de arrancar por primera vez, pregunta si quieres que mire
-  una vez al día si hay una versión nueva. Sin un sí, no consulta GitHub por
-  su cuenta. Si la hay, te avisa, y en el menú de la bandeja aparece
-  «Actualizar a la …». Al pulsarlo, descarga la versión nueva de su release de
-  GitHub, comprueba su SHA-256 y que no le falta ningún archivo, y la instala
-  sin tocar tu configuración, tus dictados ni el modelo.
-  - «Buscar actualizaciones», en la bandeja, mira en el momento.
-  - La respuesta se cambia en Ajustes → Acerca de.
-  - Si usas Voziris sin instalar, la entrada se llama «Descargar la …» y abre
-    la página de la versión.
-- **Ajustes ya guarda con la configuración de serie.** En la 0.1.0 y la 0.1.1,
-  mientras la carpeta del Markdown siguiera con el valor de ejemplo, Ajustes
-  no dejaba guardar nada, tampoco la clave de Groq, aunque no usaras ese
-  destino. Lo que se cambiaba en la bandeja («Motor», «Mientras dicto» y
-  «Cortar al callar») solo duraba hasta reiniciar. Ahora esa carpeta solo se
-  comprueba si la cambias.
-- **Al instalar encima de una versión anterior**, el aviso final dice
-  «Voziris actualizado» y qué versión tenías antes. El diagnóstico de la
-  bandeja recoge también los registros de las actualizaciones desde la
-  bandeja.
+- **Si pulsas sin hablar, ahora te lo dice.** Desde la 0.1.2, si nadie habla no
+  se escribe nada, pero el aviso se iba antes de llegar a verse. Ahora el
+  indicador enseña «Nada que escribir: no se oyó voz» durante un segundo y
+  medio. Con 5 segundos o más sin voz sigue como estaba: icono de error, y la
+  grabación se queda en «Dictados sin transcribir». También se ven los demás
+  avisos que llegan al acabar un dictado, como «…: transcrito en local» o «Sin
+  red: entregado sin limpiar».
+- **Una Voziris sin ventana ya no impide instalar ni actualizar.** Bastaba una
+  copia parada en el aviso «Voziris ya está abierto», por ejemplo abierta por
+  otro programa sin que nadie la viera, para que la instalación fallara con
+  «otro programa tiene abierto un archivo». Decía que esperases un minuto, y
+  esperar no lo arreglaba. Ahora:
+  - ese aviso se cierra solo a los 10 segundos, y esa copia ya no estorba
+    mientras tanto;
+  - al cambiar el programa, el instalador cierra lo que siga abierto desde su
+    carpeta. Si algo está transcribiendo, pregunta antes: si contestas que no,
+    no se cambia nada y la transcripción sigue;
+  - si aun así otro programa lo impide, dice cuál es, con su PID, y deja
+    reintentar sin volver a copiar. La versión anterior sigue en su sitio;
+  - si al final no se instala y se había cerrado la bandeja, se vuelve a abrir,
+    también si cancelas.
+- **El aviso final de la instalación ya no se queda escondido.** Los avisos del
+  instalador y de «Actualizar» salen encima de las demás ventanas. Y mientras
+  el aviso final sigue abierto, «Actualizar» ya no contesta que hay una
+  actualización en marcha.
 
 ## Qué hay
 
@@ -77,10 +67,18 @@ termina, los dictados esperan, también con el motor por API. Dentro va
 `LÉEME - Instalar Voziris.html`, con la instalación en el equipo y cómo
 conectar una clave de Groq.
 
-**Si ya tenías la 0.1.0 o la 0.1.1:** esas versiones no buscan versiones
-nuevas, así que esta vez se actualiza a mano. Desde la 0.1.2, si aceptas que
-mire las versiones nuevas (o con «Buscar actualizaciones»), la bandeja te
-ofrecerá las siguientes.
+**Si ya tenías la 0.1.2 instalada:** bandeja → «Buscar actualizaciones» →
+«Actualizar a la 0.1.3…». Si aceptaste que mire las versiones nuevas, también te
+avisará sola cuando le toque mirar, una vez al día. Descarga la versión nueva,
+comprueba su SHA-256 y que no le falta ningún archivo, y la instala sin tocar tu
+configuración, tus dictados ni el modelo.
+
+**Si ya tenías la 0.1.0 o la 0.1.1, o usas Voziris sin instalar:** se actualiza a
+mano, porque esas versiones no buscan versiones nuevas y la copia sin instalar
+no se cambia sola (en la 0.1.2, «Descargar la 0.1.3…» abre la página de la
+versión). Después, una copia instalada de esta versión te ofrecerá las
+siguientes en la bandeja. Lo que trajo la 0.1.2 está en sus notas:
+https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
 
 - **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
   `Instalar Voziris.cmd`. Cierra la Voziris abierta solo cuando va a
@@ -101,8 +99,8 @@ ofrecerá las siguientes.
 ## Verificación del archivo
 
 ```
-SHA-256  voziris-0.1.2-win64.zip
-32ab61ec4348c488aa6671587a16f5ddd6ce511abda8b61f196477499d622168
+SHA-256  voziris-0.1.3-win64.zip
+0000000000000000000000000000000000000000000000000000000000000000
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
@@ -123,6 +121,7 @@ has descargado tiene este hash, es el que se publicó aquí.
   voz no está disponible. Conéctate y vuelve a abrir Voziris.
 - Una sola palabra muy corta, dicha sola, puede tomarse por silencio, y
   entonces no se escribe nada. Vuelve a dictarla.
+- Un aviso del indicador de más de unos 45 caracteres se ve cortado.
 - Con una ventana que corre como administrador en primer plano, Windows no
   deja a Voziris ver el atajo ni pegar en ella. Si un dictado tenía que ir a
   esa ventana, queda en el historial y en el portapapeles.
