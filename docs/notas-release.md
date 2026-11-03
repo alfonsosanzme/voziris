@@ -76,8 +76,9 @@ configuración, tus dictados ni el modelo.
 **Si ya tenías la 0.1.0 o la 0.1.1, o usas Voziris sin instalar:** se actualiza a
 mano, porque esas versiones no buscan versiones nuevas y la copia sin instalar
 no se cambia sola (en la 0.1.2, «Descargar la 0.1.3…» abre la página de la
-versión). Después, una copia instalada de esta versión te ofrecerá las
-siguientes en la bandeja. Lo que trajo la 0.1.2 está en sus notas:
+versión). Una vez instalada esta, si aceptas que mire las versiones nuevas (o con
+«Buscar actualizaciones»), la bandeja te ofrecerá las siguientes. Lo que trajo la
+0.1.2 está en sus notas:
 https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
 
 - **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
