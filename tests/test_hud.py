@@ -178,6 +178,31 @@ def test_no_roba_el_foco_y_esta_fuera_de_alt_tab(raiz: tk.Tk) -> None:
     h.destruir()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="estilos de ventana de Windows")
+@pytest.mark.parametrize("al_acabar_un_dictado", [True, False])
+def test_un_aviso_no_roba_el_foco(
+    raiz: tk.Tk, monkeypatch: pytest.MonkeyPatch, al_acabar_un_dictado: bool
+) -> None:
+    """VOZ-86: un aviso se queda a la vista. Si se llevara el foco, el texto se pegaría en él."""
+    monkeypatch.setattr(mod, "AVISO_MS", 300)
+    antes = winapi.ventana_en_primer_plano()
+    h = _nuevo(raiz)
+    if al_acabar_un_dictado:
+        h.mostrar_procesando()
+    h.aviso("Nada que escribir: no se oyó voz")
+    h.ocultar()
+    _bombear(raiz, 0.1)
+    assert h.visible and h._ventana is not None
+    hwnd = Hud.hwnd(h._ventana)
+    assert winapi.estilo_extendido(hwnd) & winapi.WS_EX_NOACTIVATE
+    assert winapi.ventana_en_primer_plano() == antes  # el foco sigue donde estaba
+    assert winapi.ventana_en_primer_plano() != hwnd
+    _bombear(raiz, 0.4)  # lo quita su temporizador: tampoco al irse se mueve
+    assert not h.visible
+    assert winapi.ventana_en_primer_plano() == antes
+    h.destruir()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows")
 def test_se_coloca_en_el_borde_inferior_del_monitor_activo(raiz: tk.Tk) -> None:
     x, y, ancho, alto = winapi.area_de_trabajo_activa()
