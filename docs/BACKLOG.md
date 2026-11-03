@@ -475,7 +475,7 @@ Lo vio el cliente en sus dos equipos: a veces, al pulsar solo Ctrl, se activaba 
 Lo que vio el cliente el 30/10: si pulsaba Ctrl+Win y no decía nada, Groq escribía siempre «Gracias por ver el video». Eran 8 de los 73 dictados del historial, de 0,8 a 1,5 s. Su micrófono entrega silencio digital (−97 dBFS) cuando nadie habla, y Whisper se inventa esa frase con cualquier audio sin voz. Medido contra Groq: pasa sin normalizar, con ceros, con la ganancia limitada a +30 dB y sin el vocabulario («Gracias.»); el modelo turbo escribe «¡Suscríbete al canal!». `no_speech_prob` no sirve para filtrarlo: da 0 en esa última y 0,95 en una palabra real.
 
 **Criterios de aceptación**
-- [x] Al cerrar cualquier dictado en vivo, en cualquier modo y destino, Silero (el VAD que ya se cargaba para «clavar») mira si alguien habló. Si nadie habló, no se llama a ningún motor ni se pega nada, y el indicador dice «Nada que escribir: no se oyó voz».
+- [x] Al cerrar cualquier dictado en vivo, en cualquier modo y destino, Silero (el VAD que ya se cargaba para «clavar») mira si alguien habló. Si nadie habló, no se llama a ningún motor ni se pega nada, y el indicador dice «Nada que escribir: no se oyó voz». *(Ese aviso no llegó a verse hasta VOZ-86.)*
 - [x] Con 5 s o más sin voz pasa lo mismo que cuando el motor no saca texto: icono de error, y el audio se queda en «Dictados sin transcribir», por si el VAD se equivocó.
 - [x] Recuperar y volver a transcribir no preguntan al VAD: son peticiones explícitas.
 - [x] Sin el modelo del VAD, antes de que cargue o si falla, se transcribe como antes.
@@ -486,3 +486,20 @@ Lo que vio el cliente el 30/10: si pulsaba Ctrl+Win y no decía nada, Groq escri
   - pasan los 21 dictados reales con voz, también bajados 40 dB;
   - pasan el 97–99 % de las palabras sueltas de 350 a 800 ms. Las que no ve, trozos de menos de 250 ms, Groq tampoco las acertó.
 - [x] Cuesta unos milisegundos por dictado: 0,12 ms por cada 32 ms de audio, y para en cuanto oye voz. Ahorra una llamada a Groq por cada pulsación vacía.
+
+### VOZ-86 · Los avisos de un dictado se ven
+**Archivos:** `ui/hud.py`
+
+Lo encontró la verificación de las notas de la 0.1.2. El orquestador avisa y pasa a reposo al momento: las dos órdenes llegan al indicador en la misma tanda de la cola de la interfaz, y la segunda quitaba el aviso antes de que se pintara. Al pulsar sin hablar no se escribía nada, pero tampoco se decía nada en pantalla. VOZ-84 prometía ese aviso, y sus tests solo miraban que se mandara.
+
+**Criterios de aceptación**
+- [x] Un aviso que llega al acabar un dictado se queda ~1,5 s a la vista: pasar a reposo ya no lo quita. Vale para «Nada que escribir: …» y para los avisos de la transcripción («…: transcrito en local», «Sin red: …»), que estaban igual.
+- [x] Un dictado nuevo quita el aviso al momento, y al acabar se oculta sin esperar a ningún temporizador de antes.
+- [x] Sin aviso, el indicador se oculta al momento, como siempre.
+- [x] Sin opciones nuevas ni cambios fuera del indicador.
+- [x] Test sin ventanas con el orquestador de verdad y la cola vaciada de una vez: falla con el código de antes.
+- [x] Comprobado con la ventana de verdad: Windows dice que está a la vista ~1,5 s, y en la captura de la pantalla se lee el aviso.
+
+**Fuera de esto, y sigue igual**
+- Si llegan dos avisos seguidos, solo se ve el último.
+- Un aviso de más de unos 45 caracteres se corta por el ancho del indicador (268 px útiles): «La API falló (…): transcrito en local» se ve cortado. Los que ya se veían, igual.

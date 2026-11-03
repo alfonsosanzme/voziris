@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import sys
 import time
 import tkinter as tk
@@ -102,6 +103,49 @@ def test_aviso_se_queda_y_luego_desaparece(raiz: tk.Tk, monkeypatch: pytest.Monk
     h.destruir()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows")
+def test_el_aviso_al_acabar_un_dictado_se_ve_de_verdad(
+    raiz: tk.Tk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VOZ-86: las tres órdenes llegan en la misma tanda de la cola de la interfaz.
+
+    Se le pregunta a Windows si la ventana está a la vista, no al indicador.
+    Antes, el aviso se quitaba sin llegar a pintarse.
+    """
+    monkeypatch.setattr(mod, "AVISO_MS", 300)
+    cola: list[Any] = []
+    h = Hud(raiz, en_hilo_tk=cola.append, animaciones=True)
+    h.mostrar_procesando()
+    h.aviso("Nada que escribir: no se oyó voz")
+    h.ocultar()
+    for fn in cola:
+        fn()
+    _bombear(raiz, 0.1)
+    assert h._ventana is not None and h._lienzo is not None
+    hwnd = ctypes.c_void_p(Hud.hwnd(h._ventana))
+    assert ctypes.windll.user32.IsWindowVisible(hwnd)
+    assert "no se oyó voz" in h._lienzo.itemcget(h._texto_id, "text")
+    _bombear(raiz, 0.4)
+    assert not ctypes.windll.user32.IsWindowVisible(hwnd) and not h.visible
+    h.destruir()
+
+
+def test_el_dictado_siguiente_quita_el_aviso_y_no_hereda_su_temporizador(
+    raiz: tk.Tk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod, "AVISO_MS", 150)
+    h = _nuevo(raiz)
+    h.aviso("Nada que escribir: no se oyó voz")
+    h.mostrar_grabando()
+    _bombear(raiz, 0.3)  # pasa el tiempo del aviso, y la grabación sigue a la vista
+    assert h.visible and h._lienzo is not None
+    assert "suelta" in h._lienzo.itemcget(h._texto_id, "text")
+    h.ocultar()
+    _bombear(raiz, 0.05)
+    assert not h.visible
+    h.destruir()
+
+
 def test_llamadas_desde_otro_hilo_pasan_por_en_hilo_tk(raiz: tk.Tk) -> None:
     encoladas: list[Any] = []
     h = Hud(raiz, en_hilo_tk=encoladas.append, animaciones=True)
@@ -131,6 +175,31 @@ def test_no_roba_el_foco_y_esta_fuera_de_alt_tab(raiz: tk.Tk) -> None:
     assert winapi.ventana_en_primer_plano() != hwnd
     h.ocultar()
     _bombear(raiz, 0.05)
+    h.destruir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="estilos de ventana de Windows")
+@pytest.mark.parametrize("al_acabar_un_dictado", [True, False])
+def test_un_aviso_no_roba_el_foco(
+    raiz: tk.Tk, monkeypatch: pytest.MonkeyPatch, al_acabar_un_dictado: bool
+) -> None:
+    """VOZ-86: un aviso se queda a la vista. Si se llevara el foco, el texto se pegaría en él."""
+    monkeypatch.setattr(mod, "AVISO_MS", 300)
+    antes = winapi.ventana_en_primer_plano()
+    h = _nuevo(raiz)
+    if al_acabar_un_dictado:
+        h.mostrar_procesando()
+    h.aviso("Nada que escribir: no se oyó voz")
+    h.ocultar()
+    _bombear(raiz, 0.1)
+    assert h.visible and h._ventana is not None
+    hwnd = Hud.hwnd(h._ventana)
+    assert winapi.estilo_extendido(hwnd) & winapi.WS_EX_NOACTIVATE
+    assert winapi.ventana_en_primer_plano() == antes  # el foco sigue donde estaba
+    assert winapi.ventana_en_primer_plano() != hwnd
+    _bombear(raiz, 0.4)  # lo quita su temporizador: tampoco al irse se mueve
+    assert not h.visible
+    assert winapi.ventana_en_primer_plano() == antes
     h.destruir()
 
 
