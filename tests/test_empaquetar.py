@@ -47,6 +47,15 @@ def test_runtimes_sin_distinguir_mayusculas(empaquetar: ModuleType, tmp_path: Pa
     assert empaquetar._faltan_runtimes(dist) == ["falta msvcp140_1.dll en _internal"]
 
 
+def test_setuptools_no_va_en_el_paquete(empaquetar: ModuleType, tmp_path: Path) -> None:
+    """Con él, cualquier Voziris viva retiene _internal\\base_library.zip (VOZ-85)."""
+    assert '"setuptools"' in (RAIZ / "build" / "voziris.spec").read_text(encoding="utf-8")
+    dist = _dist(tmp_path)
+    assert empaquetar._sobra_setuptools(dist) == []
+    (dist / "_internal" / "setuptools").mkdir()
+    assert "setuptools" in empaquetar._sobra_setuptools(dist)[0]
+
+
 def test_rutas_largas(empaquetar: ModuleType, tmp_path: Path) -> None:
     dist = _dist(tmp_path)
     larga = dist / "_internal" / ("x" * 95) / "a.dll"

@@ -34,6 +34,14 @@ y el programa arrancaba y solo fallaba al transcribir. Ahora:
      también arrancándola (`voziris.exe --comprobar`).
   3. Solo entonces se cambia la instalación anterior por la nueva. Si algo
      falla a medias, la anterior se queda como estaba.
+
+Desde VOZ-85 ese cambio no depende de que no haya nada abierto. Mientras viva
+una Voziris con `_internal\\base_library.zip` abierto, Windows no deja renombrar
+`_internal`, y bastaba un duplicado sin ventana visible para que fallara dos
+veces seguidas (31 de octubre). Antes de cambiar el programa se mira qué procesos
+siguen vivos desde la carpeta: se pregunta si están transcribiendo y, si no, se
+cierran. Si aun así algo lo impide, se busca quién es, se dice, y se puede
+reintentar sin volver a copiar.
 """
 
 from __future__ import annotations
@@ -49,9 +57,9 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
-from voziris import __version__, integridad
+from voziris import __version__, integridad, winapi
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +72,9 @@ class InstalacionFallida(Exception):
         self.bloqueado = bloqueado
         """Windows no deja ejecutar la copia (Control inteligente de aplicaciones)."""
 
+
+class InstalacionCancelada(Exception):
+    """El usuario dijo que no a una pregunta del cambio. La instalación anterior sigue intacta."""
 
 
 NOMBRE = "Voziris"
@@ -93,6 +104,10 @@ indexador deja a veces `_internal` con el acceso denegado unos segundos (VOZ-73)
 crece en cada intento: en total, hasta 14 s antes de darse por vencido."""
 _ERRORES_PASAJEROS = frozenset({5, 32, 33})
 """Acceso denegado, archivo en uso, archivo bloqueado: suele ser el antivirus. Se reintenta."""
+ESPERA_CIERRE_S = 5.0
+"""Lo que se da a un proceso de la carpeta para irse solo antes de terminarlo (VOZ-85)."""
+OPCIONES_CON_TRABAJO = ("--transcribir", "--archivo")
+"""Un proceso arrancado con una de estas tiene trabajo que se perdería: se pregunta."""
 
 
 def carpeta_instalacion() -> Path:
@@ -134,6 +149,8 @@ def instalar(
     antes_de_sustituir: Callable[[], None] | None = None,
     al_progresar: Callable[[str, float | None], None] | None = None,
     pausar_volcados: Callable[[], AbstractContextManager[object]] | None = None,
+    preguntar_cerrar: Callable[[str], bool] | None = None,
+    preguntar_reintento: Callable[[str], bool] | None = None,
 ) -> Path:
     """Copia el programa, crea el acceso directo de Inicio y la entrada de desinstalación.
 
@@ -150,9 +167,16 @@ def instalar(
             de cambiar el programa. Es donde se cierra la Voziris abierta: si
             la instalación no llega hasta aquí, el usuario no se queda sin ella.
         al_progresar: (mensaje, fracción) para la ventana de progreso. Puede
-            lanzar para cancelar, pero solo se le llama antes de tocar nada.
+            lanzar para cancelar, pero solo se le llama con el programa de antes
+            en su sitio. Se le llama después de cada pregunta, antes de actuar.
         pausar_volcados: apaga faulthandler mientras se crean los accesos
             directos (ver `integridad.autoprueba`).
+        preguntar_cerrar: recibe la pregunta si un proceso de la carpeta está
+            transcribiendo; True es «ciérralo». Sin ella, no se cierra y no se
+            instala.
+        preguntar_reintento: recibe la explicación si algo impide cambiar el
+            programa; True es «reintenta», sin volver a copiar. Sin ella, la
+            explicación va en `InstalacionFallida`.
 
     Returns:
         La carpeta de instalación.
@@ -161,6 +185,8 @@ def instalar(
         FileNotFoundError: `origen` no tiene `voziris.exe` y `_internal/`.
         InstalacionFallida: falta algo en el origen, no hay sitio, la copia
             falló o no arranca. La instalación anterior queda como estaba.
+        InstalacionCancelada: el usuario dijo que no a una de las preguntas. La
+            instalación anterior queda como estaba.
         OSError: al crear los accesos o el registro, ya con el programa copiado.
     """
     origen = (origen or ejecutable_actual().parent).resolve()
@@ -173,7 +199,8 @@ def instalar(
         )
     if destino != origen:
         log.info("instalando %s → %s", origen, destino)
-        _instalar_programa(origen, destino, comprobar_copia, al_progresar, antes_de_sustituir)
+        _instalar_programa(origen, destino, comprobar_copia, al_progresar, antes_de_sustituir,
+                           preguntar_cerrar, preguntar_reintento)
         for nombre in DATOS_DEL_USUARIO:
             fuente = origen / nombre
             try:
@@ -265,12 +292,19 @@ def _instalar_programa(
     comprobar_copia: Callable[[Path], None] | None,
     al_progresar: Callable[[str, float | None], None] | None,
     antes_de_sustituir: Callable[[], None] | None = None,
+    preguntar_cerrar: Callable[[str], bool] | None = None,
+    preguntar_reintento: Callable[[str], bool] | None = None,
 ) -> None:
     """voziris.exe y _internal de `origen` a `destino`, comprobados, o nada."""
 
     def avisar(mensaje: str, fraccion: float | None = None) -> None:
         if al_progresar is not None:
             al_progresar(mensaje, fraccion)
+
+    def antes_de_actuar() -> None:
+        # Cancelar solo se apunta, y los cuadros no bloquean la ventana de progreso: lo que
+        # se pulsó con una pregunta abierta cuenta aquí, sea cual sea la respuesta.
+        avisar("Sustituyendo la versión anterior…")
 
     avisar("Comprobando que el paquete está completo…")
     try:
@@ -327,10 +361,13 @@ def _instalar_programa(
         if comprobar_copia is not None:
             avisar("Comprobando que la copia arranca…")
             comprobar_copia(nuevo / "voziris.exe")
-        avisar("Sustituyendo la versión anterior…")
+        antes_de_actuar()
+        aceptados = _preguntar_si_hay_trabajo(destino, preguntar_cerrar)  # antes de cerrar nada
+        antes_de_actuar()
         if antes_de_sustituir is not None:
             antes_de_sustituir()
-        _sustituir(nuevo, destino)
+        _cerrar_lo_que_quede(destino, preguntar_cerrar, aceptados, antes_de_actuar)
+        _sustituir_preguntando(nuevo, destino, preguntar_reintento, antes_de_actuar)
     except shutil.Error as e:
         raise InstalacionFallida(explicar_error_de_copia(e)) from e
     except OSError as e:
@@ -339,13 +376,219 @@ def _instalar_programa(
         _borrar(nuevo)
 
 
+def _grabacion_de(orden: list[str]) -> str | None:
+    """Lo que transcribe un proceso arrancado con esta orden, o None si no transcribe nada."""
+    for i, parte in enumerate(orden[1:], start=2):
+        for opcion in OPCIONES_CON_TRABAJO:
+            if parte == opcion:
+                return PureWindowsPath(orden[i]).name if i < len(orden) else ""
+            if parte.startswith(f"{opcion}="):
+                return PureWindowsPath(parte.removeprefix(f"{opcion}=")).name
+    return None
+
+
+def _pregunta_de_cierre(trabajando: list[tuple[winapi.Proceso, str | None]]) -> str:
+    """`trabajando`: (proceso, su grabación). Sin grabación, es que no se pudo leer su orden."""
+    lineas = [
+        f"Voziris está transcribiendo «{grabacion}» (PID {proceso.pid}, {proceso.ruta})."
+        if grabacion else
+        f"Hay una Voziris que puede estar transcribiendo algo (PID {proceso.pid}, {proceso.ruta})."
+        for proceso, grabacion in trabajando
+    ]
+    return "\n".join(lineas) + (
+        "\n\nPara cambiar el programa hay que cerrarla, y ese trabajo se perdería.\n\n"
+        "¿Cerrarla y seguir instalando? Si dices que no, no se cambia nada y la "
+        "transcripción sigue."
+    )
+
+
+def _con_trabajo(procesos: list[winapi.Proceso]) -> list[tuple[winapi.Proceso, str | None]]:
+    """Los que tienen trabajo que se perdería, cada uno con lo que se le pasa a la pregunta."""
+    trabajando: list[tuple[winapi.Proceso, str | None]] = []
+    for proceso in procesos:
+        orden = winapi.orden_de_proceso(proceso.pid)
+        if orden is None:
+            # Tampoco se lee la de quien acaba de irse, como la bandeja que está saliendo:
+            # contarlo sacaría una pregunta falsa, con el «No» por defecto.
+            if winapi.ruta_de_proceso(proceso.pid) == proceso.ruta:
+                trabajando.append((proceso, None))
+        elif (grabacion := _grabacion_de(orden)) is not None:
+            trabajando.append((proceso, grabacion))
+    return trabajando
+
+
+def _preguntar_cierre(
+    trabajando: list[tuple[winapi.Proceso, str | None]],
+    preguntar_cerrar: Callable[[str], bool] | None,
+) -> None:
+    pregunta = _pregunta_de_cierre(trabajando)
+    log.warning("trabajo en marcha en la carpeta: %s", trabajando)
+    if preguntar_cerrar is None or not preguntar_cerrar(pregunta):
+        raise InstalacionCancelada(pregunta)
+    log.info("el usuario acepta cerrarlo")
+
+
+def _preguntar_si_hay_trabajo(
+    destino: Path, preguntar_cerrar: Callable[[str], bool] | None
+) -> set[int]:
+    """Si un proceso de la carpeta está transcribiendo, nada se cierra sin preguntar.
+
+    Returns:
+        Los PID que se ha aceptado cerrar.
+
+    Raises:
+        InstalacionCancelada: la respuesta fue que no, o no hay a quién preguntar.
+    """
+    if sys.platform != "win32":
+        return set()
+    try:
+        trabajando = _con_trabajo(winapi.procesos_en_carpeta(destino))
+    except OSError as e:
+        log.warning("no se pudo mirar qué procesos siguen vivos en %s: %s", destino, e)
+        return set()
+    if trabajando:
+        _preguntar_cierre(trabajando, preguntar_cerrar)
+    return {proceso.pid for proceso, _ in trabajando}
+
+
+def _cerrar_lo_que_quede(
+    destino: Path,
+    preguntar_cerrar: Callable[[str], bool] | None,
+    aceptados: set[int],
+    antes_de_actuar: Callable[[], None],
+) -> None:
+    """Lo que sigue vivo desde la carpeta cuando la bandeja ya se ha cerrado.
+
+    Un duplicado parado en su aviso, un aviso final sin cerrar… Eso se cierra sin
+    preguntar. Pero mientras se preguntaba o se cerraba la bandeja, hasta 6 s, ha
+    podido empezar una transcripción. Lo que tenga trabajo y no se haya aceptado se
+    pregunta todo junto, antes de cerrar nada: un «No» no puede llegar con otra ya
+    terminada. Basta con leer la orden al sacar la lista, porque no cambia en vida
+    del proceso.
+
+    Lo que arranque después de sacar la lista no se toca. Si algo no se deja cerrar
+    o estorba, `_sustituir_preguntando` dirá quién es.
+
+    Raises:
+        InstalacionCancelada: la respuesta fue que no, o no hay a quién preguntar.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        vivos = winapi.procesos_en_carpeta(destino)
+        antes_de_actuar()  # lo que se pulsó mientras se cerraba la bandeja
+        nuevos = _con_trabajo([p for p in vivos if p.pid not in aceptados])
+        if nuevos:
+            _preguntar_cierre(nuevos, preguntar_cerrar)
+        for proceso in vivos:
+            antes_de_actuar()  # cerrar uno puede tardar 5 s
+            resultado = winapi.cerrar_proceso(proceso, ESPERA_CIERRE_S)
+            log.warning("seguía vivo un proceso de la carpeta: PID %d (%s): %s",
+                        proceso.pid, proceso.ruta, resultado)
+    except OSError as e:
+        log.warning("no se pudo mirar qué procesos siguen vivos en %s: %s", destino, e)
+
+
+def _sustituir_preguntando(
+    nuevo: Path,
+    destino: Path,
+    preguntar_reintento: Callable[[str], bool] | None,
+    antes_de_actuar: Callable[[], None],
+) -> None:
+    """`_sustituir`. Si algo lo retiene, se dice quién y se puede reintentar sin volver a copiar."""
+    while True:
+        antes_de_actuar()  # hasta aquí, el programa de antes sigue en su sitio
+        try:
+            _sustituir(nuevo, destino)
+            return
+        except OSError as e:
+            if getattr(e, "winerror", None) not in _ERRORES_PASAJEROS:
+                raise
+            # Solo el lado que ha fallado. Restart Manager abre cada archivo, y el antivirus
+            # analiza los recién copiados: con los de la copia, sin hacer falta, son segundos más.
+            fallo = Path(e.filename) if e.filename else destino
+            retienen = _quien_retiene(nuevo if fallo.parent == nuevo else destino)
+            log.warning("no se puede cambiar el programa, lo retiene: %s",
+                        retienen or "no se sabe quién")
+            if preguntar_reintento is None:
+                raise InstalacionFallida(
+                    mensaje_de_retencion(retienen, "vuelve a instalar")
+                ) from e
+            if not preguntar_reintento(mensaje_de_retencion(retienen, "pulsa Reintentar")):
+                raise InstalacionCancelada("no se reintenta") from e
+            log.info("el usuario pide reintentar")
+
+
+def _quien_retiene(carpeta: Path) -> list[winapi.Proceso]:
+    """Quién tiene abierto el programa que hay en `carpeta`. Lo demás de ella no estorba."""
+    if sys.platform != "win32":
+        return []
+    interno = carpeta / "_internal"
+    try:
+        archivos = [
+            str(p)
+            for raiz in (carpeta / "voziris.exe", interno)
+            for p in (raiz, *raiz.rglob("*"))
+            if p.is_file()
+        ]
+        # `_internal` y su primer nivel: por todas las carpetas serían casi 10 s.
+        carpetas = [str(p) for p in (interno, *interno.iterdir()) if p.is_dir()]
+        return winapi.quien_usa(archivos, carpetas)
+    except OSError as e:
+        log.warning("no se pudo mirar quién retiene %s: %s", carpeta, e)
+        return []
+
+
+def mensaje_de_retencion(retienen: list[winapi.Proceso], siguiente: str) -> str:
+    """Qué impide cambiar el programa y qué hacer. `siguiente`: «pulsa Reintentar», por ejemplo."""
+    pie = "No se ha cambiado nada: la versión anterior sigue como estaba."
+    if not retienen:
+        return (
+            "Algo tiene abierta la carpeta de Voziris y no se ha podido saber qué. Suele ser una "
+            "ventana del Explorador o una consola abierta dentro de esa carpeta, o el antivirus "
+            f"analizándola. Ciérralas y {siguiente}. Si sigue igual, reinicia Windows y vuelve "
+            f"a instalar.\n\n{pie}"
+        )
+    otros = [p for p in retienen if _nombre_de(p) != "explorer.exe"]
+    explorador = "Hay una ventana del Explorador abierta dentro de la carpeta de Voziris."
+    if not otros:  # «Finalizar tarea» aquí se llevaría por delante el escritorio entero
+        return f"{explorador} Ciérrala y {siguiente}.\n\n{pie}"
+    lista = "; ".join(_describir(p) for p in otros)
+    if len(otros) == 1:
+        quien = f"Otro programa tiene abierta la carpeta de Voziris: {lista}. Ciérralo"
+        pids = "ese PID"
+    else:
+        quien = f"Otros programas tienen abierta la carpeta de Voziris: {lista}. Ciérralos"
+        pids = "esos PID"
+    antes = f"{explorador} Ciérrala también.\n\n" if len(otros) < len(retienen) else ""
+    return (
+        f"{antes}{quien} y {siguiente}. Si no ves ninguna ventana suya, en el Administrador de "
+        f"tareas → Detalles, busca {pids} y elige Finalizar tarea.\n\n{pie}"
+    )
+
+
+def _nombre_de(proceso: winapi.Proceso) -> str:
+    return PureWindowsPath(proceso.ruta).name.lower()
+
+
+def _describir(proceso: winapi.Proceso) -> str:
+    """«cmd.exe, PID 1234 (C:\\Windows\\System32\\cmd.exe)», con lo que se sepa de él."""
+    nombre = PureWindowsPath(proceso.ruta).name
+    if not nombre:
+        return f"un programa que no se deja mirar, PID {proceso.pid}"
+    if nombre == proceso.ruta:  # el nombre de Restart Manager: no hay ruta
+        return f"{nombre}, PID {proceso.pid}"
+    return f"{nombre}, PID {proceso.pid} ({proceso.ruta})"
+
+
 def _sustituir(nuevo: Path, destino: Path) -> None:
     """Cambia voziris.exe y _internal por los de `nuevo`. Si algo falla, deja lo de antes.
 
     Se aparta lo viejo con un nombre propio, se mueve lo nuevo (es un
     renombrado dentro del mismo disco: instantáneo) y al final se borra lo
     apartado. Lo que haya en `destino` además del programa es del usuario y
-    no se toca.
+    no se toca. Lo nuevo que ya se había movido vuelve a `nuevo`, para poder
+    reintentar sin copiar otra vez.
     """
     destino.mkdir(parents=True, exist_ok=True)
     marca = f"{SUFIJO_VIEJO}-{time.strftime('%Y%m%d%H%M%S')}"
@@ -364,7 +607,11 @@ def _sustituir(nuevo: Path, destino: Path) -> None:
     except OSError as e:
         log.exception("no se pudo cambiar la instalación: se deja la anterior")
         for puesto in puestos:
-            _borrar(puesto)
+            try:
+                _reintentar(os.replace, puesto, nuevo / puesto.name)
+            except OSError:
+                log.exception("no se pudo devolver %s a la copia", puesto)
+                _borrar(puesto)
         sin_devolver = []
         for actual, viejo in reversed(apartados):
             try:
@@ -378,8 +625,8 @@ def _sustituir(nuevo: Path, destino: Path) -> None:
             raise InstalacionFallida(
                 "No se pudo cambiar la versión anterior por la nueva, y tampoco dejarla "
                 f"como estaba: {_causa(str(e), e)}.\n\nNo se ha perdido nada. Cierra lo que "
-                "tenga abierta la carpeta de Voziris, espera un minuto y vuelve a instalar: "
-                "la instalación recupera primero la versión anterior."
+                "tenga abierta la carpeta de Voziris y vuelve a instalar: la instalación "
+                "recupera primero la versión anterior."
             ) from e
         raise
     for _, viejo in apartados:
@@ -496,8 +743,11 @@ def _causa(texto: str, error: OSError | None) -> str:
     if numero is None and (m := _ERRNO.search(texto)):
         numero = int(m.group(1))
     if winerror in _ERRORES_PASAJEROS:
-        return ("otro programa tiene abierto un archivo (el antivirus analizándolo, o una "
-                "Voziris que sigue abierta). Espera un minuto y vuelve a intentarlo")
+        # Aquí se copia a Voziris.nuevo, donde una Voziris abierta no estorba. Lo que
+        # retiene el programa al cambiarlo lo dice `mensaje_de_retencion`.
+        return ("el antivirus u otro programa tiene abierto un archivo. Vuelve a intentarlo "
+                "dentro de un momento; si sigue igual, añade una excepción para Voziris en "
+                "el antivirus o reinicia Windows")
     if winerror in (39, 112) or numero == errno.ENOSPC:
         return "el disco está lleno"
     if winerror == 206 or numero == errno.ENAMETOOLONG:

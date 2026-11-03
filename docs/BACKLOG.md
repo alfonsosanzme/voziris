@@ -487,6 +487,49 @@ Lo que vio el cliente el 30/10: si pulsaba Ctrl+Win y no decía nada, Groq escri
   - pasan el 97–99 % de las palabras sueltas de 350 a 800 ms. Las que no ve, trozos de menos de 250 ms, Groq tampoco las acertó.
 - [x] Cuesta unos milisegundos por dictado: 0,12 ms por cada 32 ms de audio, y para en cuanto oye voz. Ahorra una llamada a Groq por cada pulsación vacía.
 
+### VOZ-85 · Lo invisible que bloqueaba instalar y actualizar
+**Archivos:** `winapi.py`, `instalador.py`, `__main__.py`, `build/voziris.spec`, `tools/empaquetar.py`
+
+Dos cosas que no se veían. El 31/10, la instalación falló dos veces en el equipo de Alfonso por un duplicado sin ventana, abierto por otro programa y parado en el aviso «Voziris ya está abierto». El aviso de error decía «Espera un minuto», y con un proceso invisible esperar no arregla nada. El 2/11, «Actualizar» contestaba «La actualización ya está en marcha» durante minutos, porque el instalador retenía su mutex hasta que se pulsara Aceptar en un aviso abierto detrás de otras ventanas.
+
+**Causa de lo primero.** Mientras viva un `voziris.exe` de la carpeta, `_internal\base_library.zip` queda abierto, y NTFS no deja renombrar una carpeta con un archivo abierto debajo. Una DLL cargada no cuenta.
+- `cffi` menciona `setuptools` en lo que usa para compilar, y por eso PyInstaller lo mete en el paquete, con su hook `pyi_rth_setuptools`.
+- El hook lo importa en cada arranque, y `setuptools` pregunta su versión a `importlib.metadata`.
+- `importlib.metadata` abre el zip y lo guarda en una caché (`FastPath`, con `lru_cache`), así que no se cierra hasta que el proceso sale.
+- Medido con la 0.1.2: desde unos 200 ms después de arrancar. Los «50 ms» que constaban eran un bloqueo pasajero.
+- La bandeja y `--transcribir` lo seguirán reteniendo sin `setuptools`, porque `onnx_asr` hace la misma llamada al importarse. Emulado en el venv; sin medir en el .exe.
+
+**Criterios de aceptación**
+- [x] `setuptools` no va en el paquete. `tools/empaquetar.py` se niega a empaquetar si vuelve a aparecer. `--version` baja de unos 280 ms a unos 175 ms.
+- [x] El aviso de un duplicado se cierra solo a los 10 s y el proceso termina, aunque nadie vea la ventana. Es `MessageBoxTimeoutW`, que no está documentada: si faltara, no sale ventana y queda en el registro.
+- [x] Antes de cambiar el programa, el instalador mira qué procesos siguen vivos con su ejecutable en esa carpeta, sin esperar a que algo falle:
+  - si uno está transcribiendo, o sigue vivo y no se puede leer su orden, pregunta antes de cerrar nada, también la bandeja, con el PID, la ruta y la grabación. El botón por defecto es «No», y con «No» no se cambia nada;
+  - lo demás lo cierra sin preguntar y lo anota en el registro: `WM_CLOSE` a sus ventanas y, si a los 5 s sigue vivo, `TerminateProcess`. `Local\Voziris.Salir` solo lo atiende la instancia que tiene el mutex;
+  - después de cerrar la bandeja y antes de cerrar nada más, vuelve a sacar la lista y a leer la orden de todos: lo que empezó a transcribir con la pregunta abierta o mientras se cerraba la bandeja también se pregunta, todo junto, y lo ya aceptado no. Con «No» no se ha terminado nada. Lo que arranque después de sacar esa lista no se cierra.
+- [x] Cancelar en la ventana de progreso cuenta también con una pregunta abierta, porque los cuadros no la bloquean. Si se pulsó, al contestar no se cierra nada más ni se cambia el programa, sea cual sea la respuesta. Lo mismo si se pulsa mientras se cierra la bandeja u otro proceso: lo que queda por cerrar sigue vivo.
+- [x] Si aun así no se puede cambiar el programa, busca quién lo retiene (Restart Manager para los archivos, `NtQueryInformationFile` para quien tiene una carpeta como directorio de trabajo) y lo dice con **Reintentar** y **Cancelar**, sin volver a copiar. Lo que ya se había movido vuelve a `Voziris.nuevo`, y la instalación anterior sigue en su sitio mientras se pregunta.
+- [x] Ningún aviso dice «Espera un minuto». Dice qué programa es, con su PID y su ruta, y qué hacer; si no se sabe, qué suele ser. A una ventana del Explorador no se le propone «Finalizar tarea», porque se llevaría por delante el escritorio.
+- [x] Si no se instala, por el motivo que sea, y se había cerrado la bandeja, se vuelve a abrir. También al cancelar.
+- [x] `MUTEX_INSTALAR` y `MUTEX_ACTUALIZAR` se sueltan antes de cualquier aviso final: bien, cancelado o con error.
+- [x] Por eso, la bandeja da por en marcha un `--actualizar` vivo y sin mutex solo durante sus primeros 10 s. Si con el antivirus tarda más y llega otro clic, de los dos solo sigue el que tome el mutex.
+- [x] `_mensaje` y `_error_fatal` son cuadros nativos encima de las demás ventanas (`MB_TOPMOST | MB_SETFOREGROUND`). Windows puede negarles el foco, pero se ven.
+- [x] Probado con el `.exe` compilado, en un escritorio oculto y con carpetas y claves de prueba:
+  - un duplicado de la 0.1.2 parado en su aviso impide renombrar `_internal`. `_instalar_cli` lo cierra con `WM_CLOSE` y cambia el programa sin reintentos;
+  - un duplicado compilado con esto sale a los 10 s con código 0, y mientras vive deja renombrar `_internal`;
+  - con una consola con el directorio de trabajo dentro, el cuadro dice `cmd.exe`, su PID y su ruta, y «Reintentar» funciona en cuanto se cierra;
+  - con «Cancelar», sigue la versión anterior, sin restos, y se pide reabrir la bandeja;
+  - mientras se pregunta, el mutex sigue tomado; en el aviso final, ya está suelto.
+- [x] Probado con la ventana de progreso y los cuadros de verdad, en un escritorio oculto y con un paquete falso:
+  - pulsar Cancelar con una pregunta abierta y contestar «Sí» o «Reintentar» no cierra ni cambia nada;
+  - pulsar Cancelar mientras se cierra la bandeja deja viva la transcripción ya aceptada;
+  - una transcripción que empieza mientras se cierra la bandeja se pregunta: con «No» sigue, también la que ya se había aceptado, y con «Sí» se cierra e instala.
+
+**Sin probar:**
+- `--instalar` y «Actualizar» de verdad, con una bandeja real. En la prueba, el cierre y la reapertura de la bandeja estaban sustituidos. Se comprueba en `docs/DESPLIEGUE.md` §6.2 bis cuando la publicada lleve esto.
+- Que el aviso se vea encima de otras ventanas en una pantalla de verdad.
+
+**Fuera de esto:** `--desinstalar` tiene el mismo punto ciego: si algo retiene la carpeta, no la borra entera y no lo dice.
+
 ### VOZ-86 · Los avisos de un dictado se ven
 **Archivos:** `ui/hud.py`
 

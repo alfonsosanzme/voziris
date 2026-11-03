@@ -952,17 +952,22 @@ class _Proceso:
 
 
 def test_un_segundo_clic_no_lanza_otra_actualizacion(monkeypatch: pytest.MonkeyPatch) -> None:
-    """En marcha = --actualizar vivo, o el instalador nuevo con su mutex. Sin plazos fijos."""
+    """En marcha = alguno con su mutex, o un --actualizar que acaba de arrancar y aún sin él."""
     from voziris import __main__ as principal
 
-    instalando = [False]
+    mutex: list[str] = []
+    tarde = principal.ARRANQUE_ACTUALIZAR_S
     monkeypatch.setattr(principal.winapi, "ES_WINDOWS", True)
-    monkeypatch.setattr(principal.winapi, "existe_mutex",
-                        lambda nombre: instalando[0] and nombre == principal.MUTEX_INSTALAR)
-    assert principal._actualizacion_en_marcha(_Proceso(None))  # descargando
-    instalando[0] = True
-    assert principal._actualizacion_en_marcha(_Proceso(0))  # salió y el instalador trabaja
-    instalando[0] = False
+    monkeypatch.setattr(principal.winapi, "existe_mutex", lambda nombre: nombre in mutex)
+    assert principal._actualizacion_en_marcha(_Proceso(None))  # arrancando
+    assert principal._actualizacion_en_marcha(_Proceso(None), tarde - 0.1)
+    mutex.append(principal.MUTEX_ACTUALIZAR)
+    assert principal._actualizacion_en_marcha(_Proceso(None), 1000.0)  # descargando
+    mutex[:] = [principal.MUTEX_INSTALAR]
+    assert principal._actualizacion_en_marcha(_Proceso(0), 1000.0)  # salió y el instalador trabaja
+    mutex.clear()
+    # Vivo y sin mutex: en su aviso final, que se puede quedar abierto (VOZ-85).
+    assert not principal._actualizacion_en_marcha(_Proceso(None), tarde)
     # El instalador terminó (bien, cancelado o con error), o «al día»: se puede reintentar ya.
     for codigo in (0, 1, 2, 3):
         assert not principal._actualizacion_en_marcha(_Proceso(codigo))

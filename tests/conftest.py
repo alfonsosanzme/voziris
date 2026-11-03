@@ -17,8 +17,14 @@ El segundo, contra una que saltaba los tests de ventanas sin avisar: ver
 from __future__ import annotations
 
 import gc
+import os
+import shutil
+import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -77,3 +83,73 @@ def pytest_configure(config: pytest.Config) -> None:
 def _recoger_en_el_hilo_principal() -> Iterator[None]:
     yield
     gc.collect()
+
+
+# --- procesos de verdad, para lo que retiene una carpeta (VOZ-85) -------------------------
+
+
+@pytest.fixture
+def copia_viva() -> Iterator[Callable[..., subprocess.Popen[bytes]]]:
+    """Lanza un proceso con su ejecutable en la ruta que se pida. Lo recoge al acabar el test.
+
+    Es una copia de cmd esperando en su entrada: sin ventana y sin hijos, y lo
+    que se le pase queda en su orden, como `--transcribir reunion.m4a`.
+    """
+    cmd = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "cmd.exe"
+    lanzados: list[subprocess.Popen[bytes]] = []
+
+    def lanzar(
+        ejecutable: Path, *argumentos: str, cwd: Path | None = None
+    ) -> subprocess.Popen[bytes]:
+        ejecutable.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cmd, ejecutable)
+        proceso: Any = subprocess.Popen(
+            [str(ejecutable), "/k", "rem", *argumentos], cwd=cwd,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        lanzados.append(proceso)
+        proceso.stdout.read(1)  # su primera salida: ya ha arrancado y retiene lo que retenga
+        return proceso
+
+    yield lanzar
+    for proceso in lanzados:
+        proceso.kill()
+        proceso.communicate(timeout=10)
+
+
+@dataclass
+class HijoQueRetiene:
+    proceso: subprocess.Popen[bytes]
+    pid: int
+    """El de verdad: `Popen.pid`, con el Python de un venv, es el de su lanzador."""
+
+    def soltar(self) -> None:
+        if self.proceso.poll() is None:
+            self.proceso.communicate(timeout=30)  # cierra su entrada: es lo que espera para salir
+
+
+@pytest.fixture
+def hijo_que_retiene() -> Iterator[Callable[..., HijoQueRetiene]]:
+    """Lanza un Python con `archivo` abierto y/o con `cwd` como directorio de trabajo."""
+    codigo = (
+        "import os, sys; "
+        "f = open(sys.argv[1], 'rb') if len(sys.argv) > 1 else None; "
+        "print(os.getpid(), flush=True); "
+        "sys.stdin.read()"
+    )
+    lanzados: list[HijoQueRetiene] = []
+
+    def lanzar(archivo: Path | None = None, cwd: Path | None = None) -> HijoQueRetiene:
+        proceso: Any = subprocess.Popen(
+            [sys.executable, "-c", codigo, *([str(archivo)] if archivo else [])], cwd=cwd,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        hijo = HijoQueRetiene(proceso, int(proceso.stdout.readline()))
+        lanzados.append(hijo)
+        return hijo
+
+    yield lanzar
+    for hijo in lanzados:
+        hijo.soltar()

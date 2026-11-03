@@ -14,11 +14,13 @@ Se usa en `destinos/app_activa.py` (VOZ-12) y en `atajos.py` (VOZ-02).
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import threading
 import time
 from collections.abc import Sequence
 from ctypes import wintypes
+from typing import NamedTuple
 
 ES_WINDOWS = sys.platform == "win32"
 
@@ -267,6 +269,14 @@ def ejecutable_en_primer_plano() -> str | None:
 
 def nombre_de_proceso(pid: int) -> str | None:
     """«chrome.exe» a partir de un PID, o None si el proceso no se deja mirar."""
+    ruta = ruta_de_proceso(pid)
+    if ruta is None:
+        return None
+    return ruta.replace("/", "\\").rsplit("\\", 1)[-1].lower() or None
+
+
+def ruta_de_proceso(pid: int) -> str | None:
+    """La ruta del ejecutable de un proceso, o None si el proceso no se deja mirar."""
     _solo_windows()
     if pid <= 0:
         return None
@@ -274,13 +284,17 @@ def nombre_de_proceso(pid: int) -> str | None:
     if not proceso:
         return None
     try:
-        tamano = wintypes.DWORD(1024)
-        ruta = ctypes.create_unicode_buffer(tamano.value)
-        if not _kernel32.QueryFullProcessImageNameW(proceso, 0, ruta, ctypes.byref(tamano)):
-            return None
-        return ruta.value.replace("/", "\\").rsplit("\\", 1)[-1].lower() or None
+        return _ruta_de_manejador(proceso)
     finally:
         _kernel32.CloseHandle(proceso)
+
+
+def _ruta_de_manejador(proceso: int) -> str | None:
+    tamano = wintypes.DWORD(1024)
+    ruta = ctypes.create_unicode_buffer(tamano.value)
+    if not _kernel32.QueryFullProcessImageNameW(proceso, 0, ruta, ctypes.byref(tamano)):
+        return None
+    return ruta.value or None
 
 
 class _EstadoMemoria(ctypes.Structure):
@@ -507,6 +521,18 @@ def tomar_mutex(nombre: str) -> bool:
     return True
 
 
+def soltar_mutex(nombre: str) -> None:
+    """Suelta lo que tomó `tomar_mutex`, sin esperar a que el proceso muera. Si no lo tenía, nada.
+
+    Se llama antes de un aviso final, que puede quedarse abierto mucho tiempo y
+    detrás de otras ventanas: la tarea ya ha terminado, y mientras el mutex
+    siga tomado la bandeja la da por en marcha (VOZ-85).
+    """
+    manejador = _mutex_tareas.pop(nombre, None)
+    if manejador is not None:
+        _kernel32.CloseHandle(manejador)
+
+
 NOMBRE_EVENTO_SALIDA = "Local\\Voziris.Salir"
 WAIT_OBJECT_0 = 0
 EVENT_MODIFY_STATE = 0x0002
@@ -548,6 +574,347 @@ def pedir_salida(nombre: str = NOMBRE_EVENTO_SALIDA) -> bool:
         return bool(_kernel32.SetEvent(manejador))
     finally:
         _kernel32.CloseHandle(manejador)
+
+
+# --- procesos: quién sigue vivo y quién retiene una carpeta (VOZ-85) ------------
+
+PROCESS_TERMINATE = 0x0001
+SYNCHRONIZE = 0x00100000
+WM_CLOSE = 0x0010
+ERROR_MORE_DATA = 234
+_PIDS_DEL_SISTEMA = frozenset({0, 4})
+"""«System Idle Process» y «System»: no se pueden cerrar y no dicen nada al usuario."""
+_ESPERA_TERMINAR_S = 2.0
+_PROCESS_COMMAND_LINE_INFORMATION = 60
+_FILE_PROCESS_IDS_USING_FILE_INFORMATION = 47
+_FILE_READ_ATTRIBUTES = 0x80
+_FILE_SHARE_TODO = 0x7
+_OPEN_EXISTING = 3
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+
+class Proceso(NamedTuple):
+    pid: int
+    ruta: str
+    """La del ejecutable, o el nombre que dé Restart Manager si Windows no deja verla. Puede
+    estar vacía."""
+
+
+class _UNICODE_STRING(ctypes.Structure):
+    _fields_ = (
+        ("Length", wintypes.USHORT),
+        ("MaximumLength", wintypes.USHORT),
+        ("Buffer", ctypes.c_void_p),
+    )
+
+
+class _IO_STATUS_BLOCK(ctypes.Structure):
+    _fields_ = (("Status", ctypes.c_void_p), ("Information", ctypes.c_void_p))
+
+
+class _RM_PROCESS_INFO(ctypes.Structure):
+    _fields_ = (
+        ("dwProcessId", wintypes.DWORD),
+        ("ProcessStartTime", wintypes.FILETIME),
+        ("strAppName", wintypes.WCHAR * 256),
+        ("strServiceShortName", wintypes.WCHAR * 64),
+        ("ApplicationType", ctypes.c_int),
+        ("AppStatus", wintypes.ULONG),
+        ("TSSessionId", wintypes.DWORD),
+        ("bRestartable", wintypes.BOOL),
+    )
+
+
+if ES_WINDOWS:
+    _ntdll = ctypes.WinDLL("ntdll")
+    _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    _ntdll.NtQueryInformationProcess.argtypes = (
+        wintypes.HANDLE, wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG,
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    _ntdll.NtQueryInformationProcess.restype = ctypes.c_long
+    _ntdll.NtQueryInformationFile.argtypes = (
+        wintypes.HANDLE, ctypes.POINTER(_IO_STATUS_BLOCK), ctypes.c_void_p, wintypes.ULONG,
+        wintypes.ULONG,
+    )
+    _ntdll.NtQueryInformationFile.restype = ctypes.c_long
+    _kernel32.K32EnumProcesses.argtypes = (
+        ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.K32EnumProcesses.restype = wintypes.BOOL
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _kernel32.TerminateProcess.restype = wintypes.BOOL
+    _kernel32.LocalFree.argtypes = (wintypes.HLOCAL,)
+    _kernel32.LocalFree.restype = wintypes.HLOCAL
+    _kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+        wintypes.DWORD, wintypes.HANDLE,
+    )
+    _kernel32.CreateFileW.restype = wintypes.HANDLE
+    _user32.EnumWindows.argtypes = (_WNDENUMPROC, wintypes.LPARAM)
+    _user32.EnumWindows.restype = wintypes.BOOL
+    _user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    _user32.IsWindowVisible.restype = wintypes.BOOL
+    _user32.PostMessageW.argtypes = (
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+    )
+    _user32.PostMessageW.restype = wintypes.BOOL
+
+
+def _pids_vivos() -> list[int]:
+    capacidad = 4096
+    while True:
+        pids = (wintypes.DWORD * capacidad)()
+        devuelto = wintypes.DWORD()
+        if not _kernel32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(devuelto)):
+            raise OSError(f"K32EnumProcesses falló (error {ctypes.get_last_error()})")
+        cuantos = devuelto.value // ctypes.sizeof(wintypes.DWORD)
+        if cuantos < capacidad:  # si cabe justo, puede que falten: Windows no avisa
+            return [int(pid) for pid in pids[:cuantos]]
+        capacidad *= 2
+
+
+def procesos_en_carpeta(carpeta: str | os.PathLike[str]) -> list[Proceso]:
+    """Los procesos cuyo ejecutable está dentro de `carpeta`, salvo este.
+
+    «Voziris.nuevo» no cuenta como dentro de «Voziris»: se compara con la barra.
+
+    Raises:
+        OSError: Windows no da la lista de procesos.
+    """
+    _solo_windows()
+    prefijo = os.path.normcase(os.path.join(os.fspath(carpeta), ""))
+    vivos = []
+    for pid in _pids_vivos():
+        ruta = None if pid == os.getpid() else ruta_de_proceso(pid)
+        if ruta is not None and os.path.normcase(ruta).startswith(prefijo):
+            vivos.append(Proceso(pid, ruta))
+    return vivos
+
+
+def orden_de_proceso(pid: int) -> list[str] | None:
+    """La orden con la que arrancó un proceso, ya partida. None si no se deja leer."""
+    _solo_windows()
+    proceso = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not proceso:
+        return None
+    try:
+        datos = ctypes.create_string_buffer(1 << 17)  # 32 767 caracteres: el máximo de Windows
+        estado = _ntdll.NtQueryInformationProcess(
+            proceso, _PROCESS_COMMAND_LINE_INFORMATION, datos, len(datos),
+            ctypes.byref(wintypes.ULONG()),
+        )
+        if estado < 0:
+            return None
+        cadena = _UNICODE_STRING.from_buffer(datos)
+        linea = ctypes.wstring_at(cadena.Buffer, cadena.Length // 2) if cadena.Buffer else ""
+    finally:
+        _kernel32.CloseHandle(proceso)
+    return _partir_orden(linea) if linea else None
+
+
+def _partir_orden(linea: str) -> list[str] | None:
+    """Como lo parte el propio Windows. shell32 se carga aquí: cuesta, y casi nunca hace falta."""
+    shell32 = ctypes.WinDLL("shell32")
+    shell32.CommandLineToArgvW.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int))
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    cuantas = ctypes.c_int()
+    partes = shell32.CommandLineToArgvW(linea, ctypes.byref(cuantas))
+    if not partes:
+        return None
+    try:
+        return [partes[i] for i in range(cuantas.value)]
+    finally:
+        _kernel32.LocalFree(partes)
+
+
+def _ventanas_visibles(pid: int) -> list[int]:
+    """Las de `pid` en el escritorio de este hilo: `EnumWindows` no ve las de otros."""
+    ventanas: list[int] = []
+
+    def mirar(hwnd: int, _: int) -> bool:
+        dueno = wintypes.DWORD(0)
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(dueno))
+        if dueno.value == pid and _user32.IsWindowVisible(hwnd):
+            ventanas.append(hwnd)
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(mirar), 0)
+    return ventanas
+
+
+def cerrar_proceso(objetivo: Proceso, espera_s: float) -> str:
+    """Cierra un proceso que no atiende otra petición. Devuelve cómo ha ido, para el registro.
+
+    `Local\\Voziris.Salir` solo lo atiende la instancia que tiene el mutex: un
+    duplicado parado en su aviso no lo oye (VOZ-85). Primero se pide a sus
+    ventanas que se cierren, como quien pulsa la X, y si a los `espera_s` sigue
+    vivo, se termina. Su ejecutable se comprueba con el manejador ya abierto:
+    mientras lo esté, Windows no da ese PID a otro proceso.
+
+    Returns:
+        «cerrado», «terminado», «ya no estaba» o «no se pudo» (corre como
+        administrador, por ejemplo).
+    """
+    _solo_windows()
+    acceso = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE
+    proceso = _kernel32.OpenProcess(acceso, False, objetivo.pid)
+    if not proceso:
+        return "ya no estaba" if ruta_de_proceso(objetivo.pid) != objetivo.ruta else "no se pudo"
+    try:
+        if _ruta_de_manejador(proceso) != objetivo.ruta:
+            return "ya no estaba"
+        for ventana in _ventanas_visibles(objetivo.pid):
+            _user32.PostMessageW(ventana, WM_CLOSE, 0, 0)
+        if _kernel32.WaitForSingleObject(proceso, int(espera_s * 1000)) == WAIT_OBJECT_0:
+            return "cerrado"
+        if not _kernel32.TerminateProcess(proceso, 1):
+            return "no se pudo"
+        esperado = int(_ESPERA_TERMINAR_S * 1000)
+        return ("terminado" if _kernel32.WaitForSingleObject(proceso, esperado) == WAIT_OBJECT_0
+                else "no se pudo")
+    finally:
+        _kernel32.CloseHandle(proceso)
+
+
+def quien_usa(archivos: Sequence[str], carpetas: Sequence[str] = ()) -> list[Proceso]:
+    """Qué procesos, salvo este, tienen abierto algo de esto. Tarda: solo cuando ya ha fallado.
+
+    Son dos fuentes porque cada una tiene su punto ciego. Restart Manager ve
+    archivos abiertos y DLL cargadas, y da su nombre, pero no admite carpetas.
+    `NtQueryInformationFile` ve también quién tiene una carpeta como directorio
+    de trabajo, pero tarda unos 70 ms por llamada: se le pasan solo unas pocas.
+    Una DLL cargada no impide renombrar su carpeta, así que puede salir alguien
+    que no estorba.
+    """
+    _solo_windows()
+    vistos = _segun_restart_manager(archivos)
+    for carpeta in carpetas:
+        for pid in _pids_que_usan(carpeta):
+            vistos.setdefault(pid, "")
+    return [
+        Proceso(pid, ruta_de_proceso(pid) or nombre)
+        for pid, nombre in sorted(vistos.items())
+        if pid not in _PIDS_DEL_SISTEMA and pid != os.getpid()
+    ]
+
+
+def _segun_restart_manager(archivos: Sequence[str]) -> dict[int, str]:
+    """PID → nombre. Vacío si no hay nada que mirar o Restart Manager falla: es solo una pista."""
+    if not archivos:
+        return {}
+    rm = ctypes.WinDLL("rstrtmgr")  # aquí y no arriba: casi nunca hace falta
+    rm.RmStartSession.argtypes = (ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, wintypes.LPWSTR)
+    rm.RmRegisterResources.argtypes = (
+        wintypes.DWORD, wintypes.UINT, ctypes.POINTER(wintypes.LPCWSTR), wintypes.UINT,
+        ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p,
+    )
+    rm.RmGetList.argtypes = (
+        wintypes.DWORD, ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT),
+        ctypes.POINTER(_RM_PROCESS_INFO), ctypes.POINTER(wintypes.DWORD),
+    )
+    rm.RmEndSession.argtypes = (wintypes.DWORD,)
+    sesion = wintypes.DWORD()
+    if rm.RmStartSession(ctypes.byref(sesion), 0, ctypes.create_unicode_buffer(64)):
+        return {}
+    try:
+        lista = (wintypes.LPCWSTR * len(archivos))(*archivos)
+        if rm.RmRegisterResources(sesion, len(archivos), lista, 0, None, 0, None):
+            return {}
+        capacidad = 16
+        for _ in range(3):  # otra vez, si entre una llamada y la siguiente aparece alguien
+            necesarios = wintypes.UINT()
+            cuantos = wintypes.UINT(capacidad)
+            info = (_RM_PROCESS_INFO * capacidad)()
+            error = rm.RmGetList(
+                sesion, ctypes.byref(necesarios), ctypes.byref(cuantos), info,
+                ctypes.byref(wintypes.DWORD()),
+            )
+            if error == 0:
+                return {int(info[i].dwProcessId): str(info[i].strAppName)
+                        for i in range(cuantos.value)}
+            if error != ERROR_MORE_DATA:
+                return {}
+            capacidad = necesarios.value + 8
+        return {}
+    finally:
+        rm.RmEndSession(sesion)
+
+
+def _pids_que_usan(ruta: str) -> list[int]:
+    manejador = _kernel32.CreateFileW(
+        ruta, _FILE_READ_ATTRIBUTES, _FILE_SHARE_TODO, None, _OPEN_EXISTING,
+        _FILE_FLAG_BACKUP_SEMANTICS, None,
+    )
+    if not manejador or manejador == _INVALID_HANDLE_VALUE:
+        return []
+    try:
+        datos = ctypes.create_string_buffer(1 << 16)
+        estado = _ntdll.NtQueryInformationFile(
+            manejador, ctypes.byref(_IO_STATUS_BLOCK()), datos, len(datos),
+            _FILE_PROCESS_IDS_USING_FILE_INFORMATION,
+        )
+        if estado < 0:
+            return []
+        cuantos = ctypes.c_ulong.from_buffer(datos).value
+        # Un ULONG con cuántos y, alineada tras él, la lista de ULONG_PTR.
+        return [int(pid) for pid in (ctypes.c_size_t * cuantos).from_buffer(
+            datos, ctypes.sizeof(ctypes.c_size_t))]
+    finally:
+        _kernel32.CloseHandle(manejador)
+
+
+# --- cuadros de aviso -------------------------------------------------------------
+
+MB_RETRYCANCEL = 0x5
+MB_YESNO = 0x4
+MB_ICONERROR = 0x10
+MB_ICONWARNING = 0x30
+MB_ICONINFORMATION = 0x40
+MB_DEFBUTTON2 = 0x100
+MB_SETFOREGROUND = 0x10000
+MB_TOPMOST = 0x40000
+IDRETRY = 4
+IDYES = 6
+
+
+def cuadro(
+    titulo: str, texto: str, tipo: int = MB_ICONINFORMATION, segundos: float | None = None
+) -> int:
+    """Un cuadro nativo, encima de las demás ventanas. Devuelve el botón pulsado (`IDYES`…).
+
+    Los de Tk podían abrirse detrás de otras ventanas: el 2 de noviembre, el
+    aviso final del instalador se quedó oculto varios minutos (VOZ-85). Windows
+    puede negarle el foco, porque `MB_SETFOREGROUND` es una petición, pero
+    `MB_TOPMOST` hace que se vea igual.
+
+    Con `segundos`, se cierra solo al cumplirse, y entonces no hay que fiarse de
+    lo que devuelve. Es `MessageBoxTimeoutW`, que no está documentada: si en
+    algún Windows faltara, no sale nada y devuelve 0. Sin `segundos`, espera
+    a que alguien lo cierre.
+    """
+    _solo_windows()
+    estilo = tipo | MB_TOPMOST | MB_SETFOREGROUND
+    if segundos is None:
+        _user32.MessageBoxW.argtypes = (
+            wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT,
+        )
+        _user32.MessageBoxW.restype = ctypes.c_int
+        return int(_user32.MessageBoxW(None, texto, titulo, estilo))
+    try:
+        con_plazo = _user32.MessageBoxTimeoutW
+    except AttributeError:
+        return 0
+    con_plazo.argtypes = (
+        wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT, wintypes.WORD,
+        wintypes.DWORD,
+    )
+    con_plazo.restype = ctypes.c_int
+    return int(con_plazo(None, texto, titulo, estilo, 0, int(segundos * 1000)))
 
 
 # --- portapapeles -------------------------------------------------------------

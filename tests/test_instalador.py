@@ -6,6 +6,7 @@ import contextlib
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -323,10 +324,591 @@ def test_si_falla_al_sustituir_vuelve_la_anterior(
         reemplazar(fuente, copia)  # type: ignore[arg-type]
 
     monkeypatch.setattr(instalador.os, "replace", falla_al_poner_internal)
-    with pytest.raises(instalador.InstalacionFallida, match="otro programa tiene abierto"):
+    with pytest.raises(instalador.InstalacionFallida, match="Algo tiene abierta la carpeta"):
         instalador.instalar(origen, destino, **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
     monkeypatch.undo()
     assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+# --- lo que impide cambiar el programa (VOZ-85) -------------------------------------------
+
+
+def test_lo_que_sigue_vivo_de_la_carpeta_se_cierra_sin_preguntar_y_se_cambia_el_programa(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Como el duplicado del 31 de octubre. El directorio de trabajo es lo que retiene aquí."""
+    import os
+
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    interno = destino / "_internal"
+    duplicado = copia_viva(interno / "duplicado.exe", cwd=interno)
+    with pytest.raises(PermissionError):  # lo que fallaba
+        os.replace(interno, destino / "_internal.apartado")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cerrada: list[bool] = []
+
+    instalador.instalar(
+        origen, destino,
+        antes_de_sustituir=lambda: cerrada.append(duplicado.poll() is None),
+        preguntar_cerrar=lambda p: pytest.fail(f"no debería preguntar: {p}"),
+        preguntar_reintento=lambda m: pytest.fail(f"no debería hacer falta: {m}"),
+        **_kwargs(tmp_path, registro),  # type: ignore[arg-type]
+    )
+
+    assert duplicado.wait(timeout=5) == 1
+    assert cerrada == [True]  # primero la bandeja, por si lo que sigue vivo se va con ella
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+    assert _sin_restos(destino)
+
+
+def test_lo_que_transcribe_no_se_cierra_sin_preguntar(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    exe = destino / "_internal" / "transcribe.exe"
+    proceso = copia_viva(exe, "--transcribir", r"C:\mis cosas\reunión 1.m4a", "--ventana")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    preguntas: list[str] = []
+    bandeja: list[str] = []
+
+    def no(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return False
+
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, preguntar_cerrar=no,
+                            antes_de_sustituir=lambda: bandeja.append("cerrada"),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.poll() is None  # sigue transcribiendo
+    assert bandeja == []  # y la bandeja, abierta: se pregunta antes de cerrar nada
+    assert "«reunión 1.m4a»" in preguntas[0] and f"PID {proceso.pid}" in preguntas[0]
+    assert str(exe) in preguntas[0] and "se perdería" in preguntas[0]
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+    with pytest.raises(instalador.InstalacionCancelada):  # sin a quién preguntar, tampoco
+        instalador.instalar(origen, destino, **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.poll() is None
+
+    instalador.instalar(origen, destino, preguntar_cerrar=lambda p: True,
+                        antes_de_sustituir=lambda: bandeja.append("cerrada"),
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.wait(timeout=5) == 1
+    assert bandeja == ["cerrada"]
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+def test_si_no_se_puede_leer_su_orden_tambien_se_pregunta(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, copia_viva: Any
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "raro.exe")
+    monkeypatch.setattr(instalador.winapi, "orden_de_proceso", lambda pid: None)
+    preguntas: list[str] = []
+
+    def no(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return False
+
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, preguntar_cerrar=no,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert "puede estar transcribiendo" in preguntas[0] and f"PID {proceso.pid}" in preguntas[0]
+
+
+def test_si_algo_lo_retiene_dice_quien_y_reintenta_sin_volver_a_copiar(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    hijo_que_retiene: Any,
+) -> None:
+    from voziris import winapi
+
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    hijo = hijo_que_retiene(destino / "_internal" / "av.libs" / "avcodec-62.dll")
+    ruta = winapi.ruta_de_proceso(hijo.pid)
+    assert ruta is not None
+    copiar = instalador._copiar_archivo
+    copiados: list[Path] = []
+
+    def contar(fuente: Path, copia: Path) -> None:
+        copiados.append(fuente)
+        copiar(fuente, copia)
+
+    monkeypatch.setattr(instalador, "_copiar_archivo", contar)
+    explicaciones: list[tuple[str, int]] = []
+
+    def reintentar(explicacion: str) -> bool:
+        explicaciones.append((explicacion, len(copiados)))
+        assert _es_la_v1(destino)  # mientras se pregunta, lo de antes sigue en su sitio
+        hijo.soltar()
+        return True
+
+    instalador.instalar(origen, destino, preguntar_reintento=reintentar,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+
+    assert len(explicaciones) == 1
+    explicacion, copiados_al_preguntar = explicaciones[0]
+    assert f"PID {hijo.pid}" in explicacion and "pulsa Reintentar" in explicacion
+    assert ruta in explicacion and "Administrador de tareas" in explicacion
+    assert explicacion.endswith("No se ha cambiado nada: la versión anterior sigue como estaba.")
+    assert len(copiados) == copiados_al_preguntar  # con lo copiado, sin copiar otra vez
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+    assert _sin_restos(destino)
+
+
+def test_si_lo_retenido_es_la_copia_nueva_tambien_se_dice_quien(
+    tmp_path: Path, registro: int, sin_esperas: None, hijo_que_retiene: Any
+) -> None:
+    """Lo que haría el antivirus con la copia recién hecha. Y lo anterior vuelve a su sitio."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    hijos: list[Any] = []
+    explicaciones: list[str] = []
+
+    def comprobar(exe: Path) -> None:  # lo último que se hace con la copia antes del cambio
+        hijos.append(hijo_que_retiene(exe.parent / "_internal" / "av.libs" / "avcodec-62.dll"))
+
+    def reintentar(explicacion: str) -> bool:
+        explicaciones.append(explicacion)
+        assert _es_la_v1(destino)
+        hijos[0].soltar()
+        return True
+
+    instalador.instalar(origen, destino, comprobar_copia=comprobar,
+                        preguntar_reintento=reintentar,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+
+    assert len(explicaciones) == 1 and f"PID {hijos[0].pid}" in explicaciones[0]
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+    assert _sin_restos(destino)
+
+
+def test_cancelar_en_el_reintento_deja_la_anterior(
+    tmp_path: Path, registro: int, sin_esperas: None, hijo_que_retiene: Any
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    hijo_que_retiene(destino / "_internal" / "av.libs" / "avcodec-62.dll")
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, preguntar_reintento=lambda m: False,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_lo_que_se_retiene_al_poner_lo_nuevo_tambien_se_reintenta(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None
+) -> None:
+    """Falla con voziris.exe ya puesto: tiene que volver a la copia para poder reintentar."""
+    import os
+
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    reemplazar = os.replace
+    arreglado: list[bool] = []
+
+    def falla_al_poner_internal(fuente: object, copia: object) -> None:
+        ruta = Path(str(fuente))
+        if not arreglado and ruta.parent.name == "Voziris.nuevo" and ruta.name == "_internal":
+            raise PermissionError(13, "Acceso denegado", str(fuente), 5)
+        reemplazar(fuente, copia)  # type: ignore[arg-type]
+
+    def reintentar(explicacion: str) -> bool:
+        assert _es_la_v1(destino)
+        assert (destino.with_name("Voziris.nuevo") / "voziris.exe").read_bytes() == b"MZ v2"
+        arreglado.append(True)
+        return True
+
+    monkeypatch.setattr(instalador.os, "replace", falla_al_poner_internal)
+    instalador.instalar(origen, destino, preguntar_reintento=reintentar,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    monkeypatch.undo()
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+    assert _sin_restos(destino)
+
+
+def test_un_error_que_no_es_de_retencion_no_se_reintenta(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None
+) -> None:
+    import os
+
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    reemplazar = os.replace
+
+    def disco_lleno(fuente: object, copia: object) -> None:
+        if Path(str(fuente)).parent.name == "Voziris.nuevo":
+            raise OSError(28, "No queda espacio", str(fuente), 112)
+        reemplazar(fuente, copia)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(instalador.os, "replace", disco_lleno)
+    with pytest.raises(instalador.InstalacionFallida, match="disco está lleno"):
+        instalador.instalar(origen, destino, preguntar_reintento=lambda m: pytest.fail(m),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    monkeypatch.undo()
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+class _Cancelado(Exception):
+    """Lo que lanza la ventana de progreso cuando se ha pulsado Cancelar."""
+
+
+def _ventana() -> tuple[list[bool], Any]:
+    """Como `VentanaProgreso`: Cancelar solo se apunta, y lo que lanza es el siguiente aviso."""
+    cancelado: list[bool] = []
+
+    def al_progresar(mensaje: str, fraccion: float | None) -> None:
+        if cancelado:
+            raise _Cancelado
+
+    return cancelado, al_progresar
+
+
+def test_cancelar_con_la_pregunta_abierta_no_cierra_ni_cambia_nada(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Se pulsa Cancelar en la ventana de detrás y luego se contesta que sí."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "transcribe.exe", "--transcribir", "reunion.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    bandeja: list[str] = []
+
+    def si_pero_ya_cancelado(pregunta: str) -> bool:
+        cancelado.append(True)
+        return True
+
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            preguntar_cerrar=si_pero_ya_cancelado,
+                            antes_de_sustituir=lambda: bandeja.append("cerrada"),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.poll() is None  # sigue transcribiendo
+    assert bandeja == []  # y la bandeja, abierta
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_cancelar_con_el_reintento_abierto_no_cambia_nada(
+    tmp_path: Path, registro: int, sin_esperas: None, hijo_que_retiene: Any
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    hijo = hijo_que_retiene(destino / "_internal" / "av.libs" / "avcodec-62.dll")
+    cancelado, al_progresar = _ventana()
+
+    def reintentar_pero_ya_cancelado(explicacion: str) -> bool:
+        hijo.soltar()  # ya no hay nada que lo impida: si no se mira Cancelar, se instala
+        cancelado.append(True)
+        return True
+
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            preguntar_reintento=reintentar_pero_ya_cancelado,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_cancelar_mientras_se_cierra_la_bandeja_no_cambia_nada(
+    tmp_path: Path, registro: int
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    cancelado, al_progresar = _ventana()
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            antes_de_sustituir=lambda: cancelado.append(True),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+@pytest.mark.parametrize("hay_a_quien_preguntar", [True, False])
+def test_lo_que_empieza_a_transcribir_despues_de_la_pregunta_tampoco_se_cierra_sin_preguntar(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any, hay_a_quien_preguntar: bool,
+) -> None:
+    """«Transcribir con Voziris» lanzado mientras se cierra la bandeja: hasta 6 s."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    lanzados: list[Any] = []
+    preguntas: list[str] = []
+
+    def cerrar_la_bandeja() -> None:
+        lanzados.append(copia_viva(destino / "_internal" / "transcribe.exe", "--transcribir",
+                                   r"C:\mis cosas\recién llegada.m4a", "--ventana"))
+
+    def no(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return False
+
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                            preguntar_cerrar=no if hay_a_quien_preguntar else None,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+
+    assert lanzados[0].poll() is None  # sigue transcribiendo
+    assert _es_la_v1(destino) and _sin_restos(destino)
+    if hay_a_quien_preguntar:
+        assert len(preguntas) == 1 and "«recién llegada.m4a»" in preguntas[0]
+        assert f"PID {lanzados[0].pid}" in preguntas[0]
+
+
+def test_si_se_acepta_lo_que_empezo_despues_se_cierra_e_instala(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    lanzados: list[Any] = []
+    preguntas: list[str] = []
+
+    def si(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return True
+
+    def cerrar_la_bandeja() -> None:
+        lanzados.append(copia_viva(destino / "_internal" / "transcribe.exe",
+                                   "--transcribir", "reunion.m4a"))
+
+    instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                        preguntar_cerrar=si,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(preguntas) == 1
+    assert lanzados[0].wait(timeout=5) == 1
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+def test_cancelar_con_la_segunda_pregunta_abierta_no_la_cierra(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    lanzados: list[Any] = []
+
+    def cerrar_la_bandeja() -> None:
+        lanzados.append(copia_viva(destino / "_internal" / "transcribe.exe",
+                                   "--transcribir", "reunion.m4a"))
+
+    def si_pero_ya_cancelado(pregunta: str) -> bool:
+        cancelado.append(True)
+        return True
+
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            antes_de_sustituir=cerrar_la_bandeja,
+                            preguntar_cerrar=si_pero_ya_cancelado,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert lanzados[0].poll() is None
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_lo_aceptado_sigue_vivo_si_se_cancela_mientras_se_cierra_la_bandeja(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "transcribe.exe", "--transcribir", "reunion.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            preguntar_cerrar=lambda p: True,
+                            antes_de_sustituir=lambda: cancelado.append(True),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert proceso.poll() is None
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_decir_no_a_la_segunda_pregunta_no_deja_cerrada_la_primera(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Aceptada una y empezada otra después: el «No» tiene que llegar antes de cerrar nada."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    primera = copia_viva(destino / "_internal" / "primera.exe", "--transcribir", "a.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    respuestas = iter([True, False])
+    segunda: list[Any] = []
+
+    def cerrar_la_bandeja() -> None:
+        segunda.append(copia_viva(destino / "_internal" / "segunda.exe",
+                                  "--transcribir", "b.m4a"))
+
+    with pytest.raises(instalador.InstalacionCancelada):
+        instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                            preguntar_cerrar=lambda p: next(respuestas),
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert segunda[0].poll() is None
+    assert primera.poll() is None
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_lo_que_empieza_despues_se_pregunta_todo_junto(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    lanzados: list[Any] = []
+    preguntas: list[str] = []
+
+    def cerrar_la_bandeja() -> None:
+        for nombre in ("una", "otra"):
+            lanzados.append(copia_viva(destino / "_internal" / f"{nombre}.exe",
+                                       "--transcribir", f"{nombre}.m4a"))
+
+    def si(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return True
+
+    instalador.instalar(origen, destino, antes_de_sustituir=cerrar_la_bandeja,
+                        preguntar_cerrar=si,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(preguntas) == 1
+    assert "«una.m4a»" in preguntas[0] and "«otra.m4a»" in preguntas[0]
+    assert all(p.wait(timeout=5) == 1 for p in lanzados)
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+def test_cancelar_mientras_se_cierra_uno_no_cierra_el_siguiente(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    """Cada uno puede tardar 5 s en cerrarse: Cancelar no puede esperar a que acaben todos."""
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    lanzados = [copia_viva(destino / "_internal" / f"{nombre}.exe") for nombre in ("uno", "dos")]
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    cancelado, al_progresar = _ventana()
+    cerrar = instalador.winapi.cerrar_proceso
+    cerrados: list[int] = []
+
+    def cerrar_y_cancelar(proceso: Any, espera_s: float) -> str:
+        cerrados.append(proceso.pid)
+        cancelado.append(True)
+        return cerrar(proceso, espera_s)
+
+    monkeypatch.setattr(instalador.winapi, "cerrar_proceso", cerrar_y_cancelar)
+    with pytest.raises(_Cancelado):
+        instalador.instalar(origen, destino, al_progresar=al_progresar,
+                            **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(cerrados) == 1
+    assert [p.pid for p in lanzados if p.poll() is None] != []  # el otro sigue vivo
+    assert cerrados[0] not in {p.pid for p in lanzados if p.poll() is None}
+    assert _es_la_v1(destino) and _sin_restos(destino)
+
+
+def test_lo_ya_aceptado_no_se_vuelve_a_preguntar(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any,
+) -> None:
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "transcribe.exe", "--transcribir", "reunion.m4a")
+    monkeypatch.setattr(instalador, "ESPERA_CIERRE_S", 0.1)
+    preguntas: list[str] = []
+
+    def si(pregunta: str) -> bool:
+        preguntas.append(pregunta)
+        return True
+
+    instalador.instalar(origen, destino, preguntar_cerrar=si,
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert len(preguntas) == 1
+    assert proceso.wait(timeout=5) == 1
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+@pytest.mark.parametrize("en_que_repaso", [1, 2])
+def test_lo_que_se_va_entre_la_lista_y_su_orden_no_se_pregunta(
+    tmp_path: Path, registro: int, monkeypatch: pytest.MonkeyPatch, sin_esperas: None,
+    copia_viva: Any, en_que_repaso: int,
+) -> None:
+    """Como la bandeja que está saliendo: su orden ya no se lee, pero no es que trabaje.
+
+    Contarlo como «puede estar transcribiendo» sacaría una pregunta falsa, con el «No» por
+    defecto, justo después de cerrar la bandeja.
+    """
+    origen, destino = _instalacion_anterior(tmp_path, registro)
+    proceso = copia_viva(destino / "_internal" / "saliendo.exe")
+    listar = instalador.winapi.procesos_en_carpeta
+    repasos: list[int] = []
+
+    def lista_y_se_va(carpeta: Path) -> list[Any]:
+        vivos = listar(carpeta)
+        repasos.append(1)
+        if len(repasos) == en_que_repaso:
+            assert proceso.pid in {p.pid for p in vivos}
+            proceso.kill()
+            proceso.wait(timeout=5)
+        return vivos
+
+    monkeypatch.setattr(instalador.winapi, "procesos_en_carpeta", lista_y_se_va)
+    instalador.instalar(origen, destino,
+                        preguntar_cerrar=lambda p: pytest.fail(f"pregunta falsa: {p}"),
+                        **_kwargs(tmp_path, registro))  # type: ignore[arg-type]
+    assert (destino / "voziris.exe").read_bytes() == b"MZ v2"
+
+
+@pytest.mark.parametrize(("orden", "grabacion"), [
+    (["voziris.exe"], None),
+    (["voziris.exe", "--config", "x.toml"], None),
+    (["voziris.exe", "--transcribir", r"C:\a b\reunión.m4a", "--ventana"], "reunión.m4a"),
+    (["voziris.exe", "--transcribir=C:\\a\\reunión.m4a"], "reunión.m4a"),
+    (["voziris.exe", "--archivo", "nota.wav"], "nota.wav"),
+    (["voziris.exe", "--transcribir"], ""),
+    ([r"C:\--transcribir\voziris.exe"], None),  # el propio ejecutable no cuenta
+])
+def test_grabacion_de_una_orden(orden: list[str], grabacion: str | None) -> None:
+    assert instalador._grabacion_de(orden) == grabacion
+
+
+def _retiene(ruta: str, pid: int = 1234) -> Any:
+    from voziris import winapi
+
+    return winapi.Proceso(pid, ruta)
+
+
+def test_el_mensaje_dice_quien_retiene_y_que_hacer() -> None:
+    cmd = r"C:\Windows\System32\cmd.exe"
+    texto = instalador.mensaje_de_retencion([_retiene(cmd)], "pulsa Reintentar")
+    assert texto == (
+        rf"Otro programa tiene abierta la carpeta de Voziris: cmd.exe, PID 1234 ({cmd}). "
+        "Ciérralo y pulsa Reintentar. Si no ves ninguna ventana suya, en el Administrador de "
+        "tareas → Detalles, busca ese PID y elige Finalizar tarea.\n\n"
+        "No se ha cambiado nada: la versión anterior sigue como estaba."
+    )
+
+
+def test_el_mensaje_con_varios_o_sin_ruta() -> None:
+    texto = instalador.mensaje_de_retencion(
+        [_retiene(r"C:\a\uno.exe", 1), _retiene("Antivirus de ejemplo", 2), _retiene("", 3)],
+        "pulsa Reintentar",
+    )
+    assert texto.startswith(
+        r"Otros programas tienen abierta la carpeta de Voziris: uno.exe, PID 1 (C:\a\uno.exe); "
+        "Antivirus de ejemplo, PID 2; un programa que no se deja mirar, PID 3. Ciérralos"
+    )
+    assert "busca esos PID" in texto
+
+
+def test_el_mensaje_no_manda_finalizar_el_explorador() -> None:
+    explorador = r"C:\Windows\explorer.exe"
+    solo = instalador.mensaje_de_retencion([_retiene(explorador)], "pulsa Reintentar")
+    assert solo.startswith("Hay una ventana del Explorador abierta dentro de la carpeta")
+    assert "Finalizar tarea" not in solo and "pulsa Reintentar" in solo
+    con_otro = instalador.mensaje_de_retencion(
+        [_retiene(explorador, 1), _retiene(r"C:\a\uno.exe", 2)], "pulsa Reintentar"
+    )
+    assert "ventana del Explorador" in con_otro and "PID 2" in con_otro
+    assert "explorer.exe" not in con_otro
+
+
+def test_el_mensaje_sin_saber_quien_y_sin_decir_que_esperes() -> None:
+    texto = instalador.mensaje_de_retencion([], "pulsa Reintentar")
+    assert texto.startswith("Algo tiene abierta la carpeta de Voziris y no se ha podido saber qué.")
+    assert "pulsa Reintentar" in texto and "reinicia Windows" in texto
+    assert texto.endswith("No se ha cambiado nada: la versión anterior sigue como estaba.")
+
+
+def test_ningun_mensaje_manda_esperar_un_minuto() -> None:
+    copia = instalador.explicar_error_de_copia(PermissionError(13, "en uso", "x.dll", 32))
+    assert "antivirus" in copia and "reinicia Windows" in copia
+    assert "minuto" not in copia and "Voziris que sigue abierta" not in copia
+    assert "minuto" not in instalador._causa("", PermissionError(13, "denegado", "x", 5))
 
 
 def test_limpia_los_restos_de_una_instalacion_interrumpida(
