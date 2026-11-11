@@ -10,7 +10,7 @@
 
 ## Por qué es gratis
 
-Voziris es un proyecto de Kairis (kairis.es). Nació como una herramienta de uso personal de su autor, Alfonso Juan Sanz López, y lo compartimos porque nos gusta enseñar lo que vamos haciendo. No tenemos ningún interés comercial en él ni en tus datos.
+Voziris es un proyecto de Kairis (kairis.es). Nació como una herramienta de uso personal y lo compartimos porque nos gusta enseñar lo que vamos haciendo. No tenemos ningún interés comercial en él ni en tus datos.
 
 Todo el código es público, en https://github.com/alfonsosanzme/voziris, bajo licencia MIT: puedes usarlo, copiarlo y compartirlo libremente, también en el trabajo, y cualquiera puede comprobar en el código lo que aquí se dice.
 
