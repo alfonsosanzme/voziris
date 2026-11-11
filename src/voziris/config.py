@@ -80,6 +80,23 @@ def carpeta_recursos() -> Path:
     return carpeta_base()
 
 
+CARPETA_GUIAS = "docs"
+GUIA_DE_USO = "LEEME-instalar.html"
+"""Instalar, usar, resolver problemas, y las condiciones de uso y privacidad."""
+GUIA_API = "GUIA-api.html"
+"""Cómo conectar la API de Groq, paso a paso y con dibujos (VOZ-88)."""
+
+
+def ruta_de_guia(nombre: str, recursos: Path | None = None) -> Path:
+    """Una de las guías HTML que viajan con el programa: `docs/` dentro de los recursos.
+
+    La misma ruta relativa en desarrollo y congelado: `build/voziris.spec` las
+    mete en `_internal/docs/`. Con `recursos` se mira en otra copia, como la
+    recién instalada vista desde su instalador.
+    """
+    return (recursos or carpeta_recursos()) / CARPETA_GUIAS / nombre
+
+
 def _ejemplo_junto_a(carpeta: Path) -> Path:
     """El config.ejemplo.toml: junto al config.toml si está, o en los recursos."""
     candidato = carpeta / NOMBRE_EJEMPLO

@@ -563,3 +563,35 @@ Lo encontró la verificación de las notas de la 0.1.3. VOZ-86 hizo visibles los
 - [x] Con el motor en API y sin clave, el aviso sigue: se ha pedido algo que no se cumple.
 - [x] En automático con clave y sin conexión, el aviso sigue: el dictado sale con el otro motor.
 - [x] Con nivel literal, un paso que necesita red no avisa. Con otro nivel y sin red, sigue avisando.
+
+### VOZ-88 · Instalar con un solo archivo, saber qué pasa con tus datos y conectar la API
+**Archivos:** `build/voziris.wxs`, `build/voziris.es-es.wxl`, `tools/hacer_msi.py`, `tools/probar_msi.py`, `tools/empaquetar.py`, `build/voziris.spec`, `CONDICIONES.md`, `docs/GUIA-api.html`, `docs/LEEME-instalar.html`, `__main__.py`, `ui/bandeja.py`, `ui/ajustes.py`, `instalador.py`, `integridad.py`
+
+Quien lo recibía tenía que extraer un ZIP de mil archivos, y por el camino Windows o el antivirus le quitaban alguno. Se pidió un MSI, condiciones que digan muy claro que no se recoge ningún dato y por qué es gratis, y una guía muy visual para conectar la API, dejando claro que el motor local es el más limitado.
+
+**Lo que se decidió y por qué**
+- **El MSI lleva el paquete, no lo instala.** Lo deja en una carpeta temporal y arranca `voziris.exe --instalar`: una sola forma de instalar, la que ya comprueba, prueba la copia y sabe deshacerlo. Un MSI corriente tendría que cerrar la Voziris abierta, sustituir archivos en uso y convivir con «Actualizar»; habría dos instaladores sobre la misma carpeta.
+- **No se registra en Windows Installer.** Registrado, habría dos entradas en «Aplicaciones instaladas», y al abrirlo otra vez tras desinstalar no instalaría nada. Medido: no deja producto, ni componentes, ni copia en caché.
+- **Cada ejecución, su carpeta**, dentro de la que ya limpia la siguiente Voziris. Medido: sobre una carpeta con los archivos de antes, Windows Installer apunta en HKLM cada archivo con versión que se salta, aun sin registro.
+- **Lo que se gana y lo que no.** Medido en Windows 11: lo que escribe Windows Installer no hereda la marca de «descargado de Internet» del `.msi`, y no hay extracción que se quede a medias. El aviso «Windows protegió su PC» y el bloqueo de Control inteligente de aplicaciones siguen igual: solo los quita una firma, y la decisión de no firmar (7 de octubre) no cambia aquí.
+- **El motor local sigue siendo el de serie**, y sigue sin avisar en cada dictado (VOZ-87). La API se recomienda una vez al terminar de instalar, y queda a mano en «Ayuda» y en Ajustes → Motor.
+
+**Criterios de aceptación**
+- [x] `tools/empaquetar.py` deja, junto al ZIP, `voziris-<versión>-win64.msi`, con los mismos archivos, y `SHA256SUMS.txt` con las dos líneas. Las versiones instaladas siguen leyendo la del ZIP.
+- [x] El MSI se instala por usuario, sin administrador, y hay que aceptar las condiciones para seguir.
+- [x] `tools/probar_msi.py`, sin ventanas y sin instalar: el paquete queda entero (manifiesto con hashes), sin marca de Internet, `voziris.exe --comprobar` carga todo desde ahí y Windows Installer no apunta nada. Pasa con el paquete de la 0.1.3.
+- [x] El registro del instalador queda en la carpeta de la instalación, también en un equipo que nunca ha tenido Voziris.
+- [x] `CONDICIONES.md`: sin telemetría ni servidor propio, qué se guarda en el equipo, cuándo se conecta y a qué, por qué es gratis, sin garantía. Cada frase, contrastada con el código. La guía lleva el mismo texto, y un test lo vigila.
+- [x] `docs/GUIA-api.html`: siete pasos con dibujos, sin nada externo, con las etiquetas de Ajustes y de la consola de Groq tal como son.
+- [x] Las dos guías van dentro del programa: bandeja → «Ayuda». En Ajustes → Motor, junto a la clave, la recomendación y el botón de la guía.
+- [x] Una instalación nueva sin clave termina preguntando si se abre la guía de la API. Con clave, o al actualizar, no pregunta.
+- [x] Los avisos de paquete incompleto y de bloqueo valen para quien viene del MSI: no mandan a «la carpeta donde extrajiste el ZIP» a quien no ha extraído nada.
+- [ ] El asistente y su relevo al instalador, vistos con ventanas en un equipo de pruebas (`docs/DESPLIEGUE.md`, 6.1 bis).
+- [ ] Publicado en una release, con el botón del blog apuntando al `.msi`.
+
+**Fuera de esto**
+- Firmar. Con Azure Artifact Signing a nombre de una empresa de la UE, o SignPath Foundation para proyectos de código abierto, o la Microsoft Store: es lo único que quita los avisos de Windows.
+- «Actualizar» desde la bandeja sigue descargando el ZIP.
+- Instalar en silencio para muchos equipos: el MSI admite `/qn`, pero el instalador de Voziris enseña su ventana.
+- El filtro que tacha la clave en el registro (`_TacharClave`) está puesto en el registrador raíz, donde no ve lo que anotan los demás. Ningún mensaje lleva la clave, pero la red de seguridad no hace lo que dice.
+- `ATRIBUCIONES.md` nombra un motor Whisper local que no existe y no nombra Silero VAD, que sí se descarga.

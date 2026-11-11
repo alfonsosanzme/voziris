@@ -50,6 +50,11 @@ PESTANAS = ("Atajos", "Audio", "Motor", "Texto", "Destinos", "Acerca de")
 ADVERTENCIA_AUTO_ENTER = (
     "Un Enter en el chat equivocado no se deshace: el mensaje sale antes de que lo leas."
 )
+RECOMENDACION_API = (
+    "Recomendado: con una clave de Groq, que es gratis para dictar, Voziris transcribe "
+    "mejor que con el motor local."
+)
+"""En la pestaña Motor, junto a la clave (VOZ-88)."""
 
 # Tk llama a las teclas por su keysym; aquí se traducen a los nombres del TOML.
 _KEYSYM_A_NOMBRE: dict[str, str] = {
@@ -162,6 +167,7 @@ class Ajustes:
         probar_clave: Callable[[str, str], tuple[bool, str]] | None = None,
         listar_modelos: Callable[[str, str], tuple[list[str], list[str]]] | None = None,
         version: str = __version__,
+        abrir_guia: Callable[[], None] | None = None,
     ) -> None:
         self._raiz = raiz
         self._config = configuracion
@@ -171,6 +177,8 @@ class Ajustes:
         self._probar_clave = probar_clave
         self._listar_modelos = listar_modelos
         self._version = version
+        self._abrir_guia = abrir_guia
+        """Abre la guía para conectar la API. Si falta, su botón no aparece."""
         self._combos_modelo: dict[str, ttk.Combobox] = {}
         self._ventana: tk.Toplevel | None = None
         self._vars: dict[str, tk.Variable] = {}
@@ -430,6 +438,14 @@ class Ajustes:
         )
         ttk.Label(m, textvariable=self._resultado_clave, wraplength=360).grid(
             row=11, column=1, sticky="w"
+        )
+        # VOZ-88: junto al campo de la clave, por qué ponerla y cómo conseguirla.
+        if self._abrir_guia is not None:
+            ttk.Button(m, text="Cómo conseguir la clave…", command=self._abrir_guia).grid(
+                row=12, column=0, pady=(0, 6), sticky="w"
+            )
+        ttk.Label(m, text=RECOMENDACION_API, wraplength=360, foreground="#555").grid(
+            row=12, column=1, sticky="w"
         )
 
     def _probar(self) -> None:

@@ -3,9 +3,17 @@
 Dictado por voz para Windows. Mantienes un atajo, hablas, sueltas, y el texto
 aparece donde tengas el cursor.
 
-Dos motores a elegir: **local**, gratis y sin conexión, que funciona en
-portátiles sin GPU; o **por API**, con tu propia clave, por unos céntimos al
-mes. Sin cuentas, sin servidor propio, sin suscripción.
+Dos motores: **local**, que no pide configurar nada y, una vez descargado su
+modelo en el primer arranque, funciona sin conexión, también en portátiles sin
+GPU; y **por API**, con tu propia clave de Groq, que es el recomendado:
+transcribe mejor y su plan gratuito sobra para dictar. Sin cuentas, sin
+servidor propio, sin suscripción.
+
+**Es gratis y no recoge ningún dato tuyo**: no tiene telemetría ni un servidor
+nuestro al que llamar. Lo hicimos para uso propio y lo compartimos tal cual.
+Ver [Condiciones de uso y privacidad](CONDICIONES.md); lo que sale de tu
+equipo con cada opción, y cuándo, está en
+[Qué sale de tu equipo](#qué-sale-de-tu-equipo).
 
 ![Indicador flotante mientras graba](docs/capturas/hud-grabando.png)
 
@@ -26,47 +34,72 @@ por unos 0,60 $ al mes; en local, por cero.
 | **No te toca el portapapeles** | Lo guarda antes de escribir y lo devuelve después |
 | **Historial con reintento** | Si el pegado falla, el texto no se pierde: se reentrega desde el menú de la bandeja |
 | **Diccionario propio** | Para los nombres propios y la jerga que el modelo falla siempre |
-| **Portable** | Se copia y funciona. Sin instalador, sin registro, sin permisos de administrador |
+| **Instalador de un clic, o portable** | Un `.msi` que se instala solo para tu usuario, sin permisos de administrador; o el ZIP, que se copia y funciona, también desde un USB |
 
-## Primer arranque
+## Instalarlo
 
-1. Descarga el ZIP de la última [release](https://github.com/alfonsosanzme/voziris/releases)
-   y descomprímelo donde quieras (un USB vale). Son unos 1 100 archivos:
-   espera a que la extracción termine del todo antes de ejecutar nada. Si
-   `voziris.exe` se lanza a medias, falla con «No module named
-   numpy._core…» y basta con esperar y volver a abrirlo.
-2. Comprueba el hash SHA-256 que viene en las notas de la release si tu
-   antivirus protesta (ver «Limitaciones conocidas»).
-3. Ejecuta `voziris.exe`. Aparece el icono del micrófono en la bandeja y
-   **empieza a descargar el modelo local** (640 MB, una sola vez, a la
-   carpeta `modelos/` junto al ejecutable). Con una conexión normal tarda
-   entre uno y tres minutos; la bandeja avisa del progreso.
-4. Espera a que termine: hasta entonces los dictados se quedan esperando,
-   también con el motor por API, porque el local es su respaldo.
-5. Pon el cursor en cualquier aplicación, mantén `Ctrl+Win`, habla, suelta.
+1. Descarga `voziris-<versión>-win64.msi` de la última
+   [release](https://github.com/alfonsosanzme/voziris/releases) y ábrelo con
+   doble clic. No hay que extraer nada. Si Windows enseña la pantalla azul
+   «Windows protegió su PC», pulsa «Más información» → «Ejecutar de todas
+   formas»: sale porque el programa todavía no lleva firma digital (ver
+   «Limitaciones conocidas»).
+2. Acepta las [condiciones](CONDICIONES.md) y pulsa «Instalar». A los pocos
+   segundos se abre la ventana «Instalando Voziris», que comprueba el paquete,
+   lo instala y avisa al terminar. Sin permisos de administrador.
+3. Aparece el icono del micrófono en la bandeja y **empieza a descargar el
+   modelo local** (640 MB, una sola vez). Con una conexión normal tarda entre
+   uno y tres minutos; la bandeja avisa del progreso. Hasta entonces los
+   dictados se quedan esperando, también con el motor por API, porque el local
+   es su respaldo.
+4. Pon el cursor en cualquier aplicación, mantén `Ctrl+Win`, habla, suelta.
+5. Conecta la API de Groq: es lo recomendable y son cinco minutos. En una
+   instalación nueva, el instalador pregunta al terminar si abre la guía;
+   también está en el menú de la bandeja → Ayuda. Ver
+   [Clave de Groq](#clave-de-groq-motor-por-api-y-limpieza-con-llm).
 
-El primer arranque también copia `config.ejemplo.toml` a `config.toml` y,
-como el ejemplo trae `arranque_con_windows = true`, deja un acceso directo en
-tu carpeta de Inicio. Se quita desde Ajustes o poniendo `false`.
+El `.msi` no instala por su cuenta: lleva el mismo paquete que el ZIP, lo deja
+en una carpeta temporal y arranca el instalador de Voziris, que es quien:
 
-## Instalarlo en el equipo (opcional)
-
-Voziris es portable: la carpeta se copia y funciona. Si prefieres verlo como
-un programa más, con su entrada al escribir «voziris» en la búsqueda de
-Windows y en Configuración → Aplicaciones, haz doble clic en
-`Instalar Voziris.cmd`, que va junto al ejecutable, o usa el menú de la
-bandeja → «Instalar en este equipo…». Sin permisos de administrador:
-
-- copia el programa a `%LOCALAPPDATA%\Programs\Voziris`, con tu
-  `config.toml`, el modelo ya descargado y el historial;
+- comprueba que no falte ningún archivo, copia el programa a
+  `%LOCALAPPDATA%\Programs\Voziris` y prueba que la copia arranca antes de
+  cambiar nada;
 - crea el acceso directo en el menú Inicio de tu usuario, que es lo que hace
   que la búsqueda lo encuentre, y corrige el de Inicio de sesión;
 - apunta la entrada de «Aplicaciones instaladas» en la rama del registro de
   tu usuario, con su botón de desinstalar.
 
+Abrir el `.msi` de una versión nueva encima de una instalada la actualiza y
+conserva `config.toml`, el modelo y el historial. Windows Installer no apunta
+el `.msi` en ningún sitio: la única entrada en «Aplicaciones instaladas» es la
+de Voziris. El porqué está en la cabecera de `build/voziris.wxs`.
+
+El primer arranque copia `config.ejemplo.toml` a `config.toml` y, como el
+ejemplo trae `arranque_con_windows = true`, deja un acceso directo en tu
+carpeta de Inicio. Se quita desde Ajustes o poniendo `false`.
+
 Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar, o
 `voziris.exe --desinstalar`. La carpeta de la instalación se borra entera,
-incluido el modelo.
+incluidos los ajustes, el historial y el modelo.
+
+### Con el ZIP: portable, sin instalador
+
+El mismo paquete se publica en un ZIP, `voziris-<versión>-win64.zip`. Se
+descomprime donde quieras (un USB vale) y se usa desde ahí, sin instalar.
+
+1. Descomprímelo entero en una carpeta nueva. Son unos 1 100 archivos:
+   espera a que la extracción termine del todo antes de ejecutar nada. Si
+   `voziris.exe` se lanza a medias, falla con «No module named
+   numpy._core…» y basta con esperar y volver a abrirlo.
+2. Comprueba el hash SHA-256 que viene en las notas de la release si tu
+   antivirus protesta (ver «Limitaciones conocidas»).
+3. Ejecuta `voziris.exe`. El modelo se descarga a la carpeta `modelos/`,
+   junto al ejecutable.
+
+Desde esa carpeta también se puede instalar, con `Instalar Voziris.cmd` o con
+el menú de la bandeja → «Instalar en este equipo…»: es el mismo instalador
+que arranca el `.msi`, y se lleva tu `config.toml`, el modelo ya descargado y
+el historial.
 
 ## Transcribir una grabación o un vídeo
 
@@ -170,16 +203,25 @@ comentarios intactos: se puede editar a mano igualmente.
 
 ## Clave de Groq (motor por API y limpieza con LLM)
 
-Con `motor = "local"` no hace falta ninguna clave. La clave solo se usa para
-dos cosas opcionales: transcribir en la nube (más precisión, sobre todo con
-jerga) y limpiar el texto con un LLM.
+Voziris funciona sin ninguna clave, con el motor local. Pero **lo recomendable
+es poner una clave de Groq**: el motor local es el más limitado (se equivoca
+más, sobre todo con nombres propios, jerga y cuando hablas bajo), y sin clave
+tampoco hay limpieza del texto. La clave sirve para dos cosas: transcribir en
+la nube, con más precisión, y limpiar el texto con un LLM, si además eliges
+un modelo en Ajustes → Texto (de serie viene vacío: sin limpieza). Con la
+clave puesta y el motor en «Automático», que es como viene, se usa la API
+cuando hay red y el motor local cuando no.
+
+La guía paso a paso, con dibujos, es [`docs/GUIA-api.html`](docs/GUIA-api.html):
+va dentro del programa y se abre desde el menú de la bandeja → Ayuda, desde
+Ajustes → Motor y, en una instalación nueva, al terminar de instalar. Lo que
+sigue es lo mismo, con más detalle.
 
 ### Conseguirla (cinco minutos)
 
 1. Entra en https://console.groq.com y crea una cuenta (vale la de Google o
-   GitHub). El plan gratuito ya permite probar; para uso diario conviene
-   añadir un método de pago, porque el nivel gratuito tiene límites por
-   minuto y el de pago cuesta céntimos.
+   GitHub). El plan gratuito no pide tarjeta y sobra para dictar; sus límites
+   están más abajo.
 2. En el menú de la izquierda, **API Keys** → **Create API Key**. Ponle un
    nombre («Voziris») y copia la clave que aparece: empieza por `gsk_` y
    **solo se muestra una vez**. Si la pierdes, se crea otra y se borra la
@@ -195,8 +237,10 @@ Hay dos sitios; con uno basta:
   pestaña **Motor** → campo **Clave** (se muestra con puntos). Pulsa
   **Probar la clave y ver modelos**: si sale «✓ La clave es válida», los
   desplegables de modelo se rellenan con lo que esa clave puede usar. Luego
-  **Guardar**. La clave queda escrita en `config.toml`, junto al ejecutable,
-  en texto plano: si la carpeta va en un USB, la clave va con ella.
+  **Guardar**, y cierra y vuelve a abrir Voziris: avisa de que la clave, el
+  modelo y la URL de la API se aplican al reiniciarlo. La clave queda escrita
+  en `config.toml`, junto al ejecutable, en texto plano: si la carpeta va en
+  un USB, la clave va con ella.
 - **En una variable de entorno (si prefieres no escribirla en el archivo).**
   Con el campo Clave vacío, Voziris lee `GROQ_API_KEY`. En Windows:
   *Configuración → Sistema → Información → Configuración avanzada del
@@ -274,18 +318,22 @@ en los mensajes de error.
 
 ## Qué sale de tu equipo
 
-Voziris no tiene telemetría de ningún tipo: ni anónima, ni opcional. Lo que
-puede salir depende de dos opciones de `config.toml`, `general.motor` y
-`proceso.nivel`, y de si le has dicho que mire las versiones nuevas:
+Voziris no tiene telemetría de ningún tipo: ni anónima, ni opcional. Tampoco
+hay un servidor nuestro al que llame. Dicho para quien lo usa, está en
+[Condiciones de uso y privacidad](CONDICIONES.md); aquí va con los nombres de
+`config.toml`. Lo que puede salir depende de `general.motor`, de
+`proceso.nivel`, de si hay clave de la API y de si le has dicho que mire las
+versiones nuevas:
 
 | Modo | Sale del equipo |
 |---|---|
-| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. La única excepción es la consulta de versiones nuevas, si la has aceptado (fila siguiente) |
-| `[actualizaciones] buscar = "sí"` | una vez al día (si falla, por ejemplo sin red, se reintenta cada hora hasta que sale), una petición a la **API de GitHub** para saber cuál es la última versión publicada. No lleva nada tuyo: lo que ve GitHub es tu IP y la versión de Voziris. Con `"preguntar"` (de serie) o `"no"`, nada; ver [Versiones nuevas](#versiones-nuevas) |
-| `motor = "local"` y `nivel = "limpio"` o `"reescritura"` | el **texto** transcrito, a la API del LLM configurado, para limpiarlo |
-| `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción; y el texto al LLM si el nivel no es `literal` |
-| Primer arranque, o modelo que falta | el modelo se descarga de **Hugging Face** una vez a `modelos/` |
-| Siempre, mientras dictas | nada sale, pero el **audio del dictado se escribe en tu disco** (`historial/pendientes/`) mientras hablas. Cuando el texto está a salvo, la grabación pasa a `historial/audio/` para poder volver a transcribirla: la de los últimos 20 dictados, 7 días como mucho y nunca más de 1 GB. Con `[historial] conservar_audio = false` no se guarda y se borra la que hubiera |
+| `motor = "local"` y `nivel = "literal"` | **nada**. Ni siquiera se comprueba si hay red. La única excepción es la consulta de versiones nuevas, si la has aceptado (dos filas más abajo) |
+| Cualquier otra combinación, también la de serie (`"auto"` y `"limpio"`) | antes de cada dictado se comprueba si hay red: se abre y se cierra una conexión con el servidor de la API (`api.groq.com:443`, de serie), **sin enviar ningún dato**. Como mucho, una cada 10 segundos |
+| `[actualizaciones] buscar = "sí"` | una vez al día (si falla, por ejemplo sin red, se reintenta cada hora hasta que sale), una petición a la **API de GitHub** para saber cuál es la última versión publicada. No lleva nada tuyo: lo que ve GitHub es tu IP y la versión de Voziris. Con `"preguntar"` (de serie) o `"no"`, nada, salvo que pulses «Buscar actualizaciones»; ver [Versiones nuevas](#versiones-nuevas) |
+| Con clave y `motor = "api"` o `"auto"` con red | el **audio** del dictado, a la API de transcripción, junto con las palabras de tu diccionario como pista. Además, al arrancar se pide la lista de modelos con tu clave. Sin clave no sale nada: se transcribe en local |
+| Con clave, `llm_modelo` puesto y `nivel` distinto de `"literal"` | además, el **texto** transcrito, a la API del LLM, para limpiarlo. De serie `llm_modelo` está vacío y no sale nada |
+| Primer arranque, o modelo que falta | los dos modelos de voz (el de transcripción y el que detecta si hay voz) se descargan de **Hugging Face** una vez a `modelos/` |
+| Siempre, mientras dictas | nada sale, pero el **audio del dictado se escribe en tu disco** (`historial/pendientes/`) mientras hablas. Cuando el texto está a salvo, la grabación pasa a `historial/audio/` para poder volver a transcribirla: la de los últimos 20 dictados, 7 días como mucho y nunca más de 1 GB. Con `[historial] conservar_audio = false` no se conserva: se borra cuando el texto está a salvo, y la que hubiera, en el siguiente arranque |
 | Transcribir una grabación | el audio, troceado, va al mismo sitio que un dictado según `general.motor`; la primera vez con varios hablantes, dos modelos se descargan de **GitHub** (releases de sherpa-onnx) a `modelos/hablantes/` |
 
 Está verificado con un test (`tests/test_offline.py`) que bloquea toda
@@ -295,7 +343,7 @@ literal: ningún intento de conexión.
 ## Versiones nuevas
 
 La primera vez que arranca, Voziris pregunta si quieres que mire una vez al
-día si hay una versión nueva. Sin un sí, no se conecta a nada por su cuenta.
+día si hay una versión nueva. Sin un sí, no las consulta por su cuenta.
 La respuesta se cambia en Ajustes → Acerca de, o en `config.toml`:
 
 ```toml
@@ -439,9 +487,15 @@ archivo es lo que hay que enviar cuando algo se cierra solo.
    El dictado queda en el historial con aviso y el texto en el portapapeles,
    para pegarlo a mano. No hay solución que no sea ejecutar Voziris elevado,
    y eso choca con no pedir permisos de administrador.
-2. **Antivirus.** Un `.exe` de PyInstaller con un hook global de teclado es una
-   firma clásica de falso positivo. Los hashes SHA-256 de cada versión están
-   en las notas de la release: si el archivo coincide, es el que se publicó.
+2. **Antivirus y avisos de Windows.** Voziris no lleva firma digital. Al abrir
+   el instalador, Windows enseña «Windows protegió su PC» (se pasa con «Más
+   información» → «Ejecutar de todas formas»), y con «Control inteligente de
+   aplicaciones» activado puede bloquearlo sin dar opción: lo explica la guía.
+   Además, un `.exe` de PyInstaller con un hook global de teclado es una firma
+   clásica de falso positivo de antivirus. El `.msi` evita extraer a mano los
+   mil archivos del ZIP, pero no esos avisos: solo los quita una firma. Los
+   hashes SHA-256 de cada versión están en las notas de la release: si el
+   archivo coincide, es el que se publicó.
 3. **Portapapeles.** Voziris guarda lo que tenías copiado antes de dictar y lo
    devuelve después, pero solo si era texto. Una imagen o unos archivos
    copiados se pierden al dictar: en su lugar queda el texto dictado.
@@ -515,6 +569,14 @@ carga, no hay ZIP. La carpeta es portable tal cual. El modelo (~640 MB) no va de
 arranque. Dentro sí van ffmpeg (PyAV, para abrir las grabaciones) y
 sherpa-onnx (separación de hablantes): son la mayor parte del peso del ZIP.
 
+Después del ZIP hace el instalador, `voziris-<versión>-win64.msi`, con
+`tools/hacer_msi.py` y la receta `build/voziris.wxs`: lleva lo mismo que el
+ZIP y, al abrirlo, arranca el instalador de siempre. Pide WiX 5, que se
+instala sin administrador (`dotnet tool install --global wix --version 5.0.2`
+y `wix extension add --global WixToolset.UI.wixext/5.0.2`); con `--sin-msi`
+se hace solo el ZIP. `tools/probar_msi.py` lo abre en silencio, sin instalar
+nada, y comprueba lo que deja.
+
 Con el manifiesto, el instalador se niega a instalar una carpeta a la que le
 falte algo (la cuarentena de un antivirus, una extracción a medias), copia a
 una carpeta aparte, la arranca con `--comprobar` y solo entonces sustituye la
@@ -534,7 +596,9 @@ release.
 | `docs/H0.md` | Veredicto del hito 0: medidas del motor local en el equipo real |
 | `docs/RELEASE.md` | Cómo verificar el paquete y publicar una versión |
 | `docs/DESPLIEGUE.md` | Publicar una versión de principio a fin: release, enlace del blog, equipos y vuelta atrás |
-| `docs/LEEME-instalar.html` | La guía que viaja en el ZIP, para quien lo instala |
+| `docs/LEEME-instalar.html` | La guía de uso: va dentro del programa (menú Ayuda) y junto al ejecutable en el ZIP |
+| `docs/GUIA-api.html` | Cómo conectar la API de Groq, paso a paso y con dibujos. También va dentro del programa |
+| `CONDICIONES.md` | Condiciones de uso y privacidad: lo que se acepta al instalar con el `.msi` |
 | `docs/issues.csv` | El backlog, importable a GitHub Issues |
 
 ## Licencia

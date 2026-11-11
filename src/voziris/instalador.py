@@ -195,7 +195,8 @@ def instalar(
     if not exe_origen.is_file() or not (origen / "_internal").is_dir():
         raise FileNotFoundError(
             f"En {origen} no hay un Voziris congelado (voziris.exe y _internal). "
-            "La instalación se hace desde la carpeta descomprimida del ZIP."
+            "La instalación se hace con el instalador (.msi) o desde la carpeta "
+            "extraída del ZIP."
         )
     if destino != origen:
         log.info("instalando %s → %s", origen, destino)
@@ -284,6 +285,14 @@ MENSAJE_BLOQUEO = (
     "Puedes seguir usando Voziris desde esta carpeta: ábrelo con doble clic en "
     "voziris.exe y, para tenerlo a mano, botón derecho → Anclar a Inicio."
 )
+MENSAJE_BLOQUEO_TEMPORAL = (
+    MENSAJE_BLOQUEO.split("\n\n", maxsplit=1)[0] + " Si ya tenías Voziris, sigue como estaba.\n\n"
+    "Para usar esta versión sin instalarla, descarga el ZIP de "
+    "https://github.com/alfonsosanzme/voziris/releases/latest, extráelo en una carpeta y "
+    "abre voziris.exe desde ahí. Lo explica el apartado «Si Windows lo bloquea» de la guía."
+)
+"""Lo mismo, cuando se instala desde la carpeta temporal (el MSI o «Actualizar»): esa
+carpeta se borra, así que no vale decir «sigue usando Voziris desde aquí» (VOZ-88)."""
 
 
 def _instalar_programa(

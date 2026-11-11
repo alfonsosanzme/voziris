@@ -66,25 +66,27 @@
 <div class="indice">
   <a href="#instalar">1. Instalarlo</a> ·
   <a href="#usar">2. Usarlo</a> ·
-  <a href="#api">3. Conectar la API de Groq (opcional)</a> ·
+  <a href="#api">3. Conectar la API de Groq (recomendado)</a> ·
   <a href="#problemas">4. Si algo falla</a> ·
-  <a href="#quitar">5. Desinstalar</a>
+  <a href="#quitar">5. Desinstalar</a> ·
+  <a href="#condiciones">6. Condiciones y privacidad</a>
 </div>
 
 <p>Necesitas <strong>Windows 10 (versión 1903 o posterior) u 11, de 64 bits</strong>, un micrófono, alrededor de 1 GB libre y <strong>conexión a internet la primera vez</strong>, para descargar el modelo de voz. No hace falta ser administrador, ni instalar Python, ni crear ninguna cuenta.</p>
 
+<p>Voziris es <strong>gratis</strong> y <strong>no recoge ningún dato tuyo</strong>: no tiene telemetría ni servidor propio. Lo cuenta entero el apartado <a href="#condiciones">Condiciones y privacidad</a>.</p>
+
 <h2 id="instalar">1. Instalarlo</h2>
 
 <ol class="pasos">
-  <li><strong>Desbloquea el ZIP antes de abrirlo.</strong> Clic derecho sobre el archivo <code>voziris-…-win64.zip</code> → <em>Propiedades</em> → abajo, marca <strong>Desbloquear</strong> → <em>Aceptar</em>. Así Windows no te preguntará por cada archivo al ejecutarlo.<br>
-  <span class="sub">Si no aparece la casilla, no pasa nada: sigue.</span></li>
-
-  <li><strong>Extráelo entero, en una carpeta nueva.</strong> Clic derecho sobre el ZIP → <strong>Extraer todo…</strong> y elige una carpeta (Documentos, por ejemplo). No lo extraigas encima de una versión anterior, ni lo ejecutes desde dentro del ZIP sin extraer. Son unos mil archivos: <strong>espera a que termine</strong> la extracción antes de seguir.
-    <div class="aviso">Si Windows dice que <strong>una ruta es demasiado larga</strong>, no pulses <em>Omitir</em>: te dejaría el programa a medias sin avisar. Pulsa <em>Cancelar</em> y extrae en una carpeta más corta, como Documentos.</div>
+  <li><strong>Abre el instalador con doble clic.</strong> Es el archivo <code>voziris-…-win64.msi</code> que has descargado. No hay que extraer nada.
+    <div class="aviso">Si sale una pantalla azul que dice <strong>«Windows protegió su PC»</strong>: pulsa <strong>Más información</strong> y luego <strong>Ejecutar de todas formas</strong>. Sale porque el programa todavía no lleva firma digital, no porque haga nada raro. Si es el navegador el que desconfía de la descarga porque no la conoce, elige conservarla. Si lo que sale es <strong>«Control inteligente de aplicaciones ha bloqueado…»</strong>, mira <a href="#bloqueo">Si Windows lo bloquea</a>.</div>
   </li>
 
-  <li><strong>Doble clic en <code>Instalar Voziris.cmd</code></strong>, dentro de la carpeta <code>voziris</code> que se ha creado. Se instala solo para tu usuario, sin pedir permisos, y queda en el menú Inicio: escribe «Voziris» en la búsqueda de Windows para abrirlo cuando quieras. Antes de instalar, comprueba que no falte ningún archivo y que la copia arranca; si algo va mal, no cambia nada y te dice qué pasa.
-    <div class="aviso">Si sale una pantalla azul que dice <strong>«Windows protegió su PC»</strong>: pulsa <strong>Más información</strong> y luego <strong>Ejecutar de todas formas</strong>. Sale porque el programa no está firmado con un certificado de pago, no porque haga nada raro. Si tu antivirus lo pone en cuarentena, es un falso positivo típico de programas que escuchan atajos de teclado: restáuralo o añade una excepción. Si lo que sale es <strong>«Control inteligente de aplicaciones ha bloqueado…»</strong>, mira <a href="#bloqueo">Si Windows lo bloquea</a>.</div>
+  <li><strong>Lee las condiciones, márcalas como aceptadas y pulsa <em>Instalar</em>.</strong> Son las mismas del apartado <a href="#condiciones">Condiciones y privacidad</a>. Se instala solo para tu usuario, sin pedir permisos de administrador.</li>
+
+  <li><strong>Espera a la ventana «Instalando Voziris».</strong> Se abre sola a los pocos segundos: comprueba que no falte ningún archivo y que el programa arranca, y solo entonces lo instala. Si algo va mal, no cambia nada y te dice qué pasa. Al acabar avisa con <strong>«Voziris instalado»</strong> y, si todavía no tienes clave de la API, pregunta si quieres abrir la guía para <a href="#api">conectarla</a>, que es lo recomendable.
+    <div class="aviso">Si tu antivirus pone algún archivo en cuarentena, es una falsa alarma, típica con los programas que escuchan atajos de teclado: restáuralo o añade una excepción, y vuelve a abrir el instalador.</div>
   </li>
 
   <li><strong>Primer arranque: espera a que baje el modelo de voz.</strong> Aparece un icono de micrófono en la bandeja del sistema, junto al reloj (si no lo ves, está escondido bajo la flechita <kbd>^</kbd>). La primera vez descarga el modelo de reconocimiento, unos 640 MB, una sola vez: con una conexión normal tarda de uno a tres minutos, y la bandeja avisa del progreso.</li>
@@ -92,7 +94,20 @@
   <li><strong>Pruébalo.</strong> Pon el cursor en cualquier sitio donde se escriba (un correo, un documento, el navegador), mantén <kbd>Ctrl</kbd>+<kbd>Win</kbd>, habla, y suelta.</li>
 </ol>
 
-<p>Voziris se abre solo al encender el equipo. Si no lo quieres así, se cambia en <em>Ajustes</em>.</p>
+<p>Queda en el menú Inicio: escribe «Voziris» en la búsqueda de Windows para abrirlo cuando quieras. Además se abre solo al encender el equipo; si no lo quieres así, se cambia en <em>Ajustes</em>. Si ya lo tenías instalado, abrir el instalador de una versión nueva lo actualiza y conserva tus ajustes, tus dictados y el modelo: el aviso final dice entonces «Voziris actualizado».</p>
+
+<h3 id="zip">Con el ZIP, sin instalador</h3>
+<p>El mismo programa se reparte también en un ZIP, <code>voziris-…-win64.zip</code>. Sirve para usarlo sin instalar (se puede llevar en un USB) o si no puedes abrir el instalador.</p>
+<ol class="pasos">
+  <li><strong>Desbloquea el ZIP antes de abrirlo.</strong> Clic derecho sobre el archivo → <em>Propiedades</em> → abajo, marca <strong>Desbloquear</strong> → <em>Aceptar</em>. Así Windows no te preguntará por cada archivo al ejecutarlo.<br>
+  <span class="sub">Si no aparece la casilla, no pasa nada: sigue.</span></li>
+
+  <li><strong>Extráelo entero, en una carpeta nueva.</strong> Clic derecho sobre el ZIP → <strong>Extraer todo…</strong> y elige una carpeta (Documentos, por ejemplo). No lo extraigas encima de una versión anterior, ni lo ejecutes desde dentro del ZIP sin extraer. Son unos mil archivos: <strong>espera a que termine</strong> la extracción antes de seguir.
+    <div class="aviso">Si Windows dice que <strong>una ruta es demasiado larga</strong>, no pulses <em>Omitir</em>: te dejaría el programa a medias sin avisar. Pulsa <em>Cancelar</em> y extrae en una carpeta más corta, como Documentos.</div>
+  </li>
+
+  <li><strong>Ábrelo.</strong> Para usarlo sin instalar, doble clic en <code>voziris.exe</code>, dentro de la carpeta <code>voziris</code> que se ha creado. Para instalarlo desde ahí, doble clic en <code>Instalar Voziris.cmd</code>: abre la misma ventana «Instalando Voziris» del paso 3 de arriba y sigue igual.</li>
+</ol>
 
 <h2 id="usar">2. Usarlo</h2>
 
@@ -123,9 +138,13 @@
 <h3>Transcribir grabaciones y vídeos</h3>
 <p>Clic derecho sobre un audio o un vídeo (m4a, mp3, wav, mp4, mov…) → <strong>Transcribir con Voziris</strong>. En Windows 11 está dentro de <em>Mostrar más opciones</em>. Puedes elegir si habla una persona o varias; con varias, las distingue. El resultado se guarda como un archivo <code>.md</code> junto a la grabación y se abre al terminar. También está en el menú de la bandeja: <em>Transcribir grabación o vídeo…</em></p>
 
-<h2 id="api">3. Conectar la API de Groq (opcional)</h2>
+<h2 id="api">3. Conectar la API de Groq (recomendado)</h2>
 
-<p>No hace falta para nada: el motor local funciona sin internet y es gratis. La API da algo más de precisión, sobre todo con nombres propios y jerga, y permite limpiar el texto con una IA (quitar muletillas, corregir «el martes, no, el jueves»). La clave es <strong>personal</strong>: cada uno usa la suya.</p>
+<p>Voziris funciona sin configurar nada con su <strong>motor local</strong>, que una vez descargado su modelo no necesita internet. Pero ese motor es el más limitado: se equivoca más, sobre todo con nombres propios, palabras técnicas y cuando hablas bajo. Y sin la API tampoco hay limpieza del texto con IA. <strong>Lo recomendable es conectar la API de Groq</strong>: es gratis para dictar, se hace en cinco minutos, transcribe mejor y permite esa limpieza (quitar muletillas, corregir «el martes, no, el jueves»). Con la API conectada, el motor local sigue ahí para cuando no hay internet.</p>
+
+<div class="aviso"><strong>Hay una guía paso a paso, con dibujos:</strong> <a href="GUIA-api.html">Conectar la API de Groq a Voziris</a>. También está en el menú de la bandeja → <em>Ayuda</em>. Lo de aquí abajo es lo mismo, resumido.</div>
+
+<p>La clave es <strong>personal</strong>: cada uno usa la suya. Con la API, el audio de cada dictado se envía a Groq para transcribirlo: lo explica <a href="#condiciones">Condiciones y privacidad</a>.</p>
 
 <h3>Conseguir la clave (cinco minutos)</h3>
 <ol class="pasos">
@@ -139,7 +158,8 @@
   <li>Menú de la bandeja → <strong>Ajustes</strong> → pestaña <strong>Motor</strong>.</li>
   <li>Pega la clave en el campo <strong>Clave</strong> y pulsa <strong>Probar la clave y ver modelos</strong>. Tiene que salir <em>«✓ La clave es válida»</em>.</li>
   <li>En <strong>Modelo de transcripción</strong>, elige <code>whisper-large-v3</code> (el más preciso; en el plan gratuito cuesta lo mismo que el otro: nada).</li>
-  <li>Arriba, elige el motor <strong>Automático</strong>: usa la API cuando hay internet y el local cuando no. Pulsa <strong>Guardar</strong>.</li>
+  <li>Arriba, deja el motor en <strong>Automático</strong>, que es como viene: con la clave puesta, usa la API cuando hay internet y el local cuando no. Pulsa <strong>Guardar</strong>.</li>
+  <li><strong>Cierra Voziris y vuelve a abrirlo.</strong> Al guardar avisa de que la clave se aplica al reiniciarlo: menú de la bandeja → <em>Salir</em>, y ábrelo otra vez escribiendo «Voziris» en la búsqueda de Windows.</li>
   <li>Opcional: en la pestaña <strong>Texto</strong> puedes elegir el nivel de limpieza y el modelo de IA que la hace (<code>openai/gpt-oss-120b</code> es el que mejor va en castellano).</li>
 </ol>
 
@@ -148,19 +168,16 @@
   <li><strong>El plan gratuito sobra para dictar</strong>: 20 peticiones por minuto, 2 000 al día y 8 horas de audio al día. Dictando media hora diaria se usa un 6 %.</li>
   <li>Para <strong>grabaciones largas</strong> (una reunión de una hora), el límite de 20 peticiones por minuto se nota. Pon el motor en <strong>Local</strong> antes de transcribirlas: va igual de bien y sin esperas.</li>
   <li>Para saber si se está usando la API de verdad: en <a href="https://console.groq.com/dashboard/usage">console.groq.com/dashboard/usage</a>, pestaña <strong>Activity</strong> (en <em>Cost</em> el plan gratuito siempre marca cero). Tarda hasta quince minutos en actualizarse.</li>
-  <li>La clave se guarda en el archivo <code>config.toml</code> de la carpeta del programa, en tu equipo. Solo viaja a Groq, y no aparece en el registro ni en los mensajes de error.</li>
+  <li>La clave se guarda en el archivo <code>config.toml</code> de la carpeta del programa, en tu equipo, sin cifrar. Solo viaja a Groq, y no aparece en el registro ni en los mensajes de error.</li>
+  <li>Qué sale de tu equipo y qué no, con cada motor, está en <a href="#condiciones">Condiciones y privacidad</a>.</li>
 </ul>
-
-<h3>Qué sale de tu equipo</h3>
-<p>Con el motor <strong>local</strong>, el audio no sale de tu equipo, y el texto tampoco si no activas la limpieza con IA. Eso sí: salvo con el nivel de limpieza <em>Literal</em> (pestaña <strong>Texto</strong>), cada dictado comprueba si hay internet abriendo una conexión con el servidor de la API (el de Groq, de serie), sin mandar nada. Con el motor local y el nivel <em>Literal</em>, dictar no conecta con nada. Con la <strong>API</strong>, el audio de cada dictado va a Groq para transcribirlo, y el texto al modelo de IA si activas la limpieza. Aparte, el primer arranque descarga el modelo, y la consulta de versiones nuevas solo se hace si la aceptas (mira el párrafo siguiente). Las grabaciones y el historial se quedan en tu disco, en la carpeta del programa.</p>
-<p>Si aceptas que mire las <a href="#versiones">versiones nuevas</a>, una vez al día pregunta a GitHub cuál es la última publicada (si no hay conexión, lo vuelve a intentar a la hora). Esa consulta no lleva nada tuyo: GitHub ve tu IP y la versión de Voziris, como en cualquier visita a una web.</p>
 
 <h2 id="problemas">4. Si algo falla</h2>
 <ul>
   <li><strong>Diagnóstico</strong>: menú de la bandeja → <em>Guardar diagnóstico…</em>. Genera un archivo de texto con lo necesario para ver qué pasó (sin la clave de la API). Mándaselo a quien te pasó el programa.</li>
   <li><strong>No escribe en una ventana concreta</strong>: si esa aplicación está abierta como administrador, Windows no deja que otros programas le escriban. El texto queda igualmente en <em>Últimos dictados</em> y en el portapapeles.</li>
-  <li><strong>Sale «No module named…» al abrirlo</strong>: la extracción del ZIP no había terminado. Espera y vuelve a abrirlo.</li>
-  <li><strong>Sale «No se pudo cargar PyAV… Falta <code>_internal\…</code>»</strong> (o lo mismo con otro archivo): falta ese archivo del programa. Casi siempre es el antivirus, que lo ha puesto en cuarentena. Restáuralo desde el antivirus (o añade una excepción para la carpeta de Voziris), vuelve a extraer el ZIP entero e instala otra vez.</li>
+  <li><strong>Sale «No module named…» al abrirlo desde la carpeta del ZIP</strong>: la extracción no había terminado. Espera y vuelve a abrirlo.</li>
+  <li><strong>Sale «No se pudo cargar PyAV… Falta <code>_internal\…</code>»</strong> (o lo mismo con otro archivo): falta ese archivo del programa. Casi siempre es el antivirus, que lo ha puesto en cuarentena. Restáuralo desde el antivirus (o añade una excepción para la carpeta de Voziris) e instala otra vez: abre de nuevo el instalador o, si usas el ZIP, extráelo entero en una carpeta nueva.</li>
   <li><strong>Sale «No hay conexión para descargar el modelo de voz»</strong>: la primera vez Voziris necesita internet para bajar unos 640 MB. Conéctate y vuelve a abrirlo; después ya funciona sin conexión.</li>
   <li><strong>Sale «Nada que escribir: …»</strong>: no ha oído nada que transcribir, y no ha escrito nada. Mira que el micrófono funciona y vuelve a dictar. Una sola palabra muy corta, dicha sola, puede tomarse por silencio.</li>
   <li><strong>Al instalar o actualizar, dice que otro programa tiene abierta la carpeta de Voziris</strong>: el propio aviso dice cuál es, si lo ha podido saber, y qué hacer. Ciérralo y pulsa <em>Reintentar</em>. Mientras tanto Voziris está cerrado y la versión anterior sigue como estaba; si cancelas, se vuelve a abrir.</li>
@@ -171,7 +188,7 @@
 <h3 id="bloqueo">Si Windows lo bloquea («Control inteligente de aplicaciones»)</h3>
 <p>Algunos equipos con Windows 11 tienen activado <strong>Control inteligente de aplicaciones</strong>, que bloquea los programas sin firma digital que Microsoft todavía no conoce. Voziris no está firmado, así que puede tocarle. Lo reconocerás por el aviso «Control inteligente de aplicaciones ha bloqueado un archivo que podría no ser seguro». Ese aviso no tiene botón para saltárselo. Lo decide archivo por archivo: puede dejar abrir el programa desde la carpeta extraída y bloquearlo en la instalada.</p>
 <ol>
-  <li><strong>Usa la copia que funciona.</strong> Abre <code>voziris.exe</code> desde la carpeta donde extrajiste el ZIP y, para tenerlo a mano, clic derecho sobre él → <strong>Anclar a Inicio</strong>. Deja esa carpeta donde está: es tu Voziris.</li>
+  <li><strong>Usa la copia que funciona.</strong> Abre <code>voziris.exe</code> desde la carpeta donde extrajiste el ZIP y, para tenerlo a mano, clic derecho sobre él → <strong>Anclar a Inicio</strong>. Deja esa carpeta donde está: es tu Voziris. Si lo intentaste con el instalador, descarga el ZIP de <a href="https://github.com/alfonsosanzme/voziris/releases/latest">la página de versiones</a> y sigue <a href="#zip">Con el ZIP, sin instalador</a>.</li>
   <li><strong>Solo si la instalaste con la versión 0.1.0:</strong> quita a la instalada la marca de «descargado de Internet», que esa versión copiaba (desde la 0.1.1 el instalador ya la quita). Abre PowerShell (sin administrador) y pega:
     <pre><code>Get-ChildItem "$env:LOCALAPPDATA\Programs\Voziris" -Recurse | Unblock-File
 Unblock-File "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Voziris.lnk"</code></pre>
@@ -181,7 +198,49 @@ Unblock-File "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Voziris.lnk"</c
 <p>Si le pasa a alguien, el <em>diagnóstico</em> (menú de la bandeja) recoge qué archivos ha bloqueado Windows: mándalo junto con la captura del aviso.</p>
 
 <h2 id="quitar">5. Desinstalar</h2>
-<p><em>Configuración de Windows → Aplicaciones → Aplicaciones instaladas → Voziris → Desinstalar</em>. Se borra la carpeta entera, incluido el modelo descargado. Después puedes borrar también la carpeta donde extrajiste el ZIP.</p>
+<p><em>Configuración de Windows → Aplicaciones → Aplicaciones instaladas → Voziris → Desinstalar</em>. Se borra la carpeta entera, incluidos tus ajustes, el historial de dictados y el modelo descargado. Si usaste el ZIP, después puedes borrar también la carpeta donde lo extrajiste.</p>
+
+<h2 id="condiciones">6. Condiciones y privacidad</h2>
+<p class="sub">Última revisión: 11 de noviembre de 2026.</p>
+
+<h3>En pocas palabras</h3>
+<ul>
+  <li><strong>Voziris no recoge ningún dato tuyo.</strong> No tiene telemetría, estadísticas de uso, publicidad ni cuentas de usuario, y no existe ningún servidor nuestro al que mande nada. No sabemos quién lo instala, cuánto lo usa ni qué dicta.</li>
+  <li><strong>Lo que dictas se queda en tu equipo.</strong> Solo sale si tú conectas un servicio externo, como la API de Groq, con tu propia clave.</li>
+  <li><strong>Es gratis y de código abierto.</strong> No hay versión de pago, ni anuncios, ni nada que vender detrás.</li>
+</ul>
+
+<h3>Por qué es gratis</h3>
+<p>Voziris es un proyecto de Kairis (kairis.es). Nació como una herramienta de uso personal y lo compartimos porque nos gusta enseñar lo que vamos haciendo. No tenemos ningún interés comercial en él ni en tus datos.</p>
+<p>Todo el código es público, en <a href="https://github.com/alfonsosanzme/voziris">https://github.com/alfonsosanzme/voziris</a>, bajo licencia MIT: puedes usarlo, copiarlo y compartirlo libremente, también en el trabajo, y cualquiera puede comprobar en el código lo que aquí se dice.</p>
+
+<h3>Qué guarda en tu equipo</h3>
+<p>Voziris guarda sus datos en su propia carpeta, en tu disco, y no los manda a ningún sitio:</p>
+<ul>
+  <li>Tus ajustes, en el archivo <code>config.toml</code>. Si pones una clave de Groq, se guarda ahí, sin cifrar.</li>
+  <li>El texto de tus últimos dictados, para que puedas copiarlos o volver a escribirlos desde el menú.</li>
+  <li>La grabación de cada dictado mientras se transcribe y, después, la de los últimos: como mucho 20 dictados, 7 días y 1 GB. Sirve para volver a transcribirlos si el texto salió mal. Con <code>conservar_audio = false</code> en <code>config.toml</code> solo se guardan, esos mismos 7 días, las de los dictados que no se llegaron a transcribir, para que no se pierdan.</li>
+  <li>Un registro técnico de funcionamiento. En el uso normal no contiene lo que dictas; sí el nombre del programa en el que se escribió y el de los archivos que transcribes.</li>
+</ul>
+<p>Para escribir en otros programas, Voziris usa el portapapeles de Windows: si tienes activado su historial, lo dictado puede quedar también ahí.</p>
+<p>Todo eso se borra al desinstalar Voziris. El «diagnóstico» que ayuda a resolver problemas solo se crea si tú lo pides, se guarda en tu equipo y eres tú quien decide si se lo envías a alguien.</p>
+
+<h3>Qué sale de tu equipo, y cuándo</h3>
+<p>Voziris solo se conecta a internet en estos casos:</p>
+<ul>
+  <li><strong>Para descargar los modelos de voz</strong>, la primera vez, desde Hugging Face. Y desde GitHub, la primera vez que transcribes una grabación con la opción de distinguir a varios hablantes.</li>
+  <li><strong>Para saber si hay conexión</strong>, antes de cada dictado: abre y cierra una conexión con el servidor de la API (el de Groq, de serie) sin enviar ningún dato. No lo hace si eliges el motor «Local» y el nivel de limpieza «Literal».</li>
+  <li><strong>Para buscar versiones nuevas</strong> en GitHub: una vez al día si lo aceptas cuando te lo pregunta, y siempre que pulses «Buscar actualizaciones» o «Actualizar».</li>
+  <li><strong>Para usar la API</strong>, solo si tú pones tu clave. Entonces el audio de cada dictado y de cada grabación que transcribas, junto con las palabras de tu diccionario, va a Groq para transcribirlo, salvo que elijas el motor «Local». Y si activas la limpieza con IA, va también el texto, con cualquier motor. Esos datos los trata Groq, o el servicio que tú pongas en su lugar, con tu cuenta y según sus condiciones (<a href="https://console.groq.com/docs/your-data">https://console.groq.com/docs/your-data</a>), no las nuestras.</li>
+</ul>
+<p>En esas conexiones, el servicio al que se llama ve lo mismo que cualquier web que visitas: tu dirección IP y datos técnicos como la versión del programa. Voziris no envía tu nombre ni ningún identificador de tu equipo. A la API viaja tu clave, que es lo que identifica tu cuenta ante Groq.</p>
+
+<h3>Sin garantía</h3>
+<p>Voziris se ofrece tal cual, sin garantía de ningún tipo, como establece su licencia MIT. Úsalo bajo tu responsabilidad y revisa lo que escribe antes de enviarlo: ningún reconocimiento de voz acierta siempre.</p>
+<p>Todavía no lleva firma digital, y por eso Windows puede mostrar un aviso al instalarlo.</p>
+
+<h3>Contacto</h3>
+<p>Para dudas, problemas o sugerencias: <a href="https://github.com/alfonsosanzme/voziris/issues">https://github.com/alfonsosanzme/voziris/issues</a></p>
 
 </main>
 </body>

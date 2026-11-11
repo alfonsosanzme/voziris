@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from voziris import __version__
+from voziris.config import GUIA_API, GUIA_DE_USO
 from voziris.tipos import EntradaHistorial
 from voziris.ui import iconos
 
@@ -54,6 +55,11 @@ ULTIMOS_EN_MENU = 10
 ESPERA_REENTREGA_S = 3
 ETIQUETA_REENTREGAR = f"Volver a entregar (en {ESPERA_REENTREGA_S} s, haz clic donde lo quieras)"
 LARGO_RESUMEN = 42
+AYUDA: tuple[tuple[str, str], ...] = (
+    (GUIA_DE_USO, "Guía de uso"),
+    (GUIA_API, "Conectar la API de Groq (recomendado)"),
+)
+"""(guía, etiqueta) del submenú «Ayuda» (VOZ-88). Las condiciones van al final de la de uso."""
 
 
 def texto_acerca_de(version: str = __version__) -> str:
@@ -61,6 +67,9 @@ def texto_acerca_de(version: str = __version__) -> str:
     return (
         f"Voziris {version}\n"
         "Dictado por voz para Windows. Código bajo licencia MIT.\n"
+        "\n"
+        "Gratis y sin recogida de datos: no tiene telemetría ni servidor propio.\n"
+        "Las condiciones de uso y privacidad están en la guía de uso.\n"
         "\n"
         "Motor local: NVIDIA Parakeet TDT 0.6B v3, © NVIDIA Corporation,\n"
         "distribuido bajo Creative Commons Attribution 4.0 (CC-BY-4.0).\n"
@@ -118,6 +127,8 @@ class AccionesBandeja:
     """La versión nueva conocida. «Actualizar a la…» solo se ve si hay una."""
     etiqueta_actualizar: str = "Actualizar a la {}…"
     """Portable: «Descargar la {}…», porque abre la página en vez de instalar."""
+    abrir_guia: Callable[[str], None] | None = None
+    """Abre una de las guías que van con el programa (`AYUDA`). Si falta, no hay «Ayuda»."""
 
 
 def resumen(entrada: EntradaHistorial, largo: int = LARGO_RESUMEN) -> str:
@@ -288,6 +299,7 @@ class Bandeja:
             Item("Ajustes…", lambda: self._acciones.abrir_ajustes()),
             *self._items_opcionales(),
             *self._items_actualizacion(),
+            *self._item_ayuda(),
             Item("Acerca de Voziris", lambda: self._acerca_de()),
             pystray.Menu.SEPARATOR,
             Item("Salir", lambda: self._acciones.salir()),
@@ -366,6 +378,24 @@ class Bandeja:
                 visible=lambda _item: bool(a.version_nueva()),
             ))
         return elementos
+
+    def _item_ayuda(self) -> list[Any]:
+        """Submenú «Ayuda»: las guías que van con el programa (VOZ-88). Solo si se cablea.
+
+        Quien instala con el MSI no ve nunca la carpeta del programa, que es
+        donde el ZIP deja el LÉEME: sin esto no tendría forma de llegar a él.
+        """
+        import pystray
+
+        Item = pystray.MenuItem
+        if self._acciones.abrir_guia is None:
+            return []
+        abrir = self._acciones.abrir_guia
+
+        def elegir(guia: str) -> Callable[[], None]:
+            return lambda: abrir(guia)
+
+        return [Item("Ayuda", pystray.Menu(*(Item(etiqueta, elegir(g)) for g, etiqueta in AYUDA)))]
 
     def _ultimas_seguro(self) -> list[EntradaHistorial]:
         """El historial para el menú. Si no se puede leer, vacío: el menú no se rompe."""

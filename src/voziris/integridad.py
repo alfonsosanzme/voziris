@@ -67,9 +67,10 @@ _TEXTOS_DE_BLOQUEO = ("directiva de control de aplicaciones", "application contr
 
 POR_QUE_FALTAN = (
     "Suele ser el antivirus, que ha puesto ese archivo en cuarentena, o una "
-    "extracción del ZIP que se saltó archivos. Vuelve a extraer el ZIP entero "
-    "(botón derecho → Extraer todo, en Documentos) y espera a que termine. Si el "
-    "antivirus avisó, restaura el archivo o añade una excepción para la carpeta."
+    "extracción del ZIP que se saltó archivos. Si el antivirus avisó, restaura el "
+    "archivo o añade una excepción para la carpeta. Después vuelve a instalar: abre "
+    "otra vez el instalador (.msi) o, si usas el ZIP, extráelo entero en una carpeta "
+    "nueva (botón derecho → Extraer todo, en Documentos) y espera a que termine."
 )
 
 
@@ -277,9 +278,9 @@ def explicacion_de_bloqueo(que: str) -> str:
     return (
         f"Windows no deja cargar {que}: lo ha bloqueado una directiva de control de "
         "aplicaciones. En Windows 11 suele ser «Control inteligente de aplicaciones», "
-        "que bloquea los programas sin firma digital que Microsoft no conoce. Abre "
-        "Voziris desde la carpeta donde descomprimiste el ZIP; si también lo bloquea, "
-        "mira el apartado «Si Windows lo bloquea» del LÉEME."
+        "que bloquea los programas sin firma digital que Microsoft no conoce. Si lo "
+        "instalaste desde el ZIP, abre Voziris desde la carpeta donde lo extrajiste; "
+        "si también lo bloquea, mira el apartado «Si Windows lo bloquea» de la guía."
     )
 
 

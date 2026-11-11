@@ -4,14 +4,16 @@ Este documento explica cómo publicar una versión nueva de Voziris y cómo hace
 
 Las rutas cambiaron el 30 de octubre de 2026, antes de la 0.1.2: el 21 de octubre el código salió de OneDrive a `C:\dev\voziris`, y las del 7 de octubre ya no existen. Con ellas se publicó la 0.1.2 el 2 de noviembre de 2026 (PR #48, con `main` en `43d7cf8`): los pasos 1 a 9 y el 11 están comprobados con esa versión, y otra vez con la 0.1.3, el 3 de noviembre de 2026.
 
+El 11 de noviembre de 2026 se añadió el instalador MSI (VOZ-88). Todavía no se ha publicado ninguna versión con él: lo que se dice del MSI en los pasos 5 y 6.1 bis está ejecutado con el paquete de la 0.1.3, y lo demás lleva la marca **(sin probar)** hasta la primera release que lo lleve.
+
 En todo el documento, `<X.Y.Z>` es la versión nueva y `<anterior>` la que está publicada ahora (por ejemplo, 0.1.2 y 0.1.1).
 
 ## Qué significa desplegar
 
 Desplegar Voziris es llegar a tres sitios. Con el primero no basta.
 
-1. **La release `v<X.Y.Z>` de GitHub**, en `alfonsosanzme/voziris`, que es público. Lleva el ZIP, `SHA256SUMS.txt` y las notas. Todo lo demás enlaza aquí.
-2. **El blog de kairis.es.** El botón de descarga de https://kairis.es/blog/voziris.html apunta al ZIP de una release concreta. Mientras no se cambie, sigue ofreciendo la versión anterior.
+1. **La release `v<X.Y.Z>` de GitHub**, en `alfonsosanzme/voziris`, que es público. Lleva el instalador MSI, el ZIP, `SHA256SUMS.txt` y las notas. Todo lo demás enlaza aquí.
+2. **El blog de kairis.es.** El botón de descarga de https://kairis.es/blog/voziris.html apunta a un archivo de una release concreta. Mientras no se cambie, sigue ofreciendo la versión anterior.
 3. **Quien ya lo usa.** Hasta la 0.1.1, Voziris no busca versiones nuevas: cada equipo se actualiza a mano y a los demás hay que avisarles. Para pasar el ZIP a mano está `voziris-entrega/compartir/`. Desde la 0.1.2 (VOZ-82), las copias cuyo usuario aceptó la pregunta del primer arranque consultan `releases/latest` una vez al día y avisan; la instalada se actualiza desde la bandeja, con «Actualizar a la X.Y.Z…».
 
 Hay reglas que no cambian:
@@ -19,6 +21,7 @@ Hay reglas que no cambian:
 - **Nunca se sobrescribe un asset publicado ni se reutiliza un número de versión.** Si algo sale mal, se publica la versión siguiente. Con el mismo nombre de archivo, el hash publicado y las cachés dejarían de cuadrar.
 - **La release anterior se queda.** Es el camino de vuelta para quien lo necesite.
 - **Publicar como «Latest» es repartir.** Desde la 0.1.2, en menos de un día las Voziris con la comprobación activada avisan de la versión nueva. Lo que no esté probado no se publica como «Latest»: un borrador o una *prerelease* no se ofrece a nadie. Para que la puedan instalar desde la bandeja, la etiqueta es `v<X.Y.Z>` y los assets se llaman exactamente `voziris-<X.Y.Z>-win64.zip` y `SHA256SUMS.txt`. Con otros nombres, avisan pero mandan a la página.
+- **«Actualizar» sigue usando el ZIP.** El MSI (`voziris-<X.Y.Z>-win64.msi`) es para quien lo descarga a mano. Una release sin ZIP dejaría sin actualización a todas las instaladas, aunque lleve el MSI. `SHA256SUMS.txt` lleva las dos líneas, y la del ZIP es la que buscan las instaladas, por su nombre.
 - **La web solo se despliega con el permiso explícito de Alfonso.** Tampoco se despliega si hay trabajo de otros sin subir (paso 10).
 - **Una sesión de Claude no cierra ni relanza la Voziris de la bandeja.** Tampoco toca `%LOCALAPPDATA%\Programs\Voziris`, el menú Inicio ni el registro. La excepción es el paso 12, y solo con el sí de Alfonso. Ojo: `voziris.exe --instalar` y `voziris.exe --salir` cierran la Voziris que esté abierta, sea cual sea.
 
@@ -30,6 +33,7 @@ Todas las órdenes son de **Git Bash**, salvo dos de PowerShell que van marcadas
 |---|---|---|
 | `gh` con la sesión de `alfonsosanzme` | `gh auth status` | Crea el PR y la release. |
 | El Python 3.13 del venv del proyecto, no un 3.14 | `"$PY" --version` → `3.13.x`; `"$PY" -m PyInstaller --version` → `6.x` | `pyproject.toml` excluye la 3.14. Además, `empaquetar.py` se niega si la `python3XX.dll` del paquete no es la del Python que lo ejecuta. |
+| WiX 5 con su extensión de interfaz | `wix --version` → `5.x`; `wix extension list --global` → `WixToolset.UI.wixext 5.x` | Hace el MSI. Se instala sin administrador: `dotnet tool install --global wix --version 5.0.2` y `wix extension add --global WixToolset.UI.wixext/5.0.2`. `empaquetar.py` lo comprueba antes de empezar. |
 | `node` | `node --version` | Genera el blog. |
 | Unos 1,5 GB libres en `C:` | — | La compilación ocupa unos 370 MB en `C:\dev\voziris-release`. La prueba de actualización extrae paquetes de unos 230 MB en `%TEMP%` y los instala. |
 | Trabajar **fuera de OneDrive y de `%LOCALAPPDATA%`** | Las rutas de abajo, todas en `C:\dev` | OneDrive impide borrar `build/dist`, y PyInstaller necesita vaciar esa carpeta. La app de Claude virtualiza `%LOCALAPPDATA%`: lo que crean ahí sus herramientas no lo ve el Python del venv, que es el de la Microsoft Store (ver la primera trampa). |
@@ -102,14 +106,17 @@ Mira también si `pyproject.toml` trae dependencias nuevas, con `git diff "v$ANT
 - «Novedades en <X.Y.Z>», con lo que salió en el `git log` del paso 1, contado para quien usa el programa;
 - «Instalación → Si ya tenías la …», para cada versión que alguien pueda tener instalada (hoy, de la 0.1.0 a la última);
 - «Limitaciones conocidas», si algo ha cambiado;
-- la línea del hash: el nombre nuevo y 64 ceros, dentro del bloque de código que ya tiene la sección «Verificación del archivo».
+- las líneas de los hashes: el nombre nuevo y 64 ceros, una para el MSI y otra para el ZIP, dentro del bloque de código de la sección «Verificación del archivo» (las notas de la 0.1.3 solo traen la del ZIP: hay que añadir la del MSI).
 
 ```text
+SHA-256  voziris-<X.Y.Z>-win64.msi
+0000000000000000000000000000000000000000000000000000000000000000
+
 SHA-256  voziris-<X.Y.Z>-win64.zip
 0000000000000000000000000000000000000000000000000000000000000000
 ```
 
-`empaquetar.py` busca exactamente `SHA-256`, dos espacios, `voziris-<dígitos y puntos>-win64.zip` y un salto de línea LF. Después sustituye los 64 caracteres de la línea siguiente. Hay que tener en cuenta dos cosas:
+`empaquetar.py` busca exactamente `SHA-256`, dos espacios, `voziris-<dígitos y puntos>-win64.zip` (o `.msi`) y un salto de línea LF. Después sustituye los 64 caracteres de la línea siguiente. Hay que tener en cuenta dos cosas:
 
 - **Si no encuentra el patrón, no avisa.** El paso 5 lo comprueba.
 - **No cambia el nombre del archivo.** Si se queda el de la versión anterior, el hash nuevo sale con el nombre viejo.
@@ -121,9 +128,15 @@ Las notas tienen que llevar lo que pide `docs/RELEASE.md` §5:
 - el aviso sobre el antivirus y las ventanas elevadas;
 - la atribución a NVIDIA (CC-BY-4.0).
 
+Desde que hay MSI, «Instalación» empieza por él: descargar el `.msi` y abrirlo, con el aviso de «Windows protegió su PC». El ZIP queda como la forma portable.
+
 En la 0.1.1, la verificación encontró frases falsas en las notas, como «mientras baja el modelo puedes usar la API». Por eso el paso 6 contrasta cada frase con el código.
 
-Si vas a cambiar `docs/LEEME-instalar.html`, `ATRIBUCIONES.md`, `LICENSE`, `config.ejemplo.toml` o `assets/`, hazlo ahora: todos van dentro del ZIP.
+Si vas a cambiar `docs/LEEME-instalar.html`, `docs/GUIA-api.html`, `CONDICIONES.md`, `ATRIBUCIONES.md`, `LICENSE`, `config.ejemplo.toml` o `assets/`, hazlo ahora: todos van dentro del paquete. Tres cosas más:
+
+- **Las condiciones están en dos sitios**, `CONDICIONES.md` y el apartado 6 de la guía, y tienen que decir lo mismo: lo vigila `tests/test_instalador_msi.py`. El asistente del MSI enseña las de `CONDICIONES.md`, que hay que aceptar para instalar. Si cambian, cambia también su fecha de revisión.
+- **Las condiciones dicen qué sale del equipo y qué se guarda.** Si el código cambia algo de eso (una conexión nueva, un dato más en disco), se cambian antes de publicar. Es lo primero que revisa la verificación de textos del paso 6.2.
+- **La guía de la API nombra botones y pestañas** de Ajustes y de la consola de Groq. Si cambian, se cambian sus textos y sus dibujos.
 
 ```bash
 cd "$REL"
@@ -172,24 +185,28 @@ El script hace esto, en este orden:
   - faltan los runtimes de Visual C++;
   - alguna ruta interna pasa de 100 caracteres;
   - la DLL de Python no es la del Python que lo ejecuta;
-  - `voziris.exe --comprobar` falla. Esta comprobación puede tardar hasta 5 minutos.
+  - `voziris.exe --comprobar` falla. Esta comprobación puede tardar hasta 5 minutos;
+  - faltan las guías en `_internal/docs/` (las mete `build/voziris.spec`);
+  - no está WiX 5 con su extensión de interfaz (salvo con `--sin-msi`, que hace solo el ZIP).
 - **Escribe dentro del paquete:**
   - `Instalar Voziris.cmd`;
-  - la guía `LÉEME - Instalar Voziris.html`, que es una copia de `docs/LEEME-instalar.html`;
+  - la guía `LÉEME - Instalar Voziris.html`, que es `docs/LEEME-instalar.html` con sus enlaces a la otra guía apuntando a `_internal/docs/`;
   - `_internal/voziris-versiones.txt`;
   - el manifiesto, `_internal/voziris-manifiesto.txt`.
-- **Deja `voziris-<X.Y.Z>-win64.zip` y `SHA256SUMS.txt` en `$BUILD/dist`.** `SHA256SUMS.txt` lleva finales de línea LF. Con CRLF, `sha256sum -c` falla aunque el hash sea el bueno.
-- **Pone el hash en `docs/notas-release.md`.**
+- **Hace el MSI, `voziris-<X.Y.Z>-win64.msi`, con `tools/hacer_msi.py`** (VOZ-88). Extrae el ZIP recién hecho y empaqueta eso con la receta `build/voziris.wxs`, así que lleva lo mismo. Tarda un par de minutos. Antes de darlo por bueno lee sus tablas: mismos archivos y bytes que el ZIP, sin las acciones que lo registrarían en Windows, y con la que arranca `voziris.exe --instalar`. Con el paquete de la 0.1.3 salió de 76 MB, frente a los 99 MB del ZIP.
+- **Deja `voziris-<X.Y.Z>-win64.zip`, el `.msi` y `SHA256SUMS.txt` en `$BUILD/dist`.** `SHA256SUMS.txt` lleva las dos líneas, con finales LF. Con CRLF, `sha256sum -c` falla aunque el hash sea el bueno.
+- **Pone los dos hashes en `docs/notas-release.md`.**
 
-Cada ejecución da un hash distinto, porque `voziris-versiones.txt` lleva la fecha y la hora. Por eso el hash se guarda en un commit después del último empaquetado.
+Cada ejecución da hashes distintos, porque `voziris-versiones.txt` lleva la fecha y la hora, y cada MSI lleva un código de producto nuevo. Por eso los hashes se guardan en un commit después del último empaquetado.
 
 ```bash
-cd "$BUILD/dist" && sha256sum -c SHA256SUMS.txt     # voziris-<X.Y.Z>-win64.zip: OK
+cd "$BUILD/dist" && sha256sum -c SHA256SUMS.txt     # el .zip y el .msi: OK
 "$BUILD/dist/voziris/voziris.exe" --version         # voziris <X.Y.Z>
 stat -c %s "$BUILD/dist/voziris-$V-win64.zip"       # menos de 200 MB (la 0.1.1: 99.873.409 bytes)
+stat -c %s "$BUILD/dist/voziris-$V-win64.msi"       # menos que el ZIP
 cd "$REL" && git status --short                     # solo docs/notas-release.md
-grep -A1 "^SHA-256  voziris-$V-win64.zip" docs/notas-release.md   # el mismo hash que SHA256SUMS.txt
-git add docs/notas-release.md && git commit -m "Notas $V: SHA-256 del ZIP"
+grep -A1 "^SHA-256  voziris-$V-win64" docs/notas-release.md   # los mismos hashes que SHA256SUMS.txt
+git add docs/notas-release.md && git commit -m "Notas $V: SHA-256 de los paquetes"
 ```
 
 `voziris.exe` no tiene consola, pero si se lanza desde Git Bash escribe por la tubería. `--version` termina sin abrir nada y sin tocar la Voziris que esté abierta.
@@ -212,15 +229,32 @@ done
 
 No prueba `Instalar Voziris.cmd` ni `voziris.exe --instalar`: ni la ventana de progreso, ni cerrar y reabrir la Voziris abierta, ni el arranque por el acceso de Inicio. Eso va en la máquina limpia (6.3).
 
+**6.1 bis. El MSI, sin instalar nada**, con `tools/probar_msi.py` (VOZ-88). Abre una copia del MSI en silencio (`msiexec /qn LANZAR=0`), marcada como recién descargada. Windows Installer deja el paquete en `%TEMP%\voziris-actualizacion\msi-<X.Y.Z>-<PID>` y no arranca el instalador de Voziris: no sale ninguna ventana y no se tocan la Voziris abierta, el menú Inicio ni «Aplicaciones instaladas». Comprueba que el paquete está entero (manifiesto con hashes), que ningún archivo hereda la marca de Internet, que `voziris.exe --comprobar` carga todo desde ahí y que Windows Installer no ha apuntado el producto. Al terminar borra la carpeta. Sale con 0 si todo cuadra.
+
+```bash
+cd "$REL"
+PYTHONPATH="$PWD/src" "$PY" tools/probar_msi.py "$BUILD/dist/voziris-$V-win64.msi"
+```
+
+Con el paquete de la 0.1.3: 4 segundos de `msiexec`, 1183 archivos del manifiesto, y todo cuadró.
+
+Hay dos cosas que esta prueba no ve, y son las que hay que mirar a mano antes de publicar un MSI por primera vez **(sin probar)**:
+
+- **El asistente con sus ventanas.** Doble clic en el `.msi`: las condiciones se leen enteras y con sus tildes, no deja pulsar «Instalar» sin aceptarlas, la barra avanza y el último diálogo dice que la instalación sigue en otra ventana.
+- **El relevo al instalador.** Al acabar el asistente tiene que abrirse sola la ventana «Instalando Voziris», terminar con «Voziris instalado» y, sin clave de API, preguntar si se abre la guía. El registro queda en `%LOCALAPPDATA%\Programs\Voziris\voziris-instalar.log`, también en un equipo que nunca ha tenido Voziris.
+
+Esto instala de verdad: cierra la Voziris abierta y escribe en el registro del usuario. Se hace en un equipo o usuario de pruebas, o en el de Alfonso solo con su sí, y lo lanza él desde el Explorador (ver la tercera trampa de «Antes de empezar»). Vale el mismo truco de 6.2 bis: un paquete compilado con `__version__` en `0.0.1` deja luego volver a la publicada con «Actualizar».
+
 **6.2. Verificación independiente.** En la 0.1.1 se hicieron tres revisiones por separado, sin que ninguna viera el trabajo de las otras. Encontraron un fallo real (el instalador pisaba el historial) y frases falsas en las notas. Una sesión de Claude las lanza como tres subagentes en paralelo; Alfonso se las pide a una sesión de Claude.
 
-1. **El ZIP tal como lo recibe alguien.** Comprueba que:
-   - el hash cuadra con `SHA256SUMS.txt`;
+1. **El ZIP y el MSI tal como los recibe alguien.** Comprueba que:
+   - los hashes cuadran con `SHA256SUMS.txt`;
    - en una carpeta nueva con el ZIP extraído, `./voziris.exe --comprobar` da una línea «bien» por cada prueba y sale con 0;
-   - el ZIP trae `Instalar Voziris.cmd`, el LÉEME y el manifiesto;
-   - no trae `config.toml`, `modelos/`, `historial/` ni registros.
+   - el ZIP trae `Instalar Voziris.cmd`, el LÉEME y el manifiesto, y dentro de `_internal/docs/`, las dos guías;
+   - no trae `config.toml`, `modelos/`, `historial/` ni registros;
+   - el MSI pasa `tools/probar_msi.py` (6.1 bis).
 2. **La actualización** desde cada versión que pueda estar instalada, con 6.1 o con una prueba equivalente escrita a partir de `src/voziris/instalador.py`.
-3. **Las notas contra el código.** Cada frase de `docs/notas-release.md`, y de `docs/LEEME-instalar.html` si ha cambiado, se contrasta con el código y con `git diff v<anterior>..HEAD`. Lo que no se sostenga, se quita.
+3. **Las notas contra el código.** Cada frase de `docs/notas-release.md`, y de `docs/LEEME-instalar.html`, `docs/GUIA-api.html` y `CONDICIONES.md` si han cambiado, se contrasta con el código y con `git diff v<anterior>..HEAD`. Lo que no se sostenga, se quita. En las condiciones, lo primero: qué sale del equipo y qué se guarda.
 
 **6.2 bis. La actualización desde la bandeja (desde la 0.1.2).** Es la única parte que no se puede arreglar después de publicar. Si `--actualizar` de una versión falla, publicar otra no lo arregla, porque es la versión instalada la que descarga. Se prueba contra la release viva sin publicar nada:
 
@@ -268,7 +302,7 @@ Hay dos cosas que confunden si el instalador es el de la 0.1.2 o anterior. VOZ-8
 
 Si algo falla, el arreglo va en la rama: commit y vuelta al paso 3. Hay que volver a compilar y a empaquetar, y el hash cambia.
 
-Si solo cambia el LÉEME, basta con repetir el paso 5 sobre el mismo build, porque lo copia `empaquetar.py`. Así se hizo en la 0.1.2. Compara después los dos ZIP: solo tienen que cambiar el LÉEME, la fecha de `voziris-versiones.txt` y su línea del manifiesto.
+Si solo cambia el LÉEME, bastaba con repetir el paso 5 sobre el mismo build, porque lo copia `empaquetar.py`. Así se hizo en la 0.1.2. **Desde VOZ-88 ya no basta:** las guías van también dentro de `_internal/docs/`, y esas las pone PyInstaller. Si cambia una guía, se vuelve a compilar (paso 4).
 
 ### 7. PR y fusión
 
@@ -304,10 +338,13 @@ git diff --stat "release-$V" origin/main      # vacío
 git ls-remote --tags origin "v$V"             # vacío: la etiqueta aún no existe
 MAIN=$(git rev-parse origin/main)
 { cat docs/notas-release.md; printf '\nCompilado desde `main` en el commit `%s`.\n' "${MAIN:0:7}"; } > "$BUILD/notas-v$V.md"
-gh release create "v$V" "$BUILD/dist/voziris-$V-win64.zip" "$BUILD/dist/SHA256SUMS.txt" \
+gh release create "v$V" "$BUILD/dist/voziris-$V-win64.msi" "$BUILD/dist/voziris-$V-win64.zip" \
+  "$BUILD/dist/SHA256SUMS.txt" \
   -R alfonsosanzme/voziris --target "$MAIN" --title "Voziris v$V" \
   --notes-file "$BUILD/notas-v$V.md" --latest
 ```
+
+- **Los tres archivos, siempre.** El MSI es lo que descarga quien llega de nuevas; el ZIP y `SHA256SUMS.txt` son los que usan las instaladas para actualizarse.
 
 - **`--target` lleva el SHA completo.** Con el SHA abreviado, GitHub contesta 422 «target_commitish is invalid», como pasó en la 0.1.1.
 - **`gh` crea la etiqueta `v<X.Y.Z>` sobre ese commit.** Las etiquetas de la 0.1.0 y de la 0.1.1 se crearon así, y son ligeras, no anotadas.
@@ -325,6 +362,14 @@ gh release list -R alfonsosanzme/voziris                 # v<X.Y.Z> como «Lates
 
 `digest` es el SHA-256 que calcula GitHub del asset subido, y también tiene que coincidir.
 
+Lo mismo con el MSI **(sin probar)**:
+
+```bash
+URL_MSI="https://github.com/alfonsosanzme/voziris/releases/download/v$V/voziris-$V-win64.msi"
+curl -sIL "$URL_MSI" | grep -i -E '^HTTP|^content-length'
+curl -sL "$URL_MSI" | sha256sum                          # el hash de SHA256SUMS.txt
+```
+
 Comprueba también que Voziris la ve como la verán los equipos (VOZ-82). Desde el worktree, con `PYTHONPATH=src`:
 
 ```bash
@@ -332,6 +377,8 @@ PYTHONPATH=src "$PY" -c "from voziris import actualizaciones as a; n = a.consult
 ```
 
 Tiene que salir `Novedad(version='<X.Y.Z>', …)` con las URL de esta release, y `True`. Con `False`, a la release le falta el ZIP o `SHA256SUMS.txt` con su nombre exacto. Comprobado con la 0.1.2, preguntando desde la 0.1.1.
+
+**Opcional: mandar los archivos a Microsoft para que los analice (sin probar).** Voziris no está firmado, y Defender marca a veces como sospechosos los `.exe` de PyInstaller. Microsoft admite envíos de desarrolladores en https://www.microsoft.com/en-us/wdsi/filesubmission («Software developer»): se sube el archivo y, si lo había marcado, se indica el nombre de la detección. No tiene coste ni plazo garantizado. Lo hace Alfonso con su cuenta; una sesión de Claude no sube nada por él.
 
 ### 10. La web: el enlace de kairis.es
 
@@ -353,6 +400,8 @@ echo $(( ( $(stat -c %s "$BUILD/dist/voziris-$V-win64.zip") + 524288 ) / 1048576
 ```
 
 Revisa también la `nota` del mismo objeto. `grep -n "0\.1\." "$WEB/data/blog.json"` encuentra las versiones que se mencionan en el texto.
+
+**Desde la primera versión con MSI, el botón apunta al `.msi` (sin probar):** es lo que tiene que descargar quien llega de nuevas, porque no hay nada que extraer. La `url` y el `peso` son los del MSI, y la `nota` y el texto del post dejan de hablar de extraer un ZIP: dicen que se abre con doble clic y cómo pasar el aviso de «Windows protegió su PC». El ZIP sigue en la página de la release para quien lo quiera portable. Es un cambio de texto del post, no solo del enlace: enséñaselo a Alfonso antes.
 
 **Quién lo hace.** Tú o una sesión que abras en `$WEB`, siguiendo el `CLAUDE.md` de ese repositorio. La web no tiene sesión fija: «WEB Kairis», que cambió el enlace de la 0.1.1 (commit `a3229f7`), está archivada y su carpeta es la de antes, así que no le pases encargos. El enlace de la 0.1.2 (`cd886a5`) se cambió desde la sesión principal de Voziris, también con el OK de Alfonso para desplegar.
 
@@ -415,10 +464,13 @@ Lo anterior pasa a una subcarpeta `anterior-<fecha>`, con la fecha del ZIP que s
 cd "$COMPARTIR"
 DEST="anterior-$(date -r "voziris-$ANT-win64.zip" +%F)"
 mkdir "$DEST"                 # si ya existe, añade un sufijo (hay una «anterior-2026-10-07-prueba-voz81»)
-mv voziris-*-win64.zip SHA256SUMS.txt "LÉEME - Instalar Voziris.html" "$DEST/"
-cp "$BUILD/dist/voziris-$V-win64.zip" "$BUILD/dist/SHA256SUMS.txt" "$BUILD/dist/voziris/LÉEME - Instalar Voziris.html" .
-sha256sum -c SHA256SUMS.txt   # voziris-<X.Y.Z>-win64.zip: OK
+mv voziris-*-win64.* SHA256SUMS.txt "LÉEME - Instalar Voziris.html" "$DEST/"
+cp "$BUILD/dist/voziris-$V-win64.msi" "$BUILD/dist/voziris-$V-win64.zip" "$BUILD/dist/SHA256SUMS.txt" \
+  "$BUILD/dist/voziris/LÉEME - Instalar Voziris.html" .
+sha256sum -c SHA256SUMS.txt   # el .msi y el .zip: OK
 ```
+
+Para pasarlo a mano a alguien, basta el `.msi`. El LÉEME de esta carpeta enlaza la guía de la API dentro del ZIP (`_internal/docs/`): suelto, ese enlace no abre nada, y a quien instala con el MSI las dos guías le salen en el menú de la bandeja → Ayuda.
 
 ### 12. Actualizar los equipos
 
@@ -427,6 +479,17 @@ Hay que actualizar el tuyo y avisar a quien lo use: está en el apartado siguien
 Al terminar, puedes quitar el worktree con `git worktree remove "$REL"`. `$BUILD` ya no hace falta cuando el ZIP está en la release y en `compartir/`.
 
 ## Actualizar los equipos
+
+### Con el instalador (desde la primera versión con MSI)
+
+Descarga `voziris-<X.Y.Z>-win64.msi`, de la release o de `compartir/`, y ábrelo con doble clic. No hay que desbloquear ni extraer nada. Tras aceptar las condiciones, deja el paquete en una carpeta temporal y arranca `voziris.exe --instalar`: desde ahí todo es igual que en «Si Voziris está instalada», más abajo, y se conservan `config.toml`, `modelos/` e `historial/`.
+
+- Vale para instalar de nuevas y para actualizar cualquier versión instalada, porque quien instala es el instalador de la versión nueva.
+- **No aparece en «Aplicaciones instaladas» como algo aparte**, ni Windows Installer lo recuerda: abrirlo otra vez es instalar otra vez. La entrada que hay es la de Voziris.
+- La carpeta temporal (`%TEMP%\voziris-actualizacion\msi-…`, unos 230 MB) la borra la siguiente Voziris que arranque, pasada una hora, igual que la de «Actualizar».
+- Si Windows enseña «Windows protegió su PC»: «Más información» → «Ejecutar de todas formas». Con Control inteligente de aplicaciones activado puede bloquearlo sin dar opción: entonces, el ZIP sin instalar (más abajo).
+
+### Con el ZIP
 
 Hay tres pasos comunes a todos los casos:
 
@@ -486,8 +549,8 @@ Quien tenga la 0.1.2 o posterior y aceptara la comprobación recibe el aviso en 
 
 > Hay versión nueva de Voziris, la <X.Y.Z>: <una línea con lo que trae>. Se descarga aquí: <URL de la release> (el SHA-256 está en las notas).
 >
-> - Si lo tienes instalado: extrae el ZIP entero en una carpeta nueva y abre «Instalar Voziris.cmd». Se conservan tu configuración, el modelo y el historial.
-> - Si lo usas sin instalar: cierra el viejo, copia `config.toml`, `modelos` e `historial` a la carpeta nueva y abre el nuevo.
+> - Si lo tienes instalado: descarga el archivo `.msi` y ábrelo con doble clic. Se conservan tu configuración, el modelo y el historial.
+> - Si lo usas sin instalar: descarga el ZIP, extráelo en una carpeta nueva, cierra el viejo, copia `config.toml`, `modelos` e `historial` a la carpeta nueva y abre el nuevo.
 > - Si Windows lo bloquea, mira el apartado «Si Windows lo bloquea» del LÉEME.
 >
 > Si algo falla, mándame el diagnóstico (bandeja → Guardar diagnóstico…).
@@ -565,14 +628,16 @@ Volver a la versión anterior es instalar su ZIP, que sigue en su release.
   Cada frase está contrastada con el código.
 - [ ] La suite (sin las dos pruebas de la bandeja), `ruff` y `mypy` están en verde.
 - [ ] El paquete está compilado desde un árbol limpio, en `C:\dev` (fuera de OneDrive y de `%LOCALAPPDATA%`), y el worktree es lo primero en las rutas de PyInstaller.
-- [ ] `empaquetar.py` ha terminado sin errores, `sha256sum -c` da OK y `--version` dice <X.Y.Z>.
-- [ ] El hash está en un commit, en las notas, junto al nombre del ZIP nuevo.
-- [ ] `tools/probar_instalacion.py` pasa desde cero y encima de cada versión publicada, y las tres verificaciones independientes no dejan nada pendiente.
+- [ ] `empaquetar.py` ha terminado sin errores y ha dejado el ZIP y el MSI, `sha256sum -c` da OK en los dos y `--version` dice <X.Y.Z>.
+- [ ] Los dos hashes están en un commit, en las notas, cada uno junto al nombre de su paquete.
+- [ ] `tools/probar_instalacion.py` pasa desde cero y encima de cada versión publicada, `tools/probar_msi.py` pasa con el MSI, y las tres verificaciones independientes no dejan nada pendiente.
+- [ ] El asistente del MSI y su relevo al instalador se han visto con ventanas (6.1 bis), o Alfonso ha decidido no exigirlo.
+- [ ] Las condiciones (`CONDICIONES.md` y el apartado 6 de la guía) siguen siendo verdad con el código de esta versión.
 - [ ] La prueba de «Actualizar» desde la bandeja (6.2 bis) ha salido bien contra la versión publicada.
 - [ ] La lista a mano de `docs/RELEASE.md` §4 está hecha, o Alfonso ha decidido no exigirla.
 - [ ] El PR está fusionado con squash, y `main` coincide con lo compilado (salvo las notas).
 - [ ] La release `v<X.Y.Z>`:
-  - [ ] tiene el ZIP y `SHA256SUMS.txt`;
+  - [ ] tiene el MSI, el ZIP y `SHA256SUMS.txt`;
   - [ ] apunta al SHA completo de `main`;
   - [ ] es «Latest»;
   - [ ] la anterior sigue publicada.
