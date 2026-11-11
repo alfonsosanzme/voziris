@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Receta de WiX (5.x) del instalador de un solo archivo de Voziris (VOZ-88).
+  La compila tools/hacer_msi.py, que le pasa las variables; no se usa a mano.
+
+  ESTE MSI NO INSTALA VOZIRIS: LO LLEVA. Dentro va lo mismo que en el ZIP. Lo
+  deja en una carpeta temporal y arranca desde ahí `voziris.exe -instalar` (con
+  dos guiones), que es el instalador de verdad: el mismo que lanza «Instalar
+  Voziris.cmd» y el mismo que usa «Actualizar» desde la bandeja. Así hay una
+  sola forma de instalar, la que ya comprueba el paquete, prueba la copia antes
+  de cambiar nada, cierra la Voziris abierta y sabe deshacerlo.
+
+  Lo que se gana frente al ZIP: nadie tiene que extraer mil archivos, y esos
+  archivos no nacen con la marca de «descargado de Internet» (medido: lo que
+  escribe Windows Installer no la hereda del .msi).
+
+  Decisiones que no son las de un MSI corriente, y por qué:
+
+  1. NO SE REGISTRA en Windows Installer (se suprimen RegisterProduct,
+     PublishProduct y compañía). Quien aparece en «Aplicaciones instaladas» es
+     Voziris, con su propio desinstalador. Si además se registrara este MSI,
+     habría dos entradas, y al volver a abrirlo después de desinstalar entraría
+     en «modo mantenimiento» sin instalar nada. Sin registro, abrirlo otra vez
+     es instalar otra vez, siempre.
+
+  2. CADA EJECUCIÓN, SU CARPETA (lleva el identificador del proceso que lo
+     lanza). Si los archivos ya estuvieran ahí de una pasada anterior, Windows
+     Installer se saltaría los que tienen versión y, aun sin registro, anotaría
+     cada uno en HKLM (RegisterSharedComponentProvider: medido). En una carpeta
+     nueva no hay nada que saltarse, y tampoco choca con un instalador anterior
+     que siga abierto.
+
+  3. LA CARPETA ESTÁ DENTRO DE %TEMP%\voziris-actualizacion, la de las
+     descargas de «Actualizar»: la siguiente Voziris que arranca, pasada una
+     hora, la borra (actualizaciones.limpiar_descargas). No hace falta código
+     nuevo para limpiar.
+
+  4. EL INSTALADOR SE LANZA DESDE LA SECUENCIA DE EJECUCIÓN, tras
+     InstallFinalize, y no desde el botón del último diálogo: así pasa igual con
+     ventanas que en silencio (msiexec /qn), que es como se prueba. Medido: el
+     proceso arranca con el usuario y su entorno (LOCALAPPDATA, APPDATA), sin
+     elevar. Su ventana de progreso va «siempre encima», así que se ve aunque
+     Windows no le dé el foco.
+
+  Para probarlo sin instalar nada: msiexec /i voziris-X.msi /qn LANZAR=0 deja
+  el paquete en la carpeta temporal y no arranca el instalador.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Voziris"
+           Manufacturer="$(var.Editor)"
+           Version="$(var.Version)"
+           UpgradeCode="{87148DCB-5EF6-4003-AA5E-3A67C8409D2D}"
+           UpgradeStrategy="none"
+           Scope="perUser"
+           Language="3082"
+           Codepage="1252"
+           Compressed="yes"
+           InstallerVersion="500">
+    <SummaryInformation Description="Instalador de Voziris $(var.Version)"
+                        Manufacturer="$(var.Editor)" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Sin punto de restauración: no se cambia nada del sistema. -->
+    <Property Id="MSIFASTINSTALL" Value="1" />
+
+    <StandardDirectory Id="TempFolder">
+      <Directory Id="VozirisDescargas" Name="voziris-actualizacion">
+        <Directory Id="VozirisTanda" Name="msi-$(var.Version)">
+          <Directory Id="PAQUETE" Name="voziris" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <!-- Ver la decisión 2. Si alguien pasa PAQUETE=… en la línea de órdenes, manda eso. -->
+    <SetProperty Id="PAQUETE"
+                 Value="[TempFolder]voziris-actualizacion\msi-$(var.Version)-[CLIENTPROCESSID]\voziris\"
+                 Before="CostFinalize"
+                 Sequence="execute"
+                 Condition="NOT PAQUETE" />
+
+    <Feature Id="Voziris" Title="Voziris" Level="1">
+      <Files Directory="PAQUETE" Include="$(var.Paquete)\**" />
+    </Feature>
+
+    <!-- Como `_actualizar_cli`: el registro del instalador, en la carpeta de la instalación;
+         la del paquete es temporal y se borra. -->
+    <CustomAction Id="LanzarInstalador"
+                  Directory="PAQUETE"
+                  ExeCommand="&quot;[PAQUETE]voziris.exe&quot; --config &quot;[LocalAppDataFolder]Programs\Voziris\config.toml&quot; --instalar"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LanzarInstalador" After="InstallFinalize" Condition="NOT (LANZAR = &quot;0&quot;)" />
+      <!-- Ver la decisión 1. -->
+      <ProcessComponents Suppress="yes" />
+      <RegisterUser Suppress="yes" />
+      <RegisterProduct Suppress="yes" />
+      <PublishFeatures Suppress="yes" />
+      <PublishProduct Suppress="yes" />
+    </InstallExecuteSequence>
+
+    <!-- Las condiciones (CONDICIONES.md, pasadas a RTF) hay que aceptarlas para instalar. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.Condiciones)" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.Dialogo)" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.Banner)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="!(loc.VozirisDespues)" />
+    <ui:WixUI Id="WixUI_Minimal" />
+  </Package>
+</Wix>

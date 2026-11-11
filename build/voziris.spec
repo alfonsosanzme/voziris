@@ -51,7 +51,12 @@ a = Analysis(
         (os.path.join(RAIZ, "config.ejemplo.toml"), "."),
         (os.path.join(RAIZ, "ATRIBUCIONES.md"), "."),   # obligación de CC-BY-4.0: viaja con el binario
         (os.path.join(RAIZ, "LICENSE"), "."),
+        (os.path.join(RAIZ, "CONDICIONES.md"), "."),    # las que se aceptan al instalar con el MSI
         (os.path.join(RAIZ, "assets"), "assets"),
+        # VOZ-88: las guías van dentro, para abrirlas desde el menú «Ayuda» y al terminar
+        # de instalar (config.ruta_de_guia). Quien instala con el MSI no ve la carpeta.
+        (os.path.join(RAIZ, "docs", "LEEME-instalar.html"), "docs"),
+        (os.path.join(RAIZ, "docs", "GUIA-api.html"), "docs"),
     ] + METADATOS + DATOS_ONNX_ASR,
     hiddenimports=[
         "onnx_asr",

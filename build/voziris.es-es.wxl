@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Los textos del asistente que no valen tal como los trae WiX (VOZ-88). El resto
+  sale de su traducción al español. Los identificadores son los de la extensión
+  WixToolset.UI.wixext 5.0.2.
+
+  El último diálogo no puede decir «instalación completada»: cuando sale, el
+  instalador de Voziris acaba de arrancar y todavía le queda copiar y comprobar.
+-->
+<WixLocalization Culture="es-ES" Codepage="1252" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="WelcomeEulaDlgTitle" Value="{\WixUI_Font_Title}Condiciones de uso y privacidad de [ProductName]" />
+  <String Id="WelcomeEulaDlgLicenseAcceptedCheckBox" Value="&amp;He leído y acepto estas condiciones" />
+
+  <String Id="ProgressDlgTitleInstalling" Value="{\WixUI_Font_Title}Preparando [ProductName]" />
+  <String Id="ProgressDlgTextInstalling" Value="Se están copiando los archivos del programa. Suele tardar menos de un minuto." />
+
+  <String Id="ExitDialogTitle" Value="{\WixUI_Font_Bigger}[ProductName] se está terminando de instalar" />
+  <String Id="ExitDialogDescription" Value="En unos segundos se abre otra ventana, «Instalando Voziris», que termina la instalación y avisa cuando acaba." />
+  <String Id="VozirisDespues" Value="La primera vez puede tardar hasta medio minuto en aparecer, mientras el antivirus revisa el programa. Si no sale, vuelve a abrir este instalador.&#13;&#10;&#13;&#10;Al terminar, Voziris se queda junto al reloj, con un icono de micrófono. Esta ventana ya se puede cerrar." />
+  <String Id="WixUIFinish" Value="&amp;Cerrar" />
+</WixLocalization>

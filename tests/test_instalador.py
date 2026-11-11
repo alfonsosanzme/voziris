@@ -1017,7 +1017,7 @@ def test_comprobar_arrancando_con_un_archivo_que_falta_da_solo_la_causa(
         "ok": False, "bloqueado": False,
         "pruebas": [
             {"nombre": "paquete", "ok": False, "resumen": r"Falta _internal\av.libs\x.dll",
-             "detalle": r"Falta _internal\av.libs\x.dll. Vuelve a extraer el ZIP entero"},
+             "detalle": rf"Falta _internal\av.libs\x.dll. {integridad.POR_QUE_FALTAN}"},
             {"nombre": "av", "ok": False, "detalle": "No se pudo cargar PyAV. Falta x.dll"},
         ],
     }
@@ -1026,7 +1026,7 @@ def test_comprobar_arrancando_con_un_archivo_que_falta_da_solo_la_causa(
         instalador.comprobar_arrancando(tmp_path / "Voziris.nuevo" / "voziris.exe")
     mensaje = str(fallo.value)
     assert r"Falta _internal\av.libs\x.dll." in mensaje
-    assert "extraer el ZIP" not in mensaje  # el origen estaba bien: es la copia
+    assert "ZIP" not in mensaje and ".msi" not in mensaje  # el origen estaba bien: es la copia
     assert f"excepción para {tmp_path / 'Voziris'} " in mensaje
     assert "problema(s) más" not in mensaje
 

@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conectar la API de Groq a Voziris</title>
+<style>
+  :root {
+    --fondo: #fbfaf7; --texto: #1f1d1a; --suave: #5f5a52; --linea: #e4e0d8;
+    --caja: #f2efe8; --acento: #3d5a80; --aviso: #fff4d6; --aviso-borde: #e0b84c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #1b1a18; --texto: #ece8e1; --suave: #a8a298; --linea: #36332e;
+      --caja: #26241f; --acento: #8fb3e0; --aviso: #3a3220; --aviso-borde: #b8913a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font: 17px/1.6 "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--linea); }
+  h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+  .sub { color: var(--suave); margin: 0 0 24px; }
+  a { color: var(--acento); overflow-wrap: break-word; }
+  kbd {
+    font: 600 0.85em "Segoe UI", sans-serif; background: var(--caja);
+    border: 1px solid var(--linea); border-bottom-width: 2px; border-radius: 5px;
+    padding: 1px 6px; white-space: nowrap;
+  }
+  code { font-family: Consolas, monospace; font-size: 0.9em; background: var(--caja); padding: 1px 5px; border-radius: 4px; }
+  ol.pasos { padding-left: 0; list-style: none; counter-reset: paso; }
+  ol.pasos > li {
+    counter-increment: paso; position: relative; padding: 14px 16px 14px 58px;
+    margin: 10px 0; background: var(--caja); border-radius: 10px;
+  }
+  ol.pasos > li::before {
+    content: counter(paso); position: absolute; left: 16px; top: 13px;
+    width: 28px; height: 28px; border-radius: 50%; background: var(--acento);
+    color: var(--fondo); font-weight: 700; text-align: center; line-height: 28px;
+  }
+  .aviso {
+    background: var(--aviso); border-left: 4px solid var(--aviso-borde);
+    padding: 10px 14px; border-radius: 6px; margin: 14px 0;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  th { color: var(--suave); font-weight: 600; font-size: 0.9em; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .indice { background: var(--caja); border-radius: 10px; padding: 12px 18px; }
+  .indice a { text-decoration: none; }
+
+  /* «Conectar la API», resumido en tres pastillas. */
+  .resumen { margin: 0 0 8px; }
+  .resumen span {
+    display: inline-block; margin: 3px 2px; padding: 3px 14px; border-radius: 999px;
+    background: var(--caja); border: 1px solid var(--linea); font-weight: 600;
+  }
+
+  /* Los pasos de esta guía: número grande, una orden y su dibujo a todo el ancho. */
+  ol.pasos.sigue { counter-reset: paso 3; }
+  ol.pasos.grandes > li { padding: 20px; margin: 18px 0; border-radius: 12px; }
+  ol.pasos.grandes > li::before {
+    left: 20px; top: 18px; width: 42px; height: 42px; line-height: 42px; font-size: 1.35rem;
+  }
+  ol.pasos.grandes > li > p { margin: 0 0 6px; padding-left: 58px; }
+  ol.pasos.grandes > li > .orden { font-size: 1.14rem; line-height: 1.4; min-height: 42px; padding-top: 6px; }
+  ol.pasos.grandes .aviso, .suelto .aviso { margin: 14px 0 0; }
+  .suelto { background: var(--caja); border-radius: 12px; padding: 20px; margin: 18px 0; }
+  .suelto > p, .suelto > ul { margin-top: 0; margin-bottom: 8px; }
+  .num {
+    display: inline-block; width: 1.55em; height: 1.55em; line-height: 1.55em; border-radius: 50%;
+    background: var(--acento); color: var(--fondo); font-size: 0.72em; font-weight: 700;
+    text-align: center; vertical-align: 0.14em;
+  }
+
+  /* Las dos tarjetas de «Por qué conectarla». */
+  .tarjetas { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 26px 0 18px; }
+  .tarjeta {
+    position: relative; background: var(--caja); border: 2px solid var(--linea);
+    border-radius: 12px; padding: 20px 18px 14px;
+  }
+  .tarjeta.recomendada { border-color: var(--acento); }
+  .tarjeta h3 { font-size: 1.2rem; margin: 0; }
+  .tarjeta .sub { margin: 0 0 12px; font-size: 0.92em; }
+  .tarjeta svg { max-width: 320px; margin: 0 auto 6px; }
+  .sello {
+    position: absolute; top: -14px; right: 16px; margin: 0; padding: 1px 14px; border-radius: 999px;
+    background: var(--acento); color: var(--fondo); font-size: 0.82em; font-weight: 700;
+  }
+  .grupo {
+    margin: 12px 0 2px; color: var(--suave); font-size: 0.78em; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .tarjeta ul { list-style: none; margin: 0; padding: 0; }
+  .tarjeta li { position: relative; margin: 6px 0; padding-left: 26px; line-height: 1.45; }
+  .tarjeta li::before { position: absolute; left: 2px; top: 0; font-weight: 700; }
+  .tarjeta .si li::before { content: "✓"; color: var(--acento); }
+  .tarjeta .no li::before { content: "–"; color: var(--suave); }
+
+  /* Los límites del plan gratuito, en grande. */
+  .cifras { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 14px 0 8px; }
+  .cifras div { background: var(--caja); border-radius: 10px; padding: 12px 14px; line-height: 1.35; }
+  .cifras strong { display: block; color: var(--acento); font-size: 1.6rem; line-height: 1.2; }
+
+  /* Dibujos: esquemas en SVG. Sus colores salen de las mismas variables que la página.
+     w ventana · c barra de la ventana · k botón · e campo · p relleno («aquí hay algo») · d raya
+     o trazo suave · i trazo del color del texto · t trazo grueso · z relleno del color del texto
+     h lo que hay que pulsar · m círculo del número · n el número · a flecha · x nota de la guía
+     s texto suave · b seminegrita · g 13 px · u 16 px · r centrado · f a la derecha · q Consolas */
+  figure { margin: 16px 0 0; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-size: 14px; fill: currentColor; }
+  svg .w { fill: var(--fondo); stroke: var(--suave); stroke-width: 1.5; }
+  svg .c { fill: var(--caja); }
+  svg .k { fill: var(--caja); stroke: var(--suave); stroke-opacity: 0.55; stroke-width: 1.2; }
+  svg .e { fill: var(--fondo); stroke: var(--suave); stroke-opacity: 0.55; stroke-width: 1.2; }
+  svg .p { fill: var(--suave); fill-opacity: 0.28; }
+  svg .d { fill: none; stroke: var(--suave); stroke-opacity: 0.35; stroke-width: 1.2; }
+  svg .o { fill: none; stroke: var(--suave); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  svg .i { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  svg .t { stroke-width: 3.5; }
+  svg .z { fill: currentColor; }
+  svg .h { fill: var(--acento); fill-opacity: 0.16; stroke: var(--acento); stroke-width: 2.5; }
+  svg .m { fill: var(--acento); }
+  svg .n { fill: var(--fondo); font-weight: 700; text-anchor: middle; }
+  svg .a { fill: none; stroke: var(--acento); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  svg .x { fill: var(--acento); font-weight: 600; }
+  svg .s { fill: var(--suave); }
+  svg .b { font-weight: 600; }
+  svg .g { font-size: 13px; }
+  svg .u { font-size: 16px; }
+  svg .r { text-anchor: middle; }
+  svg .f { text-anchor: end; }
+  svg .q { font-family: Consolas, monospace; }
+
+  @media (max-width: 620px) {
+    .tarjetas { grid-template-columns: 1fr; gap: 26px; }
+  }
+  @media (max-width: 480px) {
+    ol.pasos.grandes > li, .suelto { padding: 14px; }
+    ol.pasos.grandes > li::before { left: 14px; top: 13px; width: 34px; height: 34px; line-height: 34px; font-size: 1.15rem; }
+    ol.pasos.grandes > li > p { padding-left: 46px; }
+    ol.pasos.grandes > li > .orden { font-size: 1.06rem; min-height: 34px; padding-top: 4px; }
+    .cifras { grid-template-columns: 1fr; }
+  }
+  @media print {
+    :root {
+      --fondo: #fff; --texto: #000; --suave: #444; --linea: #bbb;
+      --caja: #f4f4f4; --acento: #2f4a6d; --aviso: #fff; --aviso-borde: #b8913a;
+    }
+    body { font-size: 11pt; }
+    main { max-width: none; padding: 0; }
+    .indice { display: none; }
+    h2, h3, .orden { break-after: avoid; page-break-after: avoid; }
+    ol.pasos > li, .suelto, .tarjeta, .cifras, .aviso, figure, tr { break-inside: avoid; page-break-inside: avoid; }
+    ol.pasos > li, .suelto, .cifras div { border: 1px solid var(--linea); }
+    ol.pasos > li::before, .num, .sello { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Conectar la API de Groq a Voziris</h1>
+<p class="sub">Cinco minutos, gratis, y Voziris transcribe mejor.</p>
+
+<div class="indice">
+  <a href="#porque">Por qué conectarla</a> ·
+  <a href="#pasos">Paso a paso</a> ·
+  <a href="#limpieza">Limpieza con IA (opcional)</a> ·
+  <a href="#saber">Lo que conviene saber</a> ·
+  <a href="#problemas">Si algo no sale</a>
+</div>
+
+<section id="porque">
+<h2>Por qué conectarla</h2>
+
+<p>Voziris funciona sin configurar nada, porque trae un <strong>motor local</strong>: reconoce tu voz en el propio equipo. Ese motor es <strong>el de emergencia</strong>: siempre está ahí, pero es más limitado. <strong>Lo ideal es conectar la API de Groq</strong>, un servicio en internet con plan gratuito que transcribe mejor.</p>
+<p>«Conectar la API» suena técnico, pero es solo esto:</p>
+<p class="resumen"><span>Crear una cuenta en Groq</span> → <span>Copiar una clave</span> → <span>Pegarla en Voziris</span></p>
+
+<div class="tarjetas">
+  <section class="tarjeta" aria-labelledby="t-local">
+    <h3 id="t-local">Motor local</h3>
+    <p class="sub">El que viene de serie</p>
+    <svg viewBox="0 0 300 96" role="img" aria-labelledby="d-local">
+      <title id="d-local">Con el motor local, la voz se convierte en texto dentro de tu equipo.</title>
+      <rect class="w" x="90" y="6" width="120" height="56" rx="7"/>
+      <path class="o t" d="M74 70h152"/>
+      <rect class="i" x="115" y="19" width="10" height="17" rx="5"/>
+      <path class="i" d="M110.5 30v1.5q0 9.5 9.5 9.5t9.5-9.5V30M120 41v5.5M115 46.5h10"/>
+      <path class="o" d="M139 34h17M150 28l6 6-6 6"/>
+      <rect class="p" x="167" y="22" width="32" height="6" rx="3"/>
+      <rect class="p" x="167" y="32" width="24" height="6" rx="3"/>
+      <rect class="p" x="167" y="42" width="29" height="6" rx="3"/>
+      <text class="s g r" x="150" y="90">Tu equipo</text>
+    </svg>
+    <p class="grupo">A favor</p>
+    <ul class="si">
+      <li>Funciona sin internet.</li>
+      <li>El audio no sale de tu equipo.</li>
+    </ul>
+    <p class="grupo">A cambio</p>
+    <ul class="no">
+      <li>Es menos preciso: se equivoca más con nombres propios, palabras técnicas y cuando hablas bajo.</li>
+      <li>Usa el procesador y algo más de 1 GB de memoria de tu equipo.</li>
+      <li>Sin la API no hay limpieza del texto con IA.</li>
+    </ul>
+  </section>
+
+  <section class="tarjeta recomendada" aria-labelledby="t-api">
+    <p class="sello">Recomendada</p>
+    <h3 id="t-api">API de Groq</h3>
+    <p class="sub">La que conviene conectar</p>
+    <svg viewBox="0 0 300 96" role="img" aria-labelledby="d-api">
+      <title id="d-api">Con la API, tu equipo envía el audio a Groq por internet y recibe el texto.</title>
+      <rect class="w" x="14" y="10" width="84" height="46" rx="6"/>
+      <path class="o t" d="M4 64h104"/>
+      <rect class="i" x="51" y="18" width="10" height="17" rx="5"/>
+      <path class="i" d="M46.5 29v1.5q0 9.5 9.5 9.5t9.5-9.5V29M56 40v5.5M51 45.5h10"/>
+      <text class="s g r" x="56" y="90">Tu equipo</text>
+      <text class="s g r" x="145" y="21">audio</text>
+      <path class="o" d="M116 29h58M168 23l6 6-6 6"/>
+      <path class="o" d="M174 47h-58M122 41l-6 6 6 6"/>
+      <text class="s g r" x="145" y="66">texto</text>
+      <path class="w" d="M206 62C190 62 186 42 201 38C199 20 224 12 233 26C242 10 270 16 266 34C284 34 286 62 268 62Z"/>
+      <text class="b r" x="237" y="52">Groq</text>
+      <text class="s g r" x="237" y="90">En internet</text>
+    </svg>
+    <p class="grupo">A favor</p>
+    <ul class="si">
+      <li>Más precisa: usa el modelo Whisper large v3.</li>
+      <li>Permite además limpiar el texto con IA: quitar muletillas o arreglar «el martes, no, el jueves».</li>
+      <li>El plan gratuito sobra para dictar.</li>
+    </ul>
+    <p class="grupo">A cambio</p>
+    <ul class="no">
+      <li>Necesita internet. Sin conexión, Voziris usa el local automáticamente.</li>
+      <li>El audio de cada dictado se envía a Groq para transcribirlo.</li>
+    </ul>
+  </section>
+</div>
+
+<p>No tienes que elegir: conecta la API y el motor local se queda de reserva. Voziris pasa de uno a otro solo.</p>
+</section>
+
+<section id="pasos">
+<h2>Paso a paso</h2>
+
+<p>Son siete pasos. Los dibujos son esquemas, no fotos: lo que tienes que pulsar va resaltado y con un número, como <span class="num">1</span>, que es el mismo del texto. Los nombres en inglés son los de la web de Groq, tal cual los verás. Lo demás de sus pantallas está dibujado en español para que se entienda: en la web estará en inglés.</p>
+
+<h3>Primero, en la web de Groq</h3>
+<ol class="pasos grandes">
+  <li>
+    <p class="orden">Entra en <a href="https://console.groq.com">console.groq.com</a> <span class="num" aria-hidden="true">1</span> y crea tu cuenta <span class="num" aria-hidden="true">2</span>.</p>
+    <p>Puedes entrar con tu cuenta de Google. El plan gratuito no pide tarjeta.</p>
+    <figure>
+      <svg viewBox="0 0 640 310" role="img" aria-labelledby="d1">
+        <title id="d1">Ventana de navegador con la dirección console.groq.com y, en la página, un formulario para crear la cuenta.</title>
+        <rect class="w" x="10" y="10" width="620" height="290" rx="10"/>
+        <path class="c" d="M11 60V20Q11 11 20 11H620Q629 11 629 20V60Z"/>
+        <path class="d" d="M11 60H629"/>
+        <path class="o" d="M34 29l-7 7 7 7M52 29l7 7-7 7"/>
+        <rect class="e" x="86" y="23" width="388" height="26" rx="13"/>
+        <rect class="h" x="86" y="23" width="388" height="26" rx="13"/>
+        <text class="q" x="108" y="41">console.groq.com</text>
+        <circle class="m" cx="86" cy="36" r="11"/><text class="n" x="86" y="41">1</text>
+        <rect class="p" x="32" y="78" width="84" height="12" rx="6"/>
+        <rect class="h" x="190" y="84" width="260" height="202" rx="10"/>
+        <text class="b r u" x="320" y="117">Crea tu cuenta</text>
+        <rect class="k" x="214" y="132" width="212" height="36" rx="8"/>
+        <text class="r" x="320" y="155">Entrar con Google</text>
+        <path class="d" d="M214 188H302M338 188H426"/>
+        <text class="s g r" x="320" y="192">o</text>
+        <rect class="e" x="214" y="204" width="212" height="32" rx="6"/>
+        <text class="s g" x="226" y="225">tu correo electrónico</text>
+        <rect class="k" x="214" y="244" width="212" height="32" rx="8"/>
+        <text class="r" x="320" y="265">Continuar</text>
+        <circle class="m" cx="190" cy="84" r="11"/><text class="n" x="190" y="89">2</text>
+      </svg>
+    </figure>
+  </li>
+
+  <li>
+    <p class="orden">En el menú de la consola, entra en <strong>API Keys</strong> <span class="num" aria-hidden="true">1</span> y pulsa <strong>Create API Key</strong> <span class="num" aria-hidden="true">2</span>.</p>
+    <p>La página es <a href="https://console.groq.com/keys">console.groq.com/keys</a>.</p>
+    <figure>
+      <svg viewBox="0 0 640 290" role="img" aria-labelledby="d2">
+        <title id="d2">La consola de Groq: en el menú está resaltado «API Keys» y, en la página, el botón «Create API Key».</title>
+        <rect class="w" x="10" y="10" width="620" height="270" rx="10"/>
+        <path class="c" d="M11 60V20Q11 11 20 11H620Q629 11 629 20V60Z"/>
+        <path class="d" d="M11 60H629M11 112H629"/>
+        <path class="o" d="M34 29l-7 7 7 7M52 29l7 7-7 7"/>
+        <rect class="e" x="86" y="23" width="388" height="26" rx="13"/>
+        <text class="q" x="102" y="41">console.groq.com/keys</text>
+        <rect class="p" x="32" y="80" width="72" height="12" rx="6"/>
+        <rect class="p" x="150" y="82" width="62" height="8" rx="4"/>
+        <rect class="h" x="236" y="72" width="98" height="28" rx="8"/>
+        <text class="b r" x="285" y="91">API Keys</text>
+        <rect class="p" x="360" y="82" width="70" height="8" rx="4"/>
+        <rect class="p" x="456" y="82" width="50" height="8" rx="4"/>
+        <circle class="p" cx="602" cy="86" r="11"/>
+        <circle class="m" cx="236" cy="72" r="11"/><text class="n" x="236" y="77">1</text>
+        <rect class="p" x="32" y="134" width="130" height="14" rx="7"/>
+        <rect class="p" x="32" y="160" width="250" height="8" rx="4"/>
+        <rect class="h" x="444" y="128" width="166" height="38" rx="8"/>
+        <text class="b r" x="527" y="152">Create API Key</text>
+        <circle class="m" cx="444" cy="128" r="11"/><text class="n" x="444" y="133">2</text>
+        <rect class="k" x="32" y="190" width="578" height="74" rx="8"/>
+        <path class="d" d="M32 216H610"/>
+        <rect class="p" x="48" y="199" width="60" height="8" rx="4"/>
+        <rect class="p" x="230" y="199" width="80" height="8" rx="4"/>
+        <rect class="p" x="440" y="199" width="56" height="8" rx="4"/>
+        <rect class="p" x="48" y="236" width="110" height="8" rx="4"/>
+        <rect class="p" x="230" y="236" width="150" height="8" rx="4"/>
+        <rect class="p" x="440" y="236" width="84" height="8" rx="4"/>
+      </svg>
+    </figure>
+  </li>
+
+  <li>
+    <p class="orden">Ponle un nombre, por ejemplo «Voziris» <span class="num" aria-hidden="true">1</span>, y <strong>copia la clave</strong> <span class="num" aria-hidden="true">2</span>.</p>
+    <p>Empieza por <code>gsk_</code> y <strong>solo se enseña una vez</strong>.</p>
+    <figure>
+      <svg viewBox="0 0 640 236" role="img" aria-labelledby="d3">
+        <title id="d3">Dos cuadros de la consola: en el primero se escribe el nombre «Voziris»; en el segundo aparece la clave, que empieza por gsk_, con el botón de copiar resaltado.</title>
+        <rect class="w" x="10" y="20" width="284" height="196" rx="10"/>
+        <rect class="p" x="30" y="40" width="150" height="12" rx="6"/>
+        <text class="s g" x="46" y="84">Nombre</text>
+        <rect class="e" x="30" y="100" width="244" height="38" rx="6"/>
+        <rect class="h" x="30" y="100" width="244" height="38" rx="6"/>
+        <text class="u" x="46" y="125">Voziris</text>
+        <path class="i" d="M99 110v18"/>
+        <rect class="k" x="184" y="164" width="90" height="34" rx="8"/>
+        <text class="r" x="229" y="186">Crear</text>
+        <circle class="m" cx="30" cy="100" r="11"/><text class="n" x="30" y="105">1</text>
+        <path class="o" d="M305 118h28M325 110l8 8-8 8"/>
+        <rect class="w" x="346" y="20" width="284" height="196" rx="10"/>
+        <rect class="p" x="366" y="40" width="170" height="12" rx="6"/>
+        <rect class="k" x="366" y="72" width="244" height="40" rx="6"/>
+        <text class="q u" x="380" y="98">gsk_••••••••</text>
+        <rect class="h" x="366" y="126" width="140" height="40" rx="8"/>
+        <path class="i" d="M394 141v-2q0-2-2-2h-8q-2 0-2 2v10q0 2 2 2h2"/>
+        <rect class="i" x="387" y="142" width="12" height="14" rx="3"/>
+        <text class="b" x="411" y="151">Copiar</text>
+        <circle class="m" cx="366" cy="126" r="11"/><text class="n" x="366" y="131">2</text>
+        <text class="x g" x="366" y="196">Solo se enseña una vez</text>
+      </svg>
+    </figure>
+    <div class="aviso">No la mandes por chat ni la enseñes en capturas: quien la tenga puede usar tu cuenta.</div>
+  </li>
+</ol>
+
+<h3>Después, en Voziris</h3>
+<ol class="pasos grandes sigue" start="4">
+  <li>
+    <p class="orden">Abre los ajustes de Voziris: haz clic derecho en el icono del micrófono <span class="num" aria-hidden="true">1</span>, junto al reloj, y elige <strong>Ajustes…</strong> <span class="num" aria-hidden="true">2</span>.</p>
+    <p>Si no ves el icono, está bajo la flechita <kbd>^</kbd>.</p>
+    <figure>
+      <svg viewBox="0 0 640 330" role="img" aria-labelledby="d4">
+        <title id="d4">La esquina de la barra de tareas de Windows: junto al reloj, el icono del micrófono de Voziris y, encima, su menú con «Ajustes…» resaltado.</title>
+        <rect class="w" x="10" y="10" width="620" height="310" rx="10"/>
+        <path class="c" d="M11 268H629V310Q629 319 620 319H20Q11 319 11 310Z"/>
+        <path class="d" d="M11 268H629"/>
+        <rect class="p" x="28" y="281" width="26" height="26" rx="6"/>
+        <rect class="p" x="62" y="281" width="26" height="26" rx="6"/>
+        <rect class="p" x="96" y="281" width="26" height="26" rx="6"/>
+        <circle class="k" cx="136" cy="118" r="60"/>
+        <rect class="i t" x="119" y="76" width="34" height="47" rx="17"/>
+        <path class="i t" d="M106 115c0 13.8 13.4 25 30 25s30-11.2 30-25M136 140v14M118 155h36"/>
+        <text class="b r" x="136" y="206">El icono de Voziris</text>
+        <rect class="w" x="262" y="40" width="216" height="218" rx="8"/>
+        <text class="b" x="292" y="66">Dictar ahora</text>
+        <rect class="p" x="292" y="85" width="120" height="8" rx="4"/>
+        <text x="292" y="122">Últimos dictados</text>
+        <path class="o" d="M458 112l5 5-5 5"/>
+        <text x="292" y="150">Motor</text>
+        <path class="o" d="M458 140l5 5-5 5"/>
+        <rect class="h" x="268" y="159" width="204" height="28" rx="6"/>
+        <text class="b" x="292" y="178">Ajustes…</text>
+        <rect class="p" x="292" y="197" width="100" height="8" rx="4"/>
+        <path class="d" d="M263 218H477"/>
+        <text x="292" y="242">Salir</text>
+        <circle class="m" cx="268" cy="159" r="11"/><text class="n" x="268" y="164">2</text>
+        <text class="s g f" x="398" y="298">Si no lo ves, está aquí</text>
+        <path class="o" d="M402 294h9M407 290l4 4-4 4"/>
+        <path class="o" d="M417 298l7-7 7 7"/>
+        <rect class="h" x="446" y="276" width="32" height="36" rx="8"/>
+        <rect class="i" x="457.5" y="281" width="9" height="15" rx="4.5"/>
+        <path class="i" d="M453 291v1.5q0 9 9 9t9-9V291M462 301.5v4.5M457 306h10"/>
+        <circle class="o" cx="497" cy="294" r="7"/>
+        <rect class="o" x="514" y="287" width="14" height="14" rx="3"/>
+        <text class="g f" x="612" y="291">10:42</text>
+        <text class="s g f" x="612" y="308">11/11/2026</text>
+        <circle class="m" cx="446" cy="276" r="11"/><text class="n" x="446" y="281">1</text>
+        <text class="x g" x="496" y="250">clic derecho</text>
+        <path class="a" d="M502 256L485 270M485 262v8h8"/>
+      </svg>
+    </figure>
+  </li>
+
+  <li>
+    <p class="orden">En la pestaña <strong>Motor</strong> <span class="num" aria-hidden="true">1</span>, pega la clave en el campo <strong>Clave</strong> <span class="num" aria-hidden="true">2</span> y pulsa <strong>Probar la clave y ver modelos</strong> <span class="num" aria-hidden="true">3</span>.</p>
+    <p>Tiene que salir «✓ La clave es válida».</p>
+    <figure>
+      <svg viewBox="0 0 640 432" role="img" aria-labelledby="d5">
+        <title id="d5">La ventana «Ajustes de Voziris» con las pestañas Atajos, Audio, Motor, Texto, Destinos y Acerca de. En «Motor»: las opciones Local, API y Automático, con Automático marcada; el campo «Clave (vacía = GROQ_API_KEY)» relleno con puntos; el botón «Probar la clave y ver modelos» y el mensaje «✓ La clave es válida».</title>
+        <rect class="w" x="10" y="10" width="620" height="412" rx="10"/>
+        <path class="c" d="M11 46V20Q11 11 20 11H620Q629 11 629 20V46Z"/>
+        <text class="b" x="28" y="34">Ajustes de Voziris</text>
+        <path class="o" d="M602 23l11 11M613 23l-11 11"/>
+        <path class="d" d="M24 86H616"/>
+        <text class="s r" x="59" y="76">Atajos</text>
+        <text class="s r" x="130" y="76">Audio</text>
+        <rect class="h" x="166" y="56" width="66" height="30" rx="7"/>
+        <text class="b r" x="199" y="76">Motor</text>
+        <text class="s r" x="268" y="76">Texto</text>
+        <text class="s r" x="346" y="76">Destinos</text>
+        <text class="s r" x="438" y="76">Acerca de</text>
+        <circle class="m" cx="166" cy="56" r="11"/><text class="n" x="166" y="61">1</text>
+        <text x="36" y="120">Motor</text>
+        <circle class="e" cx="278" cy="115" r="7"/><text x="291" y="120">Local</text>
+        <circle class="e" cx="350" cy="115" r="7"/><text x="363" y="120">API</text>
+        <circle class="e" cx="410" cy="115" r="7"/><circle class="z" cx="410" cy="115" r="3.5"/><text x="423" y="120">Automático</text>
+        <text class="b g" x="36" y="152">Local (sin conexión)</text>
+        <rect class="p" x="36" y="169" width="96" height="8" rx="4"/>
+        <rect class="e" x="270" y="162" width="330" height="22" rx="4"/>
+        <rect class="p" x="36" y="197" width="130" height="8" rx="4"/>
+        <rect class="e" x="270" y="190" width="330" height="22" rx="4"/>
+        <text class="b g" x="36" y="240">API (compatible con OpenAI)</text>
+        <text x="36" y="271">Modelo de transcripción</text>
+        <rect class="e" x="270" y="252" width="330" height="28" rx="4"/>
+        <text class="s" x="282" y="271">whisper-large-v3-turbo</text>
+        <path class="o" d="M579 264l5 5 5-5"/>
+        <text x="36" y="311">Clave (vacía = GROQ_API_KEY)</text>
+        <rect class="e" x="270" y="292" width="330" height="28" rx="4"/>
+        <rect class="h" x="270" y="292" width="330" height="28" rx="4"/>
+        <text x="286" y="311">••••••••••••••••••••••••</text>
+        <text class="x g f" x="590" y="310">pega aquí</text>
+        <circle class="m" cx="270" cy="292" r="11"/><text class="n" x="270" y="297">2</text>
+        <rect class="k" x="36" y="338" width="220" height="34" rx="6"/>
+        <rect class="h" x="36" y="338" width="220" height="34" rx="6"/>
+        <text class="b r" x="146" y="360">Probar la clave y ver modelos</text>
+        <circle class="m" cx="36" cy="338" r="11"/><text class="n" x="36" y="343">3</text>
+        <path class="o" d="M266 355h14M274 349l6 6-6 6"/>
+        <text class="b" x="290" y="360">✓ La clave es válida</text>
+        <rect class="k" x="416" y="384" width="92" height="28" rx="6"/>
+        <text class="r" x="462" y="403">Guardar</text>
+        <rect class="k" x="518" y="384" width="96" height="28" rx="6"/>
+        <text class="r" x="566" y="403">Cancelar</text>
+      </svg>
+    </figure>
+  </li>
+
+  <li>
+    <p class="orden">En <strong>Modelo de transcripción</strong>, elige <code>whisper-large-v3</code> <span class="num" aria-hidden="true">1</span> y pulsa <strong>Guardar</strong> <span class="num" aria-hidden="true">2</span>.</p>
+    <p>Es el más preciso y, en el plan gratuito, tiene los mismos límites que el otro. Deja el motor en <strong>Automático</strong>, que ya viene marcado: usa la API cuando hay internet y el motor local cuando no.</p>
+    <figure>
+      <svg viewBox="0 0 640 432" role="img" aria-labelledby="d6">
+        <title id="d6">La pestaña «Motor»: en el desplegable «Modelo de transcripción» está elegido whisper-large-v3; el motor sigue en «Automático»; abajo, de los botones «Guardar» y «Cancelar», está resaltado «Guardar».</title>
+        <rect class="w" x="10" y="10" width="620" height="412" rx="10"/>
+        <path class="c" d="M11 46V20Q11 11 20 11H620Q629 11 629 20V46Z"/>
+        <text class="b" x="28" y="34">Ajustes de Voziris</text>
+        <path class="o" d="M602 23l11 11M613 23l-11 11"/>
+        <path class="d" d="M24 86H616"/>
+        <text class="s r" x="59" y="76">Atajos</text>
+        <text class="s r" x="130" y="76">Audio</text>
+        <text class="b r" x="199" y="76">Motor</text>
+        <rect class="z" x="172" y="84" width="54" height="3" rx="1.5"/>
+        <text class="s r" x="268" y="76">Texto</text>
+        <text class="s r" x="346" y="76">Destinos</text>
+        <text class="s r" x="438" y="76">Acerca de</text>
+        <text x="36" y="120">Motor</text>
+        <circle class="e" cx="278" cy="115" r="7"/><text x="291" y="120">Local</text>
+        <circle class="e" cx="350" cy="115" r="7"/><text x="363" y="120">API</text>
+        <circle class="e" cx="410" cy="115" r="7"/><circle class="z" cx="410" cy="115" r="3.5"/><text x="423" y="120">Automático</text>
+        <path class="a" d="M524 115H508M514 109l-6 6 6 6"/>
+        <text class="x g" x="531" y="120">déjalo así</text>
+        <text class="b g" x="36" y="152">Local (sin conexión)</text>
+        <rect class="p" x="36" y="169" width="96" height="8" rx="4"/>
+        <rect class="e" x="270" y="162" width="330" height="22" rx="4"/>
+        <rect class="p" x="36" y="197" width="130" height="8" rx="4"/>
+        <rect class="e" x="270" y="190" width="330" height="22" rx="4"/>
+        <text class="b g" x="36" y="240">API (compatible con OpenAI)</text>
+        <text x="36" y="271">Modelo de transcripción</text>
+        <rect class="e" x="270" y="252" width="330" height="28" rx="4"/>
+        <text class="b" x="282" y="271">whisper-large-v3</text>
+        <path class="o" d="M579 264l5 5 5-5"/>
+        <text x="36" y="311">Clave (vacía = GROQ_API_KEY)</text>
+        <rect class="k" x="36" y="338" width="220" height="34" rx="6"/>
+        <text class="r" x="146" y="360">Probar la clave y ver modelos</text>
+        <rect class="w" x="270" y="284" width="330" height="68" rx="6"/>
+        <rect class="h" x="276" y="290" width="318" height="28" rx="5"/>
+        <text class="b" x="296" y="309">whisper-large-v3</text>
+        <text x="296" y="339">whisper-large-v3-turbo</text>
+        <circle class="m" cx="276" cy="290" r="11"/><text class="n" x="276" y="295">1</text>
+        <rect class="k" x="416" y="384" width="92" height="28" rx="6"/>
+        <rect class="h" x="416" y="384" width="92" height="28" rx="6"/>
+        <text class="b r" x="462" y="403">Guardar</text>
+        <circle class="m" cx="416" cy="384" r="11"/><text class="n" x="416" y="389">2</text>
+        <rect class="k" x="518" y="384" width="96" height="28" rx="6"/>
+        <text class="r" x="566" y="403">Cancelar</text>
+      </svg>
+    </figure>
+    <div class="aviso">Al guardar, Voziris avisa: «Guardado. Estos cambios se aplican al reiniciar Voziris». Hazlo así: clic derecho en el icono → <strong>Salir</strong>, y ábrelo de nuevo escribiendo «Voziris» en la búsqueda de Windows.</div>
+  </li>
+
+  <li>
+    <p class="orden">Compruébalo dictando algo: mantén <kbd>Ctrl</kbd>+<kbd>Win</kbd> <span class="num" aria-hidden="true">1</span>, habla <span class="num" aria-hidden="true">2</span> y suelta <span class="num" aria-hidden="true">3</span>.</p>
+    <p>Para ver que de verdad pasa por Groq, abre <a href="https://console.groq.com/dashboard/usage">console.groq.com/dashboard/usage</a>, vista <strong>Activity</strong> (en <strong>Cost</strong> el plan gratuito siempre marca cero). Tarda hasta 15 minutos en actualizarse.</p>
+    <figure>
+      <svg viewBox="0 0 640 160" role="img" aria-labelledby="d7">
+        <title id="d7">Un dictado en tres momentos: mantener pulsadas las teclas Ctrl y Win, hablar al micrófono y soltar; el texto aparece escrito.</title>
+        <circle class="m" cx="110" cy="22" r="11"/><text class="n" x="110" y="27">1</text>
+        <rect class="k" x="42" y="50" width="60" height="46" rx="8"/>
+        <rect class="h" x="42" y="50" width="60" height="46" rx="8"/>
+        <text class="b r" x="72" y="78">Ctrl</text>
+        <text class="r u" x="110" y="79">+</text>
+        <rect class="k" x="118" y="50" width="60" height="46" rx="8"/>
+        <rect class="h" x="118" y="50" width="60" height="46" rx="8"/>
+        <text class="b r" x="148" y="78">Win</text>
+        <text class="r" x="110" y="136">Mantén pulsado</text>
+        <path class="o" d="M204 74h30M226 66l8 8-8 8"/>
+        <circle class="m" cx="320" cy="22" r="11"/><text class="n" x="320" y="27">2</text>
+        <rect class="i t" x="308" y="42" width="24" height="40" rx="12"/>
+        <path class="i t" d="M298 72c0 12.2 9.8 22 22 22s22-9.8 22-22M320 94v10M307 105h26"/>
+        <path class="o" d="M284 56q-8 14 0 28M272 48q-13 22 0 44M356 56q8 14 0 28M368 48q13 22 0 44"/>
+        <text class="r" x="320" y="136">Habla</text>
+        <path class="o" d="M406 74h30M428 66l8 8-8 8"/>
+        <circle class="m" cx="530" cy="22" r="11"/><text class="n" x="530" y="27">3</text>
+        <rect class="w" x="446" y="42" width="168" height="66" rx="8"/>
+        <text x="460" y="70">Hola, ¿qué tal?</text>
+        <path class="i" d="M562 58v16"/>
+        <rect class="p" x="460" y="86" width="96" height="8" rx="4"/>
+        <text class="r" x="530" y="136">Suelta: aparece el texto</text>
+      </svg>
+    </figure>
+  </li>
+</ol>
+
+<p>Ya está. No tienes que hacer nada más: a partir de ahora, Voziris usa la API siempre que haya internet. Si algo no ha salido como en los dibujos, mira <a href="#problemas">Si algo no sale</a>.</p>
+</section>
+
+<section id="limpieza">
+<h2>Opcional: que una IA limpie lo que dictas</h2>
+
+<p>Con la clave puesta, Voziris puede pasar además cada dictado por una IA que lo deja limpio: quita muletillas y arregla correcciones como «el martes, no, el jueves».</p>
+
+<div class="suelto">
+  <p>En los ajustes, abre la pestaña <strong>Texto</strong> <span class="num" aria-hidden="true">1</span>. En <strong>Modelo de LLM (vacío = sin limpieza)</strong>, elige <code>openai/gpt-oss-120b</code> <span class="num" aria-hidden="true">2</span> y pulsa <strong>Guardar</strong> <span class="num" aria-hidden="true">3</span>. La lista se rellena al probar la clave en la pestaña Motor.</p>
+  <p>Con <strong>Nivel de limpieza</strong> decides cuánto retoca:</p>
+  <ul>
+    <li><strong>Literal</strong>: nada. La IA no se usa.</li>
+    <li><strong>Limpio</strong>: quita muletillas y arregla las correcciones.</li>
+    <li><strong>Reescritura</strong>: además da formato, con listas y párrafos.</li>
+  </ul>
+  <figure>
+    <svg viewBox="0 0 640 330" role="img" aria-labelledby="d8">
+      <title id="d8">La ventana «Ajustes de Voziris», pestaña «Texto»: «Nivel de limpieza» con las opciones Literal, Limpio y Reescritura; el desplegable «Modelo de LLM (vacío = sin limpieza)» con openai/gpt-oss-120b elegido, y el botón «Guardar» resaltado.</title>
+      <rect class="w" x="10" y="10" width="620" height="310" rx="10"/>
+      <path class="c" d="M11 46V20Q11 11 20 11H620Q629 11 629 20V46Z"/>
+      <text class="b" x="28" y="34">Ajustes de Voziris</text>
+      <path class="o" d="M602 23l11 11M613 23l-11 11"/>
+      <path class="d" d="M24 86H616"/>
+      <text class="s r" x="59" y="76">Atajos</text>
+      <text class="s r" x="130" y="76">Audio</text>
+      <text class="s r" x="199" y="76">Motor</text>
+      <rect class="h" x="236" y="56" width="64" height="30" rx="7"/>
+      <text class="b r" x="268" y="76">Texto</text>
+      <text class="s r" x="346" y="76">Destinos</text>
+      <text class="s r" x="438" y="76">Acerca de</text>
+      <circle class="m" cx="236" cy="56" r="11"/><text class="n" x="236" y="61">1</text>
+      <text x="36" y="124">Nivel de limpieza</text>
+      <circle class="e" cx="308" cy="119" r="7"/><text x="321" y="124">Literal</text>
+      <circle class="e" cx="388" cy="119" r="7"/><circle class="z" cx="388" cy="119" r="3.5"/><text x="401" y="124">Limpio</text>
+      <circle class="e" cx="468" cy="119" r="7"/><text x="481" y="124">Reescritura</text>
+      <text x="36" y="169">Modelo de LLM (vacío = sin limpieza)</text>
+      <rect class="e" x="300" y="150" width="300" height="28" rx="4"/>
+      <rect class="h" x="300" y="150" width="300" height="28" rx="4"/>
+      <text class="b" x="316" y="169">openai/gpt-oss-120b</text>
+      <path class="o" d="M579 162l5 5 5-5"/>
+      <circle class="m" cx="300" cy="150" r="11"/><text class="n" x="300" y="155">2</text>
+      <text class="s g f" x="600" y="200">La lista se rellena al probar la clave en la pestaña Motor.</text>
+      <rect class="p" x="36" y="226" width="150" height="8" rx="4"/>
+      <rect class="e" x="300" y="218" width="300" height="42" rx="4"/>
+      <rect class="k" x="416" y="282" width="92" height="28" rx="6"/>
+      <rect class="h" x="416" y="282" width="92" height="28" rx="6"/>
+      <text class="b r" x="462" y="301">Guardar</text>
+      <circle class="m" cx="416" cy="282" r="11"/><text class="n" x="416" y="287">3</text>
+      <rect class="k" x="518" y="282" width="96" height="28" rx="6"/>
+      <text class="r" x="566" y="301">Cancelar</text>
+    </svg>
+  </figure>
+  <div class="aviso">Con la limpieza activada, el <strong>texto</strong> de cada dictado también se envía a Groq, no solo el audio.</div>
+</div>
+</section>
+
+<section id="saber">
+<h2>Lo que conviene saber</h2>
+
+<h3>El plan gratuito sobra para dictar</h3>
+<div class="cifras">
+  <div><strong>20</strong> peticiones por minuto</div>
+  <div><strong>2.000</strong> peticiones al día</div>
+  <div><strong>8 horas</strong> de audio al día</div>
+</div>
+<p class="sub">Datos de noviembre de 2026. Pueden cambiar: los vigentes están en <a href="https://console.groq.com/docs/rate-limits">console.groq.com/docs/rate-limits</a>.</p>
+
+<ul>
+  <li><strong>Grabaciones largas.</strong> Con una reunión de una hora, el límite por minuto se nota. Pon antes el motor en <strong>Local</strong>: menú de la bandeja → <strong>Motor</strong> → <strong>Local (sin conexión)</strong>.</li>
+  <li><strong>La clave es personal.</strong> Cada persona usa la suya. Voziris la guarda en el archivo <code>config.toml</code> de su carpeta, en tu equipo, sin cifrar. Solo viaja a Groq.</li>
+  <li><strong>Privacidad.</strong> Con la API, el audio de cada dictado sale de tu equipo hacia Groq, con tu cuenta y bajo sus condiciones. Según la documentación de Groq («Your Data in GroqCloud», <a href="https://console.groq.com/docs/your-data">console.groq.com/docs/your-data</a>), por defecto no conserva los datos de las peticiones, salvo registros de hasta 30 días para fiabilidad y abusos. Nosotros no recibimos nada: Voziris no tiene servidor propio ni telemetría.</li>
+  <li><strong>Si un día quieres dejar de usarla.</strong> Borra la clave en <strong>Ajustes → Motor</strong>, o elige el motor <strong>Local</strong>.</li>
+</ul>
+</section>
+
+<section id="problemas">
+<h2>Si algo no sale</h2>
+
+<p>Al pulsar <strong>Probar la clave y ver modelos</strong>, Voziris te dice qué pasa. Esto es lo que significa cada mensaje:</p>
+
+<table>
+  <thead>
+    <tr><th scope="col">Si sale…</th><th scope="col">Qué hacer</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>«✗ La clave no es válida»</td><td>Cópiala entera otra vez, o crea otra en <a href="https://console.groq.com/keys">la consola</a>.</td></tr>
+    <tr><td>«✗ No hay clave»</td><td>El campo <strong>Clave</strong> está vacío. Pega la clave y vuelve a probar.</td></tr>
+    <tr><td>«✗ Sin red» o «✗ Sin conexión: …»</td><td>Comprueba que tienes internet y vuelve a probar.</td></tr>
+    <tr><td>«✗ La API respondió …»</td><td>Prueba más tarde. Si dice 429, has llegado al límite del plan gratuito.</td></tr>
+  </tbody>
+</table>
+</section>
+
+</main>
+</body>
+</html>

@@ -249,6 +249,20 @@ def configurar_log(
         raiz.addHandler(consola)
 
 
+def _crear_carpeta_del_registro(carpeta: Path) -> None:
+    """Para `--instalar --config …`: que el registro del instalador tenga dónde escribirse.
+
+    El MSI (VOZ-88) lanza el instalador desde una carpeta temporal y manda su
+    registro a la de la instalación, igual que «Actualizar». En un equipo que
+    nunca ha tenido Voziris esa carpeta no existe todavía, y sin ella una
+    instalación fallida no dejaría nada que mirar.
+    """
+    try:
+        carpeta.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"No se puede crear {carpeta} para el registro: {e}", file=sys.stderr)
+
+
 def _rotar_si_crecio(ruta: Path, limite: int = 1_000_000) -> None:
     """Si pasa de `limite`, se aparta como .1. Si otro proceso lo tiene abierto, se sigue igual."""
     try:
@@ -915,7 +929,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
     ajustes = Ajustes(
         raiz, configuracion, aplicar, nivel_actual=captura.nivel_actual,
         dispositivos=Captura.dispositivos, probar_clave=probar_clave,
-        listar_modelos=listar_modelos,
+        listar_modelos=listar_modelos, abrir_guia=lambda: abrir_guia(cfg.GUIA_API),
     )
 
     def alternar_corte() -> None:
@@ -934,6 +948,10 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         # Desde VOZ-81 arranca voziris.exe --comprobar: son unos segundos sin nada en pantalla.
         avisar("Preparando el diagnóstico: tarda unos segundos")
         _abrir_con_windows(_generar_diagnostico(configuracion.carpeta))
+
+    def abrir_guia(nombre: str) -> None:
+        if not _abrir_guia(nombre):
+            avisar("No se encuentra esa guía. Vuelve a instalar Voziris")
 
     # --- versiones nuevas (VOZ-82) ---
     def reflejar_buscar_en_ajustes() -> None:
@@ -1076,6 +1094,7 @@ def _aplicacion(configuracion: cfg.Config, ruta_config: Path | None = None) -> i
         actualizar=actualizar,
         version_nueva=lambda: vigilante.novedad.version if vigilante.novedad else None,
         etiqueta_actualizar="Actualizar a la {}…" if instalada else "Descargar la {}…",
+        abrir_guia=abrir_guia,
         acerca_de=lambda: en_hilo_tk(
             lambda: messagebox.showinfo("Acerca de Voziris", texto_acerca_de(__version__))
         ),
@@ -1342,7 +1361,7 @@ def _revisar_paquete(avisar: Callable[[str], None]) -> None:
         log.error("al paquete le faltan archivos: faltan %s · dañados %s",
                   resultado.faltan[:20], resultado.distintos[:20])
         avisar(f"A Voziris le faltan archivos ({resultado.resumen(1)}). "
-               "Vuelve a extraer el ZIP e instálalo; ¿lo ha retirado el antivirus?")
+               "Vuelve a instalarlo; ¿lo ha retirado el antivirus?")
 
     threading.Thread(target=revisar, name="voziris-paquete", daemon=True).start()
 
@@ -1389,6 +1408,20 @@ def _abrir_con_windows(ruta: Path) -> None:
         os.startfile(str(ruta))
     except (OSError, AttributeError) as e:
         log.warning("no se pudo abrir %s: %s", ruta, e)
+
+
+def _abrir_guia(nombre: str, recursos: Path | None = None) -> bool:
+    """Abre en el navegador una de las guías que van con el programa (VOZ-88).
+
+    Son archivos del propio paquete (`_internal/docs/`): no hace falta conexión.
+    False si la guía no está, para que quien la pidió lo diga.
+    """
+    ruta = cfg.ruta_de_guia(nombre, recursos)
+    if not ruta.is_file():
+        log.warning("no está la guía %s", ruta)
+        return False
+    _abrir_con_windows(ruta)
+    return True
 
 
 def _mensaje(titulo: str, texto: str) -> None:
@@ -1468,7 +1501,7 @@ def _instalar_cli() -> int:
         return 3
     except instalador.InstalacionFallida as e:
         no_se_instala()
-        _error_fatal(str(e), con_ventana=True, titulo=titulo_error)
+        _error_fatal(_texto_de_fallo_al_instalar(e), con_ventana=True, titulo=titulo_error)
         return 1
     except Exception as e:  # noqa: BLE001 — sin esto, el cuadro de PyInstaller con la traza
         log.exception("instalación fallida")
@@ -1490,14 +1523,88 @@ def _instalar_cli() -> int:
             + (f"\n\n{aviso}" if aviso else ""),
         )
         return 0
-    _mensaje(
-        "Voziris instalado",
-        "Ya puedes escribir «Voziris» en la búsqueda de Windows.\n\n"
-        f"Carpeta: {destino}\n"
-        "Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar."
-        + (f"\n\n{aviso}" if aviso else ""),
-    )
+    _despedir_instalacion(destino, aviso)
     return 0
+
+
+def _despedir_instalacion(destino: Path, aviso: str | None) -> None:
+    """El aviso final de una instalación nueva. Sin clave de API, ofrece la guía (VOZ-88).
+
+    Solo en una instalación nueva: quien actualiza ya decidió con qué motor
+    dicta. Y solo se pregunta, no se abre nada sin un sí.
+    """
+    recursos = destino / "_internal"
+    con_cuadro = bool(getattr(sys, "frozen", False)) and winapi.ES_WINDOWS
+    ofrecer = (
+        con_cuadro
+        and not _hay_clave_de_api(destino)
+        and cfg.ruta_de_guia(cfg.GUIA_API, recursos).is_file()
+    )
+    texto = texto_de_instalado(destino, aviso, ofrecer_api=ofrecer)
+    if not ofrecer:
+        _mensaje("Voziris instalado", texto)
+        return
+    print(f"Voziris instalado: {texto}")
+    tipo = winapi.MB_YESNO | winapi.MB_ICONINFORMATION
+    if winapi.cuadro("Voziris instalado", texto, tipo) == winapi.IDYES:
+        _abrir_guia(cfg.GUIA_API, recursos)
+
+
+def texto_de_instalado(destino: Path, aviso: str | None, *, ofrecer_api: bool) -> str:
+    """Lo que dice el aviso final. Con `ofrecer_api` termina en una pregunta de sí o no."""
+    partes = [
+        "Ya puedes escribir «Voziris» en la búsqueda de Windows.",
+        f"Carpeta: {destino}\n"
+        "Para quitarlo: Configuración → Aplicaciones → Voziris → Desinstalar.",
+    ]
+    if aviso:
+        partes.append(aviso)
+    if ofrecer_api:
+        partes.append(
+            "De serie usa su motor local, que funciona sin configurar nada pero es más "
+            "limitado. Lo recomendable es conectar la API de Groq: es gratis, se hace en "
+            "cinco minutos y transcribe mejor."
+        )
+        partes.append("¿Abrir ahora la guía para conectarla?")
+    return "\n\n".join(partes)
+
+
+def _hay_clave_de_api(carpeta: Path) -> bool:
+    """¿Hay clave de la API, en el `config.toml` de `carpeta` o en `GROQ_API_KEY`?
+
+    Solo mira el archivo: `cfg.cargar` lo crearía si falta, y a estas alturas la
+    Voziris recién abierta puede estar creándolo. La clave ni se guarda ni se anota.
+    """
+    if os.environ.get("GROQ_API_KEY", "").strip():
+        return True
+    import tomllib
+
+    try:
+        datos = tomllib.loads((carpeta / cfg.NOMBRE_ARCHIVO).read_text(encoding="utf-8"))
+        clave = datos["motor"]["api"]["clave"]
+    except (OSError, ValueError, KeyError, TypeError):  # sin archivo, ilegible o sin esa clave
+        return False
+    return isinstance(clave, str) and bool(clave.strip())
+
+
+def _texto_de_fallo_al_instalar(error: Exception) -> str:
+    """El mensaje de una instalación fallida, tal cual, salvo un caso (VOZ-88).
+
+    Si Windows bloquea la copia, el mensaje dice «sigue usando Voziris desde
+    esta carpeta». Lanzado por el MSI o por «Actualizar», esa carpeta es
+    temporal y se borra: hay que mandar al ZIP.
+    """
+    from voziris import actualizaciones, instalador
+
+    if not getattr(error, "bloqueado", False):
+        return str(error)
+    try:
+        temporal = instalador.ejecutable_actual().is_relative_to(
+            actualizaciones.carpeta_de_descargas().resolve()
+        )
+    except OSError:
+        temporal = False
+    return instalador.MENSAJE_BLOQUEO_TEMPORAL if temporal else str(error)
 
 
 def _reabrir_si_se_cerro(se_cerro: bool, destino: Path) -> None:
@@ -1850,6 +1957,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--pista tiene que ser auto, todas, o el número de una pista")
     con_ventana = transcribir and (args.ventana or bool(getattr(sys, "frozen", False)))
     carpeta = args.config.parent if args.config else cfg.carpeta_base()
+    if args.instalar and args.config:
+        _crear_carpeta_del_registro(carpeta)
     configurar_log(
         carpeta, args.debug, a_consola=consola or (transcribir and not con_ventana) or args.debug,
         nombre=NOMBRE_LOG_TRANSCRIBIR if transcribir
