@@ -28,7 +28,11 @@
      Installer se saltaría los que tienen versión y, aun sin registro, anotaría
      cada uno en HKLM (RegisterSharedComponentProvider: medido). En una carpeta
      nueva no hay nada que saltarse, y tampoco choca con un instalador anterior
-     que siga abierto.
+     que siga abierto. La carpeta se llama VozirisPaquete, con minúsculas, A
+     PROPÓSITO: una propiedad toda en mayúsculas es pública, el asistente la
+     resuelve antes con el nombre fijo y se la pasa ya hecha a la instalación,
+     y entonces con ventanas saldría siempre la misma carpeta (en silencio no,
+     y por eso la prueba no lo vería).
 
   3. LA CARPETA ESTÁ DENTRO DE %TEMP%\voziris-actualizacion, la de las
      descargas de «Actualizar»: la siguiente Voziris que arranca, pasada una
@@ -67,26 +71,25 @@
     <StandardDirectory Id="TempFolder">
       <Directory Id="VozirisDescargas" Name="voziris-actualizacion">
         <Directory Id="VozirisTanda" Name="msi-$(var.Version)">
-          <Directory Id="PAQUETE" Name="voziris" />
+          <Directory Id="VozirisPaquete" Name="voziris" />
         </Directory>
       </Directory>
     </StandardDirectory>
-    <!-- Ver la decisión 2. Si alguien pasa PAQUETE=… en la línea de órdenes, manda eso. -->
-    <SetProperty Id="PAQUETE"
+    <!-- Ver la decisión 2: la carpeta de verdad, con el proceso que lanza la instalación. -->
+    <SetProperty Id="VozirisPaquete"
                  Value="[TempFolder]voziris-actualizacion\msi-$(var.Version)-[CLIENTPROCESSID]\voziris\"
                  Before="CostFinalize"
-                 Sequence="execute"
-                 Condition="NOT PAQUETE" />
+                 Sequence="execute" />
 
     <Feature Id="Voziris" Title="Voziris" Level="1">
-      <Files Directory="PAQUETE" Include="$(var.Paquete)\**" />
+      <Files Directory="VozirisPaquete" Include="$(var.Paquete)\**" />
     </Feature>
 
     <!-- Como `_actualizar_cli`: el registro del instalador, en la carpeta de la instalación;
          la del paquete es temporal y se borra. -->
     <CustomAction Id="LanzarInstalador"
-                  Directory="PAQUETE"
-                  ExeCommand="&quot;[PAQUETE]voziris.exe&quot; --config &quot;[LocalAppDataFolder]Programs\Voziris\config.toml&quot; --instalar"
+                  Directory="VozirisPaquete"
+                  ExeCommand="&quot;[VozirisPaquete]voziris.exe&quot; --config &quot;[LocalAppDataFolder]Programs\Voziris\config.toml&quot; --instalar"
                   Execute="immediate"
                   Return="asyncNoWait" />
 

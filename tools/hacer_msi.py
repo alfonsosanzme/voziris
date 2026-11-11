@@ -44,6 +44,9 @@ COMO_INSTALAR_WIX = (
     "Para empaquetar solo el ZIP: tools/empaquetar.py --sin-msi"
 )
 ACCION = "LanzarInstalador"
+CARPETA = "VozirisPaquete"
+"""La carpeta donde el MSI deja el paquete. Con minúsculas a propósito: una propiedad en
+mayúsculas es pública, y entonces con ventanas saldría siempre la misma carpeta."""
 SIN_REGISTRO = (
     "ProcessComponents", "RegisterUser", "RegisterProduct", "PublishFeatures", "PublishProduct",
 )
@@ -339,8 +342,16 @@ def comprobar_msi(msi: Path, paquete: Path, version: str) -> list[str]:
         problemas.append(f"{ACCION} va antes de terminar de copiar")
     acciones = dict(leer_tabla(msi, "SELECT `Action`, `Target` FROM `CustomAction`", 2))
     orden = acciones.get(ACCION, "")
-    if '[PAQUETE]voziris.exe" ' not in orden or not orden.endswith(" --instalar"):
+    if f'[{CARPETA}]voziris.exe" ' not in orden or not orden.endswith(" --instalar"):
         problemas.append(f"{ACCION} no lanza «voziris.exe --instalar»: {orden!r}")
+    # Una carpeta por ejecución: la pone una acción antes de calcular los destinos.
+    poner_carpeta = f"Set{CARPETA}"
+    if "[CLIENTPROCESSID]" not in acciones.get(poner_carpeta, ""):
+        problemas.append("la carpeta del paquete no cambia en cada ejecución")
+    elif int(secuencia.get(poner_carpeta, "0")) >= int(secuencia.get("CostFinalize", "0")):
+        problemas.append(f"{poner_carpeta} llega tarde: va después de CostFinalize")
+    if CARPETA.isupper():
+        problemas.append(f"{CARPETA} es una propiedad pública: con ventanas no cambiaría")
 
     propiedades = dict(leer_tabla(msi, "SELECT `Property`, `Value` FROM `Property`", 2))
     if propiedades.get("ProductVersion") != version:

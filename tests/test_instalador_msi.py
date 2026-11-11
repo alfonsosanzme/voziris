@@ -69,14 +69,19 @@ def test_la_receta_no_registra_el_msi_y_lanza_el_instalador(hacer_msi: ModuleTyp
     accion = paquete.find(f"{WXS}CustomAction")
     assert accion is not None and accion.get("Return") == "asyncNoWait"
     orden = accion.get("ExeCommand") or ""
-    assert orden.startswith('"[PAQUETE]voziris.exe" ') and orden.endswith(" --instalar")
+    assert orden.startswith(f'"[{hacer_msi.CARPETA}]voziris.exe" ')
+    assert orden.endswith(" --instalar") and accion.get("Directory") == hacer_msi.CARPETA
     # El registro, a la carpeta de la instalación: la misma que usa instalador.py.
     instalacion = rf"[LocalAppDataFolder]Programs\{instalador.NOMBRE}\{cfg.NOMBRE_ARCHIVO}"
     assert f'--config "{instalacion}"' in orden
 
     carpeta = paquete.find(f"{WXS}SetProperty")
-    assert carpeta is not None and carpeta.get("Id") == "PAQUETE"
+    assert carpeta is not None and carpeta.get("Id") == hacer_msi.CARPETA
     assert carpeta.get("Sequence") == "execute" and carpeta.get("Before") == "CostFinalize"
+    # Privada (con minúsculas) y sin condición: una pública la resolvería antes el asistente
+    # y se la pasaría ya hecha a la instalación, y con ventanas no cambiaría nunca.
+    assert not hacer_msi.CARPETA.isupper() and carpeta.get("Condition") is None
+    assert paquete.find(f".//{WXS}Directory[@Id='{hacer_msi.CARPETA}']") is not None
     valor = carpeta.get("Value") or ""
     # Dentro de la carpeta que limpia la siguiente Voziris, y distinta en cada ejecución.
     from voziris import actualizaciones
@@ -144,12 +149,19 @@ def test_comprobar_msi_dice_lo_que_no_cuadra(
     (paquete / "_internal").mkdir(parents=True)
     (paquete / "voziris.exe").write_bytes(b"MZ")
     (paquete / "_internal" / integridad.NOMBRE_MANIFIESTO).write_bytes(b"abc")
-    orden = ('"[PAQUETE]voziris.exe" --config "[LocalAppDataFolder]Programs\\Voziris\\config.toml"'
-             " --instalar")
+    orden = (f'"[{hacer_msi.CARPETA}]voziris.exe" --config '
+             '"[LocalAppDataFolder]Programs\\Voziris\\config.toml" --instalar')
+    poner = f"Set{hacer_msi.CARPETA}"
     tablas: dict[str, list[tuple[str, ...]]] = {
         "File": [("voziris.exe", "2"), ("x9k2~1.txt|voziris-manifiesto.txt", "3")],
-        "InstallExecuteSequence": [("InstallFinalize", "6600"), (hacer_msi.ACCION, "6601")],
-        "CustomAction": [(hacer_msi.ACCION, orden)],
+        "InstallExecuteSequence": [
+            (poner, "999"), ("CostFinalize", "1000"), ("InstallFinalize", "6600"),
+            (hacer_msi.ACCION, "6601"),
+        ],
+        "CustomAction": [
+            (hacer_msi.ACCION, orden),
+            (poner, "[TempFolder]voziris-actualizacion\\msi-0.1.4-[CLIENTPROCESSID]\\voziris\\"),
+        ],
         "Property": [("ProductVersion", "0.1.4")],
     }
 
@@ -161,12 +173,23 @@ def test_comprobar_msi_dice_lo_que_no_cuadra(
 
     tablas["InstallExecuteSequence"].append(("RegisterProduct", "6100"))
     tablas["Property"] += [("ALLUSERS", "1")]
-    tablas["CustomAction"] = [(hacer_msi.ACCION, '"[PAQUETE]voziris.exe" --salir')]
+    tablas["CustomAction"] = [(hacer_msi.ACCION, f'"[{hacer_msi.CARPETA}]voziris.exe" --salir')]
     tablas["File"].pop()
     problemas = "\n".join(hacer_msi.comprobar_msi(tmp_path / "x.msi", paquete, "0.1.5"))
     for esperado in ("lleva 1 archivos y el ZIP trae 2", "voziris-manifiesto.txt",
-                     "RegisterProduct", "ALLUSERS", "no lanza", "0.1.4 y es la 0.1.5"):
+                     "RegisterProduct", "ALLUSERS", "no lanza", "0.1.4 y es la 0.1.5",
+                     "no cambia en cada ejecución"):
         assert esperado in problemas
+
+    # La carpeta de cada ejecución tiene que estar puesta antes de calcular los destinos.
+    tablas["CustomAction"] = [
+        (hacer_msi.ACCION, orden), (poner, "[TempFolder]x-[CLIENTPROCESSID]\\"),
+    ]
+    tablas["InstallExecuteSequence"] = [
+        ("CostFinalize", "1000"), (poner, "1001"), ("InstallFinalize", "6600"),
+        (hacer_msi.ACCION, "6601"),
+    ]
+    assert "llega tarde" in "\n".join(hacer_msi.comprobar_msi(tmp_path / "x.msi", paquete, "0.1.5"))
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="un MSI solo se hace y se lee en Windows")
@@ -199,6 +222,7 @@ def test_la_receta_compila_con_un_paquete_de_mentira(
     acciones = {a for (a,) in hacer_msi.leer_tabla(
         msi, "SELECT `Action` FROM `InstallExecuteSequence`", 1)}
     assert hacer_msi.ACCION in acciones and not acciones & set(hacer_msi.SIN_REGISTRO)
+    assert f"Set{hacer_msi.CARPETA}" in acciones  # la carpeta de cada ejecución
     largos = {n.split("|")[-1] for (n,) in hacer_msi.leer_tabla(
         msi, "SELECT `FileName` FROM `File`", 1)}
     assert largos == {"voziris.exe", integridad.NOMBRE_MANIFIESTO, "dato.bin",
