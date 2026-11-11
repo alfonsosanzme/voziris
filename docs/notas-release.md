@@ -1,4 +1,4 @@
-# Voziris 0.1.3
+# Voziris 0.1.4
 
 Dictado por voz para Windows 10 y 11 (64 bits) con dos motores: **local**
 (NVIDIA Parakeet TDT 0.6B v3 en ONNX, sin tarjeta gráfica y sin conexión) y
@@ -7,36 +7,30 @@ servidor propio.
 
 La historia de por qué existe: https://kairis.es/blog/voziris.html
 
-## Novedades en 0.1.3
+## Novedades en 0.1.4
 
-- **Si pulsas sin hablar, ahora te lo dice.** Desde la 0.1.2, si nadie habla no
-  se escribe nada (en cuanto ha cargado el detector de voz, al arrancar), pero
-  el aviso se iba antes de llegar a verse. Ahora el indicador enseña «Nada que
-  escribir: no se oyó voz» durante un segundo y medio. Con 5 segundos o más sin
-  voz sigue como estaba: icono de error, y la grabación se queda en «Dictados
-  sin transcribir». También se ven los demás avisos que llegan al acabar un
-  dictado, como «Sin conexión con la API: transcrito en local».
-- **Una Voziris sin ventana ya no impide instalar ni actualizar.** Bastaba una
-  copia parada en el aviso «Voziris ya está abierto», por ejemplo abierta por
-  otro programa sin que nadie la viera, para que la instalación fallara con
-  «otro programa tiene abierto un archivo». Decía que esperases un minuto, y
-  esperar no lo arreglaba. Ahora:
-  - ese aviso se cierra solo a los 10 segundos, y esa copia ya no estorba
-    mientras tanto;
-  - al cambiar el programa, el instalador cierra lo que siga abierto desde la
-    carpeta de instalación. Si se está transcribiendo una grabación o un vídeo,
-    pregunta antes: si contestas que no, no se cambia nada y la transcripción
-    sigue;
-  - si aun así otro programa lo impide, dice cuál es, con su PID, si Windows
-    deja saberlo (si no, qué suele ser), y deja reintentar sin volver a copiar.
-    La versión anterior sigue en su sitio;
-  - si al final no se instala y se había cerrado la bandeja, se vuelve a abrir
-    Voziris, también si cancelas.
-- **El aviso final de la instalación ya no bloquea «Actualizar».** Mientras
-  sigue abierto, «Actualizar» ya no contesta que hay una actualización en
-  marcha. Además, los avisos del instalador, y desde esta versión también los de
-  «Actualizar», piden a Windows salir delante de las demás ventanas, aunque
-  Windows puede dejarlos detrás de la que estés usando.
+- **Se instala con un solo archivo.** Además del ZIP, ahora hay un instalador,
+  `voziris-0.1.4-win64.msi`: se descarga, se abre con doble clic y no hay nada
+  que extraer. Se instala solo para tu usuario, sin permisos de administrador.
+  Tras aceptar las condiciones copia el programa a una carpeta temporal y abre
+  la ventana «Instalando Voziris», que es el instalador de siempre: comprueba
+  que no falta ningún archivo y que el programa arranca antes de cambiar nada.
+  Lo que no cambia: Windows sigue avisando de que el programa no está firmado
+  (ver «Limitaciones conocidas»).
+- **Condiciones de uso y privacidad, por escrito.** Voziris no recoge ningún
+  dato: no tiene telemetría ni servidor propio. Qué guarda en tu equipo, cuándo
+  se conecta a internet y a qué, y por qué es gratis, está en
+  https://github.com/alfonsosanzme/voziris/blob/main/CONDICIONES.md y en el
+  apartado 6 de la guía. El instalador las enseña antes de instalar.
+- **Conectar la API de Groq, con dibujos.** El motor local funciona sin
+  configurar nada, pero es el más limitado; lo recomendable es conectar la API,
+  que tiene plan gratuito. Hay una guía nueva, paso a paso:
+  - está en el menú de la bandeja → «Ayuda», junto a la guía de uso;
+  - en Ajustes → Motor, junto a la clave, el botón «Cómo conseguir la clave…»;
+  - una instalación nueva, si todavía no hay clave, termina preguntando si la
+    abres. Al actualizar no pregunta.
+  Al guardar la clave hay que cerrar y volver a abrir Voziris: lo dice el propio
+  aviso y lo dice la guía.
 
 ## Qué hay
 
@@ -57,42 +51,42 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
   Markdown, con marcas de tiempo y quién habla en cada momento. Se hace desde
   la bandeja, con el botón derecho del Explorador («Transcribir con Voziris»)
   o con `voziris.exe --transcribir`.
-- Portable y sin permisos de administrador. Instalación opcional por usuario
-  (menú Inicio y «Aplicaciones instaladas») con `Instalar Voziris.cmd`, que
-  tampoco los pide. La copia instalada se actualiza desde la bandeja.
+- Sin permisos de administrador. Se instala por usuario (menú Inicio y
+  «Aplicaciones instaladas») con el `.msi`, o se usa portable desde el ZIP. La
+  copia instalada se actualiza desde la bandeja.
 
 ## Instalación
 
-Descomprime el ZIP **entero**, en una carpeta nueva, y ejecuta `voziris.exe`.
-El primer arranque descarga el modelo local (640 MB) a `modelos/`. Hasta que
-termina, los dictados esperan, también con el motor por API. Dentro va
-`LÉEME - Instalar Voziris.html`, con la instalación en el equipo y cómo
-conectar una clave de Groq.
+Descarga `voziris-0.1.4-win64.msi` y ábrelo con doble clic. Si Windows enseña
+«Windows protegió su PC», pulsa *Más información → Ejecutar de todas formas*.
+Acepta las condiciones, pulsa «Instalar» y espera a la ventana «Instalando
+Voziris», que avisa al terminar. El primer arranque descarga el modelo local
+(640 MB). Hasta que termina, los dictados esperan, también con el motor por
+API. La guía de uso y la de la API están en el menú de la bandeja → «Ayuda».
 
-**Si ya tenías la 0.1.2 instalada:** bandeja → «Buscar actualizaciones» →
-«Actualizar a la 0.1.3…». Si aceptaste que mire las versiones nuevas, también te
-avisará sola cuando le toque mirar, una vez al día. Descarga la versión nueva,
-comprueba su SHA-256 y que no le falta ningún archivo, y la instala sin tocar tu
-configuración, tus dictados ni el modelo. En este salto la descarga aún la hace
-la 0.1.2: si falla o cancelas, su aviso puede quedar detrás de otras ventanas y,
-mientras siga abierto, «Actualizar» contesta que ya hay una en marcha.
+**Portable, sin instalar:** descomprime `voziris-0.1.4-win64.zip` **entero**, en
+una carpeta nueva, y ejecuta `voziris.exe`. El modelo se descarga a `modelos/`,
+junto al ejecutable. Dentro va `LÉEME - Instalar Voziris.html`.
 
-**Si ya tenías la 0.1.0 o la 0.1.1, o usas Voziris sin instalar:** se actualiza a
-mano, porque esas versiones no buscan versiones nuevas y la copia sin instalar
-no se cambia sola (en la 0.1.2, «Descargar la 0.1.3…» abre la página de la
-versión). Ya con esta versión, si aceptas que mire las versiones nuevas (o con
-«Buscar actualizaciones»), la bandeja te ofrecerá las siguientes. Lo que trajo la
-0.1.2 está en sus notas:
-https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
+**Si ya tenías la 0.1.2 o la 0.1.3 instalada:** bandeja → «Buscar
+actualizaciones» → «Actualizar a la 0.1.4…». Si aceptaste que mire las versiones
+nuevas, también te avisará sola cuando le toque mirar, una vez al día. Descarga
+el ZIP de la versión nueva, comprueba su SHA-256 y que no le falta ningún
+archivo, y la instala sin tocar tu configuración, tus dictados ni el modelo.
+También vale abrir el `.msi`: hace la misma instalación.
 
-- **Instalada:** extrae este ZIP en una carpeta nueva y ejecuta su
-  `Instalar Voziris.cmd`. Cierra la Voziris abierta solo cuando va a
-  sustituirla. Se quedan tu configuración, el modelo descargado y el historial.
-- **Portable, y quieres instalarla:** copia `config.toml`, `modelos/` e
-  `historial/` de la carpeta vieja junto al `voziris.exe` nuevo y ejecuta
+**Si ya tenías la 0.1.0 o la 0.1.1 instalada:** esas versiones no buscan
+versiones nuevas. Descarga el `.msi` y ábrelo: cierra la Voziris abierta solo
+cuando va a sustituirla, y se quedan tu configuración, el modelo descargado y
+el historial.
+
+**Si usas Voziris sin instalar:** la copia portable no se cambia sola.
+
+- **Quieres instalarla:** copia `config.toml`, `modelos/` e `historial/` de la
+  carpeta vieja junto al `voziris.exe` del ZIP nuevo y ejecuta
   `Instalar Voziris.cmd`. La instalación se los lleva y el arranque con Windows
   pasa a la instalada.
-- **Portable, y quieres seguir en portable:**
+- **Quieres seguir en portable:**
   - Cierra la vieja (bandeja → Salir).
   - Copia esas tres cosas a la carpeta nueva.
   - Si arrancaba con Windows, abre los Ajustes de la nueva: desmarca
@@ -104,8 +98,11 @@ https://github.com/alfonsosanzme/voziris/releases/tag/v0.1.2
 ## Verificación del archivo
 
 ```
-SHA-256  voziris-0.1.3-win64.zip
-8b40161895804375f49695345dcf31a0beb995ea968d710ef2a50e1ad83b43a8
+SHA-256  voziris-0.1.4-win64.msi
+0000000000000000000000000000000000000000000000000000000000000000
+
+SHA-256  voziris-0.1.4-win64.zip
+0000000000000000000000000000000000000000000000000000000000000000
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
@@ -116,7 +113,8 @@ has descargado tiene este hash, es el que se publicó aquí.
 
 - **El programa no está firmado.**
   - Windows puede enseñar «Windows protegió su PC»: pulsa *Más información →
-    Ejecutar de todas formas*.
+    Ejecutar de todas formas*. El instalador `.msi` evita extraer el ZIP,
+    pero no ese aviso: solo lo quitaría una firma.
   - En equipos con **Control inteligente de aplicaciones** activado, Windows
     puede bloquear la copia instalada. Esto pasa aunque deje abrir la carpeta
     extraída. La guía explica qué hacer.
