@@ -1,4 +1,4 @@
-# Voziris 0.1.4
+# Voziris 0.1.5
 
 Dictado por voz para Windows 10 y 11 (64 bits) con dos motores: **local**
 (NVIDIA Parakeet TDT 0.6B v3 en ONNX, sin tarjeta gráfica y sin conexión) y
@@ -7,10 +7,16 @@ servidor propio.
 
 La historia de por qué existe: https://kairis.es/blog/voziris.html
 
-## Novedades en 0.1.4
+## Novedades en 0.1.5
+
+- **El instalador y «Aplicaciones instaladas» dicen Kairis.** Como editor
+  aparecía el nombre del autor; ahora aparece Kairis, igual que en las
+  condiciones. No cambia nada más respecto a la 0.1.4.
+
+Lo que sigue llegó con la 0.1.4, dos días antes:
 
 - **Se instala con un solo archivo.** Además del ZIP, ahora hay un instalador,
-  `voziris-0.1.4-win64.msi`: se descarga, se abre con doble clic y no hay nada
+  `voziris-0.1.5-win64.msi`: se descarga, se abre con doble clic y no hay nada
   que extraer. Se instala solo para tu usuario, sin permisos de administrador.
   Tras aceptar las condiciones copia el programa a una carpeta temporal y abre
   la ventana «Instalando Voziris», que es el instalador de siempre: comprueba
@@ -57,19 +63,19 @@ La historia de por qué existe: https://kairis.es/blog/voziris.html
 
 ## Instalación
 
-Descarga `voziris-0.1.4-win64.msi` y ábrelo con doble clic. Si Windows enseña
+Descarga `voziris-0.1.5-win64.msi` y ábrelo con doble clic. Si Windows enseña
 «Windows protegió su PC», pulsa *Más información → Ejecutar de todas formas*.
 Acepta las condiciones, pulsa «Instalar» y espera a la ventana «Instalando
 Voziris», que avisa al terminar. El primer arranque descarga el modelo local
 (640 MB). Hasta que termina, los dictados esperan, también con el motor por
 API. La guía de uso y la de la API están en el menú de la bandeja → «Ayuda».
 
-**Portable, sin instalar:** descomprime `voziris-0.1.4-win64.zip` **entero**, en
+**Portable, sin instalar:** descomprime `voziris-0.1.5-win64.zip` **entero**, en
 una carpeta nueva, y ejecuta `voziris.exe`. El modelo se descarga a `modelos/`,
 junto al ejecutable. Dentro va `LÉEME - Instalar Voziris.html`.
 
-**Si ya tenías la 0.1.2 o la 0.1.3 instalada:** bandeja → «Buscar
-actualizaciones» → «Actualizar a la 0.1.4…». Si aceptaste que mire las versiones
+**Si ya tenías la 0.1.2, la 0.1.3 o la 0.1.4 instalada:** bandeja → «Buscar
+actualizaciones» → «Actualizar a la 0.1.5…». Si aceptaste que mire las versiones
 nuevas, también te avisará sola cuando le toque mirar, una vez al día. Descarga
 el ZIP de la versión nueva, comprueba su SHA-256 y que no le falta ningún
 archivo, y la instala sin tocar tu configuración, tus dictados ni el modelo.
@@ -98,11 +104,11 @@ el historial.
 ## Verificación del archivo
 
 ```
-SHA-256  voziris-0.1.4-win64.msi
-29cdc82eb33e04f55f5cb9e7e5ba5ab2f017122e09d00fddb15a083f59d944d4
+SHA-256  voziris-0.1.5-win64.msi
+2b0263a10f634051459ea6048ccdd5f34273ac07ed8a0d185518eabac42aa008
 
-SHA-256  voziris-0.1.4-win64.zip
-835781fc0a2b290fe504698b640802c23666a2046e2a955e36786d2d958f9239
+SHA-256  voziris-0.1.5-win64.zip
+4a29c763d3c5febcd5741fc094230ef7bb9cd6476cac86f34ed356bf57238176
 ```
 
 Un `.exe` de PyInstaller sin firmar que escucha el teclado para detectar el
