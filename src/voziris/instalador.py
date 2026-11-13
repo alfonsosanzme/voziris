@@ -78,7 +78,7 @@ class InstalacionCancelada(Exception):
 
 
 NOMBRE = "Voziris"
-EDITOR = "Alfonso Juan Sanz López"
+EDITOR = "Kairis"
 CLAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Voziris"
 ACCESO_MENU = "Voziris.lnk"
 ACCESO_STARTUP = "Voziris.lnk"
